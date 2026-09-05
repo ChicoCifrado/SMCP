@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "delm"
+version = "0.1.0"
+description = "Decentralized Language Models (DELM) — clean-room implementation: shared verified context, dependency-aware task queue, admission verification, selective unfolding, parallel workers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "ChicoCifrado" }]
+keywords = ["multi-agent", "llm", "shared-context", "decentralized", "test-time-scaling"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.scripts]
+delm-demo = "delm.demo.run_demo:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["delm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

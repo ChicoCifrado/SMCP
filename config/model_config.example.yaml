@@ -1,0 +1,20 @@
+# Example model config for a real (non-fake) run.
+# Copy the shape below into your own config; the framework reads it via
+# OpenAICompatibleClient(model=..., base_url=..., api_key=...).
+#
+#   model:     any OpenAI-compatible model id
+#   base_url:  OpenRouter, a direct provider, or a local server
+#   api_key:   the provider key
+#
+# OpenRouter example:
+#   model:    "google/gemini-3-flash"
+#   base_url: "https://openrouter.ai/api/v1"
+#   api_key:  "sk-or-..."
+#
+# Local server example:
+#   model:    "qwen2.5-7b-instruct"
+#   base_url: "http://127.0.0.1:8000/v1"
+#   api_key:  "EMPTY"
+#
+# This file is a template only; it is NOT read at runtime. Pass the three
+# values to OpenAICompatibleClient directly (see README "Using a real model").

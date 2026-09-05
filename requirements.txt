@@ -1,0 +1,8 @@
+# Runtime
+openai>=1.40.0        # OpenAI-compatible client (OpenRouter, etc.)
+pydantic>=2.0         # structured LLM output parsing
+aiohttp>=3.9          # async http for optional fetches
+
+# Dev / test
+pytest>=8.0
+pytest-asyncio>=0.23
