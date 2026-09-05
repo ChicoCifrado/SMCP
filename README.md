@@ -244,4 +244,4 @@ que el paper no incluye. No es una copia de ese codebase.
 
 ## Licencia
 
-MIT.
+GPL-3.0 (copyleft). El texto completo está en [`LICENSE`](LICENSE).

@@ -8,12 +8,12 @@ version = "0.1.0"
 description = "Decentralized Language Models (DELM) — clean-room implementation: shared verified context, dependency-aware task queue, admission verification, selective unfolding, parallel workers."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "GPL-3.0-only" }
 authors = [{ name = "ChicoCifrado" }]
 keywords = ["multi-agent", "llm", "shared-context", "decentralized", "test-time-scaling"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
