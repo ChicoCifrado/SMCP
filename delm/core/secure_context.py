@@ -29,6 +29,7 @@ from delm.core.provenance import digest_of, verify_public
 from delm.core.shared_context import SharedContext
 from delm.core.taint import TaintLevel, TaintRegistry
 from delm.core.injection import detect_injection
+from delm.core.injection_hardened import detect_injection_hardened
 
 
 class AdmissionDenied(Exception):
@@ -62,7 +63,8 @@ class SecureSharedContext(SharedContext):
                  ledger: AdmissionLedger | None = None,
                  keyring: dict[str, _AuthorPub] | None = None,
                  require_signature: bool = True,
-                 injection_threshold: int = 2) -> None:
+                 injection_threshold: int = 2,
+                 hardened_injection: bool = True) -> None:
         super().__init__()
         self.gate = gate or TrustGate(TrustPolicy.REQUIRE_SIGNED)
         self.ledger = ledger or AdmissionLedger()
@@ -72,6 +74,11 @@ class SecureSharedContext(SharedContext):
         # >= injection_threshold distinct pattern matches -> CONFIRMED (block);
         # fewer (>=1) -> SUSPICIOUS (quarantine/frame). 1 disables blocking.
         self.injection_threshold = max(1, int(injection_threshold))
+        # Hardened (evasion-aware) detector vs the plain baseline catalogue.
+        # The hardened pass normalizes zero-width chars, homoglyphs,
+        # leetspeak, accents and letter-spaced/split payloads before the same
+        # catalogue runs; a false positive only quarantines (recoverable).
+        self.hardened_injection = bool(hardened_injection)
 
     # ----------------------------------------------------------- keyring
     def register_key(self, author_id: str, public_key: bytes,
@@ -154,10 +161,17 @@ class SecureSharedContext(SharedContext):
         # Union of distinct matched pattern ids across gist text and raw source.
         matched: list[str] = []
         seen: set[str] = set()
+        evasion = False
         for text in ((gist.raw or ""), gist.gist):
             if not text:
                 continue
-            for pid in detect_injection(text).matched:
+            if self.hardened_injection:
+                verdict = detect_injection_hardened(text)
+                evasion = evasion or verdict.evasion_detected
+                ids = verdict.matched
+            else:
+                ids = detect_injection(text).matched
+            for pid in ids:
                 if pid not in seen:
                     seen.add(pid)
                     matched.append(pid)
@@ -166,8 +180,10 @@ class SecureSharedContext(SharedContext):
         level = (TaintLevel.CONFIRMED
                  if len(matched) >= self.injection_threshold
                  else TaintLevel.SUSPICIOUS)
-        self.taint.flag(gist.label, level,
-                        reason="injection:" + ",".join(matched))
+        why = "injection:" + ",".join(matched)
+        if evasion:
+            why += " [evasion]"  # caught only after normalization
+        self.taint.flag(gist.label, level, reason=why)
 
     def taint_report(self) -> dict[str, int]:
         """Map label -> effective taint level (for audit)."""

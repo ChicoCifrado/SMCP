@@ -26,10 +26,12 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from delm.core.admission import AdmissionPipeline
+from delm.core.admission import AdmissionOutcome, AdmissionPipeline
 from delm.core.gist import Gist, GistKind
 from delm.core.ledger import TrustGate, TrustPolicy
+from delm.core.expansion import ExpansionPolicy, ExpansionState
 from delm.core.llm import LLMClient
+from delm.core.metrics import MetricsTracker
 from delm.core.provenance import KeyPair
 from delm.core.secure_context import SecureSharedContext
 from delm.core.shared_context import SharedContext
@@ -60,7 +62,8 @@ class Worker:
                  reason: Callable[[Task], Awaitable[str]] | None = None,
                  yield_between: bool = False,
                  author_id: str | None = None,
-                 key: "KeyPair | None" = None):
+                 key: "KeyPair | None" = None,
+                 metrics: MetricsTracker | None = None):
         self.id = worker_id
         self.llm = llm
         self.ctx = ctx
@@ -77,6 +80,8 @@ class Worker:
         # verifies the signature against the registered public key.
         self.author_id = author_id or f"worker-{worker_id}"
         self.key = key
+        # Optional per-pipeline cost/latency tracker (shared across workers).
+        self.metrics = metrics
         self.result = WorkerResult(worker_id=worker_id)
 
     # ------------------------------------------------------------- reason
@@ -106,8 +111,7 @@ class Worker:
             task = self._claim(eligible)
             if task is None:
                 break
-            raw = await self.reason(task)
-            ok = await self._admit(task, raw)
+            ok = await self._execute(task)
             if ok:
                 self.result.admitted += 1
                 self.result.solved += 1
@@ -123,7 +127,21 @@ class Worker:
                 continue
         return None
 
-    async def _admit(self, task: Task, raw: str) -> bool:
+    async def _execute(self, task: Task) -> bool:
+        """Reason + admit, recording metrics when a tracker is attached."""
+        if self.metrics is None:
+            outcome = await self._admit(task, await self.reason(task))
+            return outcome.admitted
+        with self.metrics.timed(
+            label=task.label, worker_id=f"w{self.id}",
+            model=getattr(self.llm, "model", ""),
+        ) as m:
+            outcome = await self._admit(task, await self.reason(task))
+            m.admitted = outcome.admitted
+            m.attempts = outcome.attempts
+        return outcome.admitted
+
+    async def _admit(self, task: Task, raw: str) -> AdmissionOutcome:
         """Route a worker's raw result through the admission gate.
 
         The worker signs the gist under its own ``author_id``/``key`` so the
@@ -141,7 +159,7 @@ class Worker:
         # Mark the task done either way (its finding is recorded, or it is a
         # dead end peers can now avoid).
         self.queue.complete(task.label)
-        return outcome.admitted
+        return outcome
 
 
 @dataclass
@@ -151,6 +169,7 @@ class PipelineOutcome:
     rounds: int
     workers: list[WorkerResult]
     queue_exhausted: bool = True
+    metrics: dict = field(default_factory=dict)
 
 
 class DelmPipeline:
@@ -173,7 +192,10 @@ class DelmPipeline:
                                          list[Task] | None] | None = None,
                  secure: bool = True,
                  gate: TrustGate | None = None,
-                 injection_threshold: int = 2):
+                 injection_threshold: int = 2,
+                 metrics: MetricsTracker | None = None,
+                 expansion_policy: ExpansionPolicy | None = None,
+                 expansion_budget: int = 0):
         self.llm = llm
         self.n_workers = n_workers
         self.generate_more = generate_more
@@ -185,6 +207,16 @@ class DelmPipeline:
         else:
             self.ctx = SharedContext()
         self.queue = TaskQueue()
+        # Per-pipeline cost/latency tracker; attached to every worker and
+        # dumped into PipelineOutcome.metrics at the end.
+        self.metrics = metrics or MetricsTracker()
+        # Optional deterministic when-to-expand heuristic. When set, the
+        # last-worker step consults it with the real queue state (done /
+        # failed / budget) and the generated burst is bounded to n_new.
+        # expansion_budget > 0 caps the total tasks spawned this way.
+        self.expansion_policy = expansion_policy
+        self.expansion_budget = max(0, int(expansion_budget))
+        self._expansion_spawned = 0
         self.admission = AdmissionPipeline(
             llm=llm,
             verifier=_default_verifier(llm),
@@ -214,7 +246,8 @@ class DelmPipeline:
         workers = [
             Worker(i, self.llm, self.ctx, self.queue, self.admission,
                    reason=reason, yield_between=yield_between,
-                   author_id=f"worker-{i}", key=self._keys[i])
+                   author_id=f"worker-{i}", key=self._keys[i],
+                   metrics=self.metrics)
             for i in range(self.n_workers)
         ]
         rounds = 0
@@ -224,9 +257,9 @@ class DelmPipeline:
             rounds += 1
             # Last-worker step: generate more subtasks or finalize.
             if self.queue.is_empty():
-                more = self.generate_more(self.ctx, self.queue) \
-                    if self.generate_more else None
+                more = self._maybe_expand(workers)
                 if more:
+                    self._expansion_spawned += len(more)
                     self.queue.enqueue_many(more)
                     continue
                 break
@@ -240,7 +273,36 @@ class DelmPipeline:
             admitted_gists=len(self.ctx),
             rounds=rounds,
             workers=[w.result for w in workers],
+            metrics=self.metrics.aggregate(),
         )
+
+    def _maybe_expand(self, workers: list[Worker]) -> list[Task] | None:
+        """Last-worker step: decide (via ExpansionPolicy, if configured)
+        whether to generate more subtasks, and bound the burst to n_new.
+
+        Queue-state semantics: ``done`` counts tasks whose admission
+        succeeded; ``failed`` counts completed-but-rejected ones (so
+        ``done + failed == completed`` and the policy sees real signal).
+        """
+        if self.expansion_policy is None:
+            return (self.generate_more(self.ctx, self.queue)
+                    if self.generate_more else None)
+        completed = len(self.queue.done_labels())
+        failed = sum(w.result.failed for w in workers)
+        done = max(0, completed - failed)
+        if self.expansion_budget > 0:
+            budget_remaining = max(
+                0, self.expansion_budget - self._expansion_spawned)
+        else:
+            budget_remaining = 1 << 30  # unmanaged
+        decision = self.expansion_policy.decide(ExpansionState(
+            pending=0, running=0, done=done, failed=failed,
+            budget_remaining=budget_remaining))
+        if not decision.expand or self.generate_more is None:
+            return None
+        more = self.generate_more(self.ctx, self.queue) or []
+        more = more[:decision.n_new]
+        return more or None
 
     async def _finalize(self) -> str:
         prompt = (

@@ -85,6 +85,64 @@ agentes — con una capa de seguridad que el paper no trae.
 
 ---
 
+## Mejoras adicionales (capa anti-evasión, observabilidad y expansión)
+
+Tres módulos nuevos en `delm.core` que cierran los huecos reconocidos en el
+análisis, sin romper la disciplina del proyecto (deterministas, testeables,
+sin LLM en el loop):
+
+### Detector de inyección endurecido (`delm.core.injection_hardened`)
+
+El detector baseline es un catálogo de regex sobre el texto crudo, evadible
+con zero-width chars, homoglifos, leetspeak, acentos, palabras espaciadas
+por letra o payloads partidos en líneas. El detector endurecido normaliza
+antes de correr el mismo catálogo:
+
+1. strip de zero-width/invisibles (ZWSP, ZWNJ, bidi, soft hyphen, LRM/RLM,
+   selectores de variación);
+2. NFKD + drop de marcas combinadas (pliega acentos y fullwidth);
+3. lowercase;
+4. homoglifos: tabla reducida de confusables cirílico/griego;
+5. leetspeak (0->o, 3->e, @->a, ...);
+6. whitespace: newlines/tabs simples -> espacio (el catálogo no cruza
+   newlines); huecos anchos -> exactamente dos espacios;
+7. colapso de palabras espaciadas por letra ("i g n o r e" -> "ignore"),
+   capturando la run entera en un solo grupo — no se pierden letras del
+   medio;
+8. scan de regiones: el peor caso (todo el payload espaciado con espacios
+   simples) se detecta compactando cada region letter-spaced y chequeando
+   firmas ordenadas *dentro de la región* — acotado, sin falsos positivos
+   de documentos legítimos que mencionen "send" y una URL en párrafos
+   distintos.
+
+`SecureSharedContext` lo usa por defecto (`hardened_injection=True`,
+opt-out disponible) y anota `[evasion]` en el reason del taint cuando el
+hit solo fue posible tras normalizar. `HardenedVerdict` expone
+`evasion_detected`, `baseline_clean` y `region_hits` para telemetría A/B.
+
+### Métricas (`delm.core.metrics`)
+
+`MetricsTracker` registra coste/latencia por tarea: `timed()` como context
+manager (mutable in-flight), precios por modelo (tabla 2026 orientativa,
+overrideable), agregado con percentiles p50/p95, admit rate, retries,
+breakdown por worker **y por modelo**, serializable a JSON para el ledger.
+Si el bloque lanza, el registro se escribe igual con `admitted=False` y
+`error`, y la excepción se re-lanza. `DelmPipeline` crea uno por defecto,
+lo pasa a cada worker y vuelca el agregado en `PipelineOutcome.metrics`.
+
+### Política de expansión (`delm.core.expansion`)
+
+`ExpansionPolicy` decide cuándo invocar el paso "generate more subtasks":
+queue viva -> no; sin señal (done+failed==0) -> no; `target_progress`
+opt-in alcanzado -> no; presupuesto agotado -> no; `failure-storm`
+(fail_ratio >= umbral) -> no (terminal, documentado); si no, burst acotado
+`n_new = min(max_burst, budget_remaining)`. `DelmPipeline` la consulta con
+el estado real de la cola cuando se configura (`expansion_policy=...`,
+`expansion_budget=...`) y acota el burst generado a `n_new`.
+
+Los tres módulos están cableados en el pipeline real y cubiertos por
+`tests/test_mejoras.py`.
+
 ## Cómo usarlo
 
 ### Instalar
