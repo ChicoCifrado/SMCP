@@ -225,8 +225,8 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **47 tests en verde** (14 núcleo + 16 seguridad + 15 taint) y 3 demos que
-  pasan.
+- **75 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras) y
+  3 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 
@@ -236,11 +236,6 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   extremo-a-extremo, discovery Nostr/mDNS, bootstrap firmado, control-plane del
   owner) solo aplican al distribuir a multi-nodo. **No está construido** a
   propósito (YAGNI): el framework es in-proceso hoy.
-- **`generate_more` (round-2)** — el paso de "generar más subtareas" está
-  cableado en la interfaz pero la heurística de cuándo generar más no está
-  afinada todavía.
-- **Tracker de coste/latencia** — no hay métricas de coste por tarea ni de
-  latencia acumulada todavía.
 - **Modelo real cableado de serie** — `OpenAICompatibleClient` existe y se
   documenta, pero no hay una configuración de serie apuntando a un endpoint
   concreto (por diseño, no se hardcodea una API key).
