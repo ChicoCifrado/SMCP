@@ -178,15 +178,46 @@ python -m delm.demo.run_taint_demo      # Capa 5: cuarentena de prompt-injection
 python -m pytest
 ```
 
-El suite está repartido en tres archivos, todos deterministas:
+El suite está repartido en nueve archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
   usa el contexto seguro y firma.
 - `test_taint.py` — Capa 5: detector, niveles de taint, cierre transitivo,
   cuarentena en render y despliegue, y que el pipeline la trae por defecto.
+- `test_mejoras.py` — métricas (coste/latencia) y expansión cableadas en el
+  pipeline real.
+- `test_config.py` — loader de config: env > YAML > default, y que la key no
+  se toma del YAML.
+- `test_real_model_wiring.py` — wiring de punta a punta (config → cliente →
+  pipeline) contra un mock OpenAI-compatible, sin red externa.
+- `test_gossip.py` — capa 3: floor de versión, regla path-rich, re-difusión,
+  cambio significativo, retiro.
+- `test_requirements.py` — capa 3: inmutabilidad, `policy_hash`, atestación
+  de release, gates de admisión.
+- `test_heartbeat.py` — capa 3: registro, beat, frescura, `sweep`, revivir,
+  retiro.
 
 ### Usar un modelo real
+
+La config de modelo se resuelve con `delm/config.py`: **entorno > YAML >
+default**. La API key **solo por entorno** (nunca en el YAML ni en el repo).
+
+```bash
+# config/model_config.yaml (git-ignored)
+#   model: unsloth/Qwen3.8-27B-GGUF
+#   base_url: http://127.0.0.1:8888/v1
+#   api_key: ""            # se inyecta por entorno, nunca por archivo
+export DELM_API_KEY="..."   # o bien: export OPENAI_API_KEY="..."
+python -m delm.demo.run_real_demo --tasks 4 --workers 4
+```
+
+`load_config()` lee `DELM_MODEL`/`DELM_BASE_URL`/`DELM_API_KEY` (o `OPENAI_*`)
+y el YAML de `config/model_config.yaml`; `build_client()` devuelve un
+`OpenAICompatibleClient` listo para `DelmPipeline`. `run_real_demo` muestra la
+config resuelta (ocultando la key) antes de correr y avisa si falta el modelo.
+
+O, programáticamente:
 
 ```python
 import asyncio
@@ -212,6 +243,14 @@ El mismo `model` / `base_url` / `api_key` que el `config/model_config.yaml` de l
 referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 (cada worker firma con su identidad; el contexto verifica cada firma).
 
+> **Nota de despliegue:** el `run_real_demo` apunta por defecto a un endpoint
+> local (Unsloth, `127.0.0.1:8888`). Si el modelo aún no está cargado en el
+> runtime, la primera llamada devuelve `No model loaded`; cárgalo antes
+> (`POST /api/inference/load`) o usa un endpoint siempre-disponible. La wiring
+> de punta a punta (config → cliente → pipeline) está cubierta por
+> `tests/test_real_model_wiring.py` contra un mock OpenAI-compatible, sin red
+> externa.
+
 ---
 
 ## Progreso actual
@@ -225,20 +264,30 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **75 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras) y
-  3 demos que pasan.
+- **128 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+  16 config + 2 wiring + 35 capa 3: 13 gossip + 12 requirements + 10
+  heartbeat) y 3 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
+- **Config de modelo real de serie** — `delm/config.py` resuelve la config
+  (entorno > YAML > default), la API key solo por entorno, y
+  `run_real_demo` corre el pipeline contra un endpoint real; la wiring está
+  probada de punta a punta por `test_real_model_wiring.py`.
 
 **En construcción / pendiente:**
 
-- **Plano de transporte** — las reglas de transporte (QUIC/iroh con cifrado
-  extremo-a-extremo, discovery Nostr/mDNS, bootstrap firmado, control-plane del
-  owner) solo aplican al distribuir a multi-nodo. **No está construido** a
-  propósito (YAGNI): el framework es in-proceso hoy.
-- **Modelo real cableado de serie** — `OpenAICompatibleClient` existe y se
-  documenta, pero no hay una configuración de serie apuntando a un endpoint
-  concreto (por diseño, no se hardcodea una API key).
+- **Plano de transporte (capa 3)** — los mecanismos de malla están construidos
+  y testeados: `gossip` (propagación transitoria, floor de versión, regla
+  path-rich), `requirements` (requisitos inmutables + admisión + atestación de
+  release) y `heartbeat` (TTL + detección de caída / `CTRL_PEER_DOWN`). El
+  transporte QUIC E2E (handshake ECDSA P-256, ALPN, datos) está verificado en
+  un probe (aioquic), fuera del repo. **No está cableado** en el pipeline ni
+  expuesto como API de red: el framework sigue siendo in-proceso hoy; la
+  integración multi-nodo (discovery Nostr/mDNS, relays, bootstrap firmado como
+  en MeshLLM) queda pendiente.
+- **Modelo real en producción** — la config de serie existe y la wiring está
+  probada; queda por fijar un endpoint concreto y estable (hoy apunta al
+  local de Unsloth, cuyo modelo hay que cargar antes de correr).
 
 **Conocido / por diseño:**
 
@@ -266,19 +315,29 @@ delm/
     verifier.py        RuleVerifier, LLMVerifier         (la puerta de verificación)
     unfolding.py       Unfolding                         (G -> S -> raw)
     llm.py             LLMClient, FakeLLMClient, OpenAICompatibleClient
+    config.py          ModelConfig + load_config         (config de modelo real)
     pipeline.py        Worker, DelmPipeline              (el bucle descentralizado)
     provenance.py      digest canónico + firma ed25519/HMAC
     ledger.py          AdmissionLedger + TrustGate       (auditoría + gate)
     injection.py       detector de prompt-injection
     taint.py           TaintRegistry (niveles + cierre transitivo)
+    metrics.py         MetricsTracker                    (coste/latencia por tarea)
+    expansion.py       ExpansionPolicy                   (paso "generate more")
+    gossip.py          PeerAnnouncement/GossipTable      (propagación transitoria)
+    requirements.py    MeshRequirements/AdmissionEvaluator (requisitos inmutables)
+    heartbeat.py       HeartbeatTracker                  (TTL + detección de caída)
   demo/
     run_demo.py        demo end-to-end (sin API key)
+    run_real_demo.py   demo contra un modelo real (config-driven)
     run_security_demo.py   demo Capas 1+2
     run_taint_demo.py      demo Capa 5
   tests/
     test_delm.py       núcleo
     test_security.py   Capas 1+2
     test_taint.py      Capa 5
+    test_mejoras.py    metrics + expansion cableados
+    test_config.py     loader de config (env / yaml / precedencia)
+    test_real_model_wiring.py   wiring de cliente real (mock OpenAI-compat)
 ```
 
 ---

@@ -19,6 +19,7 @@ classifiers = [
 
 [project.scripts]
 delm-demo = "delm.demo.run_demo:main"
+delm-real-demo = "delm.demo.run_real_demo:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
