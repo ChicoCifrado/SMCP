@@ -169,3 +169,52 @@ def test_control_plane_down_command_executed(owner, bus):
     a.inject_command(cmd)
     a.poll_commands()
     assert a.status == "down"
+
+
+# -- Transporte Nostr (swappable con DiscoveryBus) --------------------------
+def test_nostr_transport_same_contract_as_discovery_bus(owner):
+    """El transporte Nostr implementa el mismo contrato que ``DiscoveryBus``.
+
+    ``NostrDiscoveryTransport`` se usa en ``DeploymentNode`` en lugar de
+    ``DiscoveryBus``: ``A`` anuncia, ``B`` lo recibe, y el relay **verificó
+    la firma BIP340** del evento (no lo descargó). El anuncio llega igual que
+    por el bus in-memory (mismo contrato).
+    """
+    from delm.core.nostr import NostrKey, NostrRelay, NostrDiscoveryTransport
+
+    relay = NostrRelay()
+    key = NostrKey.new()
+    nbus = NostrDiscoveryTransport(relay, key)
+    a = DeploymentNode("A", owner, nbus, now=lambda: 0.0, endpoint="ep-A")
+    b = DeploymentNode("B", owner, nbus, now=lambda: 0.0, endpoint="ep-B")
+    a.maybe_announce()
+    assert b.poll() == 1
+    assert "A" in b.peer_ids()
+    # El relay aceptó el evento (firmado, no descargado).
+    assert len(relay.events()) == 1
+    assert len(relay.dropped()) == 0
+
+
+def test_nostr_transport_relay_rejects_bad_signature(owner):
+    """El relay del transporte Nostr descarta un evento cuya firma no verifica.
+
+    Un evento fabricado con una firma de *otra* clave no verifica contra su
+    ``pubkey``: el relay lo descarta y el anuncio **no** llega al otro nodo.
+    (El transporte real solo emite eventos firmados por su ``key``, así esto
+    cubre el caso de un evento corrupto/falsificado en el relay.)
+    """
+    from delm.core.nostr import NostrEvent, NostrKey, NostrRelay, NostrDiscoveryTransport
+
+    relay = NostrRelay()
+    key = NostrKey.new()
+    nbus = NostrDiscoveryTransport(relay, key)
+    b = DeploymentNode("B", owner, nbus, now=lambda: 0.0, endpoint="ep-B")
+    # Un evento con la pubkey de `key` pero firmado por OTRA clave.
+    other = NostrKey.new()
+    ev = NostrEvent.signed(other, 0, 10000, [["d", "A"]], "x")
+    ev.pubkey = key.pubkey  # pubkey de `key`, firma de `other` -> no verifica
+    relay.publish(ev)
+    assert len(relay.dropped()) == 1
+    assert len(relay.events()) == 0
+    # Nada llegó a B (el relay no lo aceptó).
+    assert b.poll() == 0

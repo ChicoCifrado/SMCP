@@ -38,10 +38,16 @@ Diseño
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Evita un import circular en runtime: el type checker sabe que
+    # DeploymentNode.bus acepta NostrDiscoveryTransport (mismo contrato).
+    from delm.core.nostr import NostrDiscoveryTransport
 
 from delm.core.provenance import KeyPair, verify_public
 
@@ -86,6 +92,38 @@ class Announcement:
             separators=(",", ":"),
         ).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()
+
+    def to_dict(self) -> dict:
+        """Serializa el anuncio a un ``dict`` JSON-serializable.
+
+        El transporte Nostr emite el anuncio como ``data`` de un evento
+        (``kind=10000``) y lo reconstruye al recibirlo. ``signature`` viaja
+        en base64 (es ``bytes``).
+        """
+        return {
+            "node": self.node_id,
+            "endpoint": self.endpoint,
+            "caps": list(self.capabilities),
+            "epoch": self.epoch,
+            "ts": self.ts,
+            "hops": self.hops,
+            "sig": base64.b64encode(self.signature).decode("ascii"),
+            "author": self.author,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Announcement":
+        """Reconstruye un ``Announcement`` desde su ``to_dict``."""
+        return cls(
+            node_id=d["node"],
+            endpoint=d["endpoint"],
+            capabilities=tuple(d.get("caps", ())),
+            epoch=int(d.get("epoch", 0)),
+            ts=float(d.get("ts", 0.0)),
+            hops=int(d.get("hops", 0)),
+            signature=base64.b64decode(d.get("sig", "")),
+            author=d.get("author", ""),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +259,7 @@ class DeploymentNode:
         self,
         node_id: str,
         owner: Owner,
-        bus: DiscoveryBus,
+        bus: "DiscoveryBus | NostrDiscoveryTransport",
         now: Optional[Callable[[], float]] = None,
         *,
         endpoint: str = "",
