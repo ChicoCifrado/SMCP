@@ -166,3 +166,116 @@ def test_sign_rejects_zero_seckey():
 def test_pubkey_gen_rejects_zero_seckey():
     with pytest.raises(ValueError):
         pubkey_gen(b"\x00" * 32)
+
+
+# -- Relay de red (NostrRelayServer / NostrRelayClient) ----------------------
+# El relay de red es la pieza que cierra el objetivo: un relay Nostr real
+# (WebSocket) swappable con :class:`NostrRelay` (in-memory). Estos tests
+# verifican el round-trip: el servidor expone el puerto, el cliente conecta,
+# publica, y el relay verifica la firma BIP340 y emite a los demás
+# (excluyendo al remitente). Mismo espíritu que
+# ``test_mesh.py::test_mesh_pipeline_runs_over_quic``: funciones normales
+# (no ``async def``), con polling para el async.
+
+
+@pytest.fixture
+def relay_server():
+    """Un :class:`NostrRelayServer` corriendo (expone el puerto)."""
+    from delm.core.nostr import NostrRelayServer
+    server = NostrRelayServer()
+    server.start()
+    yield server
+    server.stop()
+
+
+def _make_client(uri: str):
+    from delm.core.nostr import NostrRelayClient
+    c = NostrRelayClient(uri)
+    c.connect()
+    return c
+
+
+def _wait_receive(client, timeout: float = 5.0, interval: float = 0.05) -> list:
+    """Espera a que ``client`` reciba eventos (drain y devuelve)."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        evs = client.events()
+        if evs:
+            return evs
+        time.sleep(interval)
+    return []
+
+
+def test_relay_server_exposes_port(relay_server):
+    """El servidor expone el puerto tras ``start()``."""
+    assert relay_server.port > 0
+
+
+def test_relay_client_receives_excluding_sender(relay_server):
+    """El relay emite a los demás, **excluyendo al remitente**.
+
+    ``c1`` publica; ``c2`` lo recibe; ``c1`` **no** lo recibe (el relay no
+    emite de vuelta al que envía).
+    """
+    from delm.core.nostr import NostrEvent, NostrKey
+    key = NostrKey.new()
+    c1 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
+    c2 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
+    try:
+        ev = NostrEvent.signed(key, 0, 10000, [["d", "n1"]], "hello")
+        assert c1.publish(ev) is True  # el relay verificó la firma y aceptó
+        # c2 lo recibe (el relay lo emitió).
+        got = _wait_receive(c2)
+        assert len(got) == 1
+        assert got[0].content == "hello"
+        # c1 NO lo recibe (el relay excluye al remitente).
+        assert c1.events() == []
+    finally:
+        c1.close()
+        c2.close()
+
+
+def test_relay_rejects_bad_signature(relay_server):
+    """Una firma **inválida** se rechaza (``publish`` devuelve False).
+
+    Un evento cuya firma no verifica contra su ``pubkey`` es rechazado por
+    el relay (la verificación la hace el relay, la autoridad). El rechazo se
+    guarda en ``dropped()`` (mismo contrato que el relay in-memory).
+    """
+    from delm.core.nostr import NostrEvent, NostrKey
+    key = NostrKey.new()
+    c1 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
+    try:
+        bad = NostrEvent(
+            pubkey=key.pubkey,
+            created_at=0,
+            kind=10000,
+            tags=[["d", "n1"]],
+            content="bad-sig",
+            sig=bytes(range(64)),  # firma no verificable
+        )
+        assert c1.publish(bad) is False  # el relay la rechazó
+        dropped = c1.dropped()
+        assert len(dropped) == 1
+        assert dropped[0].content == "bad-sig"
+    finally:
+        c1.close()
+
+
+def test_relay_client_same_contract_as_inmemory(relay_server):
+    """:class:`NostrRelayClient` expone el **mismo contrato** que
+    :class:`NostrRelay` (in-memory): ``publish`` / ``events`` / ``dropped``.
+    """
+    from delm.core.nostr import NostrEvent, NostrKey
+    key = NostrKey.new()
+    c1 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
+    try:
+        for name in ("publish", "events", "dropped"):
+            assert hasattr(c1, name)
+        ev = NostrEvent.signed(key, 0, 10000, [["d", "n1"]], "c")
+        assert isinstance(c1.publish(ev), bool)
+        assert isinstance(c1.events(), list)
+        assert isinstance(c1.dropped(), list)
+    finally:
+        c1.close()

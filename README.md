@@ -178,7 +178,7 @@ python -m delm.demo.run_taint_demo      # Capa 5: cuarentena de prompt-injection
 python -m pytest
 ```
 
-El suite está repartido en once archivos, todos deterministas:
+El suite está repartido en doce archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -199,8 +199,12 @@ El suite está repartido en once archivos, todos deterministas:
   retiro.
 - `test_mesh.py` — capa 3: transport/nodo/red/pipeline (integración),
   incluyendo el pipeline corriendo **sobre QUIC** (aioquic).
+- `test_nostr.py` — BIP340 (Schnorr secp256k1, x-only) verificado contra los
+  19 vectores oficiales, y el relay de red Nostr (`NostrRelayServer`/
+  `NostrRelayClient`): el round-trip, la verificación de firma y el rechazo.
 - `test_deployment.py` — capa 4: discovery, relays, bootstrap (firma del
-  owner) y control-plane (órdenes firmadas).
+  owner) y control-plane (órdenes firmadas), y el transporte Nostr (in-memory
+  y de red) swappable con `DiscoveryBus`.
 
 ### Usar un modelo real
 
@@ -268,10 +272,11 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **154 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+- **172 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
   16 config + 2 wiring + 51 capa 3: 13 gossip + 12 requirements + 10
-  heartbeat + 16 malla: transport/nodo/red/pipeline + QUIC e2e + 10 capa 4:
-  discovery/relays/bootstrap/control-plane) y 3 demos que pasan.
+  heartbeat + 16 malla: transport/nodo/red/pipeline + QUIC e2e + 15 nostr:
+  BIP340 contra los 19 vectores + relay de red + 13 capa 4: discovery/relays/
+  bootstrap/control-plane + transporte Nostr de red) y 3 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -297,13 +302,16 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   up/down que el nodo verifica y ejecuta). El transporte de anuncio
   (`DiscoveryBus`) es in-memory y swappable: el adaptador Nostr/mDNS real
   implementa la misma interfaz y se usa en su lugar. Cubierto por
-  `test_deployment.py` (10 tests).
+  `test_deployment.py` (13 tests).
 - **Despliegue multi-nodo (red)** — la capa 3 corre in-proceso (bus
   in-memory); la capa 4 (`deployment.py`) ya implementa discovery, relays y
-  bootstrap firmado. Lo que queda para nodos en hosts distintos es solo el
-  **adaptador real Nostr/mDNS** (hoy el transporte de anuncio es el
-  `DiscoveryBus` in-memory, swappable) y el transporte QUIC entre hosts
-  (el `QuicTransport` ya está presente para el loopback).
+  bootstrap firmado. El **adaptador real Nostr** ya existe: `nostr.py` trae
+  `NostrRelayServer`/`NostrRelayClient` (un relay de red por WebSocket,
+  swappable con el `NostrRelay` in-memory) y `NostrDiscoveryTransport`
+  soporta la forma de red (un transporte por nodo, cada uno con su
+  `NostrRelayClient`). Lo que queda para nodos en hosts distintos es el
+  transporte QUIC entre hosts (el `QuicTransport` ya está presente para el
+  loopback).
 - **Modelo real en producción** — la config de serie existe y la wiring está
   probada; queda por fijar un endpoint concreto y estable (hoy apunta al
   local de Unsloth, cuyo modelo hay que cargar antes de correr).
@@ -350,6 +358,7 @@ delm/
     mesh_network.py    MeshNetwork                       (conecta nodos, drena)
     mesh_pipeline.py   MeshPipeline/MeshWorker           (pipeline sobre la malla)
     deployment.py      Owner/DiscoveryBus/DeploymentNode (capa 4: discovery, relays, bootstrap, control-plane)
+    nostr.py           BIP340 + NostrEvent + NostrRelay/Server/Client (capa 4: relay de red)
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
@@ -366,7 +375,8 @@ delm/
     test_requirements.py capa 3: requisitos inmutables
     test_heartbeat.py  capa 3: heartbeat
     test_mesh.py       capa 3: transport/nodo/red/pipeline (integración)
-    test_deployment.py capa 4: discovery, relays, bootstrap, control-plane
+    test_nostr.py      capa 4: BIP340 (19 vectores) + relay de red (NostrRelayServer/Client)
+    test_deployment.py capa 4: discovery, relays, bootstrap, control-plane, transporte Nostr
 ```
 
 ---

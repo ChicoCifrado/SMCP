@@ -218,3 +218,54 @@ def test_nostr_transport_relay_rejects_bad_signature(owner):
     assert len(relay.events()) == 0
     # Nada llegó a B (el relay no lo aceptó).
     assert b.poll() == 0
+
+
+def test_nostr_transport_network_form(owner):
+    """:class:`NostrDiscoveryTransport` en **forma de red** (vía
+    :class:`NostrRelayClient`).
+
+    Dos nodos, cada uno con su propio transporte ligado a su propio
+    :class:`NostrRelayClient` (un ``NostrRelayServer`` de red de por medio).
+    ``A`` anuncia; el relay emite al cliente de ``B``; ``B`` lo recibe (vía
+    ``deliver`` que lee la bandeja entrante del cliente). Mismo contrato que
+    la forma in-memory: ``DeploymentNode`` no cambia.
+
+    Es **async** (el relay emite en su thread), así se espera a que ``B`` lo
+    reciba (polling), como en ``test_mesh.py::test_mesh_pipeline_runs_over_quic``.
+    """
+    import time
+    from delm.core.nostr import (
+        NostrKey,
+        NostrRelayServer,
+        NostrRelayClient,
+        NostrDiscoveryTransport,
+    )
+    server = NostrRelayServer()
+    server.start()
+    cA = cB = None
+    try:
+        key = NostrKey.new()
+        cA = NostrRelayClient(f"ws://127.0.0.1:{server.port}")
+        cA.connect()
+        cB = NostrRelayClient(f"ws://127.0.0.1:{server.port}")
+        cB.connect()
+        busA = NostrDiscoveryTransport(cA, key)
+        busB = NostrDiscoveryTransport(cB, key)
+        a = DeploymentNode("A", owner, busA, now=lambda: 0.0, endpoint="ep-A")
+        b = DeploymentNode("B", owner, busB, now=lambda: 0.0, endpoint="ep-B")
+        a.maybe_announce()
+        # B lo recibe (el relay emitió al cliente de B; esperarlo, es async).
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if b.poll() == 1:
+                break
+            time.sleep(0.05)
+        assert "A" in b.peer_ids()
+        # El anuncio de A está firmado por el owner (trust anchor).
+        assert b.peers["A"].author == owner.owner_id
+    finally:
+        if cA is not None:
+            cA.close()
+        if cB is not None:
+            cB.close()
+        server.stop()

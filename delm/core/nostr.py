@@ -17,11 +17,13 @@ Constantes (BIP340 / secp256k1):
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import os
-from typing import TYPE_CHECKING
+import threading
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     # Evita un import circular en runtime: NostrDiscoveryTransport tipa
@@ -363,11 +365,22 @@ class NostrDiscoveryTransport:
     loopback.
     """
 
-    def __init__(self, relay: NostrRelay, key: NostrKey) -> None:
+    def __init__(self, relay, key: "NostrKey") -> None:
         self.relay = relay
         self.key = key
         self._nodes: set[str] = set()
         self._inboxes: dict[str, list["Announcement"]] = {}
+
+    def _is_network(self) -> bool:
+        """``True`` si el relay es un :class:`NostrRelayClient` de red.
+
+        El relay de red (``NostrRelayClient``) ya hace el fan-out a los demás
+        clientes (el relay emite a todos menos al remitente), así que el
+        transporte no hace fan-out local: ``deliver`` lee de la bandeja
+        entrante del cliente. El relay in-memory (``NostrRelay``) no hace
+        fan-out, así que el transporte sí lo hace (``_inboxes``).
+        """
+        return hasattr(self.relay, "uri")
 
     def register(self, node: str) -> None:
         """Registra un nodo (su bandeja existe y recibe los broadcasts)."""
@@ -375,23 +388,45 @@ class NostrDiscoveryTransport:
         self._inboxes.setdefault(node, [])
 
     def publish(self, node: str, ann: "Announcement") -> None:
-        """Emite el anuncio de ``node`` como evento Nostr y lo entrega.
+        """Emite el anuncio de ``node`` como un evento Nostr (``kind=10000``).
 
         El anuncio se serializa (``to_dict()`` en base64) y se firma (BIP340)
-        su ``id``. El relay lo acepta si la firma verifica; entonces el
-        anuncio se entrega a las bandejas de los demás nodos.
+        su ``id``. El relay lo acepta si la firma verifica.
+
+        * In-memory: el transporte hace el fan-out a las bandejas de los demás
+          nodos (el relay no lo hace).
+        * De red: el relay ya emite a los demás clientes (menos al remitente),
+          así que el transporte no hace fan-out local.
         """
         content = base64.b64encode(
             json.dumps(ann.to_dict(), separators=(",", ":")).encode("utf-8")
         ).decode("ascii")
         ev = NostrEvent.signed(self.key, 0, 10000, [["d", node]], content)
-        if self.relay.publish(ev):
+        if self.relay.publish(ev) and not self._is_network():
             for other in self._nodes:
                 if other != node:
                     self._inboxes.setdefault(other, []).append(ann)
 
     def deliver(self, node: str) -> list["Announcement"]:
-        """Los anuncios que ``node`` recibe de los demás (FIFO)."""
+        """Los anuncios que ``node`` recibe de los demás (FIFO).
+
+        * In-memory: lee la bandeja local (``_inboxes``).
+        * De red: lee la bandeja entrante del cliente (``relay.events()``) y
+          decodifica cada evento (``content`` = base64 del ``to_dict``).
+        """
+        if self._is_network():
+            from delm.core.deployment import Announcement
+
+            out: list["Announcement"] = []
+            for ev in self.relay.events():
+                try:
+                    raw = base64.b64decode(ev.content).decode("utf-8")
+                    ann = Announcement.from_dict(json.loads(raw))
+                except Exception:
+                    continue
+                if ann.node_id != node:
+                    out.append(ann)
+            return out
         box = self._inboxes.setdefault(node, [])
         out = list(box)
         self._inboxes[node] = []
@@ -400,3 +435,310 @@ class NostrDiscoveryTransport:
     def nodes(self) -> list[str]:
         """Nodos registrados."""
         return sorted(self._nodes)
+
+
+# ---------------------------------------------------------------------------
+# Relay de red Nostr (WebSocket): servidor + cliente
+# ---------------------------------------------------------------------------
+# El relay de red es la pieza que cierra el objetivo: un relay Nostr real
+# (``wss://``) por WebSocket, swappable con :class:`NostrRelay` (in-memory).
+#
+# * :class:`NostrRelayServer` — el relay (coro async, se corre en un thread).
+#   Acepta conexiones, verifica la firma BIP340 de cada ``EVENT`` y lo emite
+#   a los suscriptores (broadcast).
+# * :class:`NostrRelayClient` — el cliente (API **síncrona**, encapsula el loop
+#   en un thread). Expone el **mismo contrato** que :class:`NostrRelay`
+#   (``publish``/``events``/``dropped``), así :class:`NostrDiscoveryTransport`
+#   lo usa sin cambios.
+#
+# Protocolo (JSON por WebSocket, uno por mensaje):
+#   cliente -> relay:  {"op": "req",  "filters": [...]}     (suscripción)
+#   cliente -> relay:  {"op": "event","event": <NostrEvent>} (publicación)
+#   cliente -> relay:  {"op": "close"}                    (cierra)
+#   relay -> cliente:  {"op": "event","event": <NostrEvent>} (emisión)
+#   relay -> cliente:  {"op": "ok",   "id": <id>}         (aceptado)
+#   relay -> cliente:  {"op": "bad",  "id": <id>, "why": "..."} (rechazado)
+#
+# La verificación de la firma BIP340 la hace el **relay** (autoridad): un
+# ``EVENT`` cuya firma no verifica contra su ``pubkey`` se rechaza (``bad``).
+
+
+class NostrRelayServer:
+    """Relay Nostr de red (coro async; se corre en un thread).
+
+    Acepta conexiones WebSocket, verifica la firma BIP340 de cada ``EVENT``
+    y la emite a los suscriptores. ``start()`` lanza el servidor en un thread
+    (``port=0`` -> el SO asigna el puerto; ``port`` lo expone tras ``start``).
+    ``stop()`` lo cierra.
+    """
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
+        self.host = host
+        self.port = port
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._server = None  # asyncio.Server (el de websockets)
+        self._ready = threading.Event()
+        self._bound_port: Optional[int] = None
+        self._conns: set = set()  # conexiones activas (ws)
+
+    # -- ciclo de vida -------------------------------------------------------
+    def start(self) -> None:
+        """Lanza el servidor en un thread y espera a que esté listo."""
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._ready.wait()
+
+    def stop(self) -> None:
+        """Cierra el servidor y el thread."""
+        if self._thread is None:
+            return
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._shutdown)
+        self._thread.join(timeout=5)
+        self._thread = None
+        self._loop = None
+        self._server = None
+
+    # -- interno -------------------------------------------------------------
+    def _run(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._serve())
+
+    async def _serve(self) -> None:
+        import websockets.asyncio.server as ws_server
+
+        async def handler(ws):
+            self._conns.add(ws)
+            try:
+                async for raw in ws:
+                    await self._on_message(ws, raw)
+            finally:
+                self._conns.discard(ws)
+
+        self._server = await ws_server.serve(handler, self.host, self.port)
+        # El puerto real (port=0 -> el SO lo asigna).
+        sock = self._server.sockets[0]
+        self._bound_port = sock.getsockname()[1]
+        self.port = self._bound_port
+        self._ready.set()
+        await self._server.wait_closed()
+
+    def _shutdown(self) -> None:
+        if self._server is not None:
+            for ws in list(self._conns):
+                self._loop.call_soon_threadsafe(
+                    lambda w=ws: self._close_ws(w)
+                )
+            self._server.close()
+
+    def _close_ws(self, ws) -> None:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+    async def _on_message(self, ws, raw: bytes) -> None:
+        import json as _json
+
+        try:
+            msg = _json.loads(raw)
+        except Exception:
+            return
+        op = msg.get("op")
+        if op == "event":
+            ev = NostrEvent.from_dict(msg["event"])
+            if ev.verify():
+                # Aceptado: emite a los demás (no al que lo envía).
+                await self._broadcast(ws, ev)
+                await self._send(ws, {"op": "ok", "id": ev.event_id().hex()})
+            else:
+                # Rechazado: el relay devuelve "rejected" **con el "event"
+                # completo**, para que el remitente lo guarde en
+                # ``dropped()``. "rejected" es la respuesta a un publish
+                # (va **solo al remitente**; los otros no lo reciben).
+                await self._send(
+                    ws,
+                    {
+                        "op": "rejected",
+                        "id": ev.event_id().hex(),
+                        "why": "firma no verificable",
+                        "event": ev.to_dict(),
+                    },
+                )
+        # "req" / "close": el transporte gestiona la suscripción a su nivel;
+        # el relay solo emite (broadcast) y verifica.
+
+    async def _broadcast(self, sender, ev) -> None:
+        import json as _json
+
+        payload = _json.dumps({"op": "event", "event": ev.to_dict()})
+        for ws in list(self._conns):
+            if ws is sender:
+                continue
+            try:
+                await ws.send(payload)
+            except Exception:
+                self._conns.discard(ws)
+
+    async def _send(self, ws, obj) -> None:
+        import json as _json
+
+        try:
+            await ws.send(_json.dumps(obj))
+        except Exception:
+            self._conns.discard(ws)
+
+
+class NostrRelayClient:
+    """Cliente de red Nostr (API **síncrona**; encapsula el loop en un thread).
+
+    Mismo contrato que :class:`NostrRelay` (in-memory): ``publish(ev)`` /
+    ``events()`` / ``dropped()``. Conecta a un :class:`NostrRelayServer` por
+    WebSocket y:
+
+    * ``publish(ev)``: envía ``EVENT`` al relay; el relay verifica la firma
+      BIP340 y la emite a los demás. Devuelve ``True`` si el relay la aceptó
+      (``ok``), ``False`` si la rechazó (``bad``).
+    * ``events()``: los eventos recibidos de los demás (el relay se los emite).
+    * ``dropped()``: los eventos que el relay rechazó (``bad``).
+
+    Uso::
+
+        server = NostrRelayServer().start()
+        client = NostrRelayClient(f"ws://127.0.0.1:{server.port}")
+        client.connect()
+        client.publish(ev)
+        evs = client.events()
+        client.close()
+    """
+
+    def __init__(self, uri: str) -> None:
+        self.uri = uri
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._ws = None
+        self._connected = threading.Event()
+        self._inbound: list = []      # eventos recibidos de los demás
+        self._dropped: list = []      # eventos rechazados por el relay
+        self._lock = threading.Lock()
+        self._ok_wait = None          # (threading.Event, dict) por publish
+
+    # -- ciclo de vida -------------------------------------------------------
+    def connect(self) -> None:
+        """Conecta al relay (lanza el loop en un thread)."""
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._connected.wait()
+
+    def close(self) -> None:
+        """Cierra la conexión y el thread."""
+        if self._thread is None:
+            return
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._do_close)
+        self._thread.join(timeout=5)
+        self._thread = None
+        self._loop = None
+        self._ws = None
+
+    # -- API pública (mismo contrato que NostrRelay) -------------------------
+    def publish(self, ev) -> bool:
+        """Envía ``ev`` al relay; el relay verifica la firma y la emite.
+
+        Devuelve ``True`` si el relay la aceptó (``ok``), ``False`` si la
+        rechazó (``bad``).
+        """
+        import json as _json
+
+        ready = threading.Event()
+        result: dict = {}
+        self._ok_wait = (ready, result)
+        self._loop.call_soon_threadsafe(
+            self._do_send, _json.dumps({"op": "event", "event": ev.to_dict()})
+        )
+        ready.wait()
+        self._ok_wait = None
+        return result.get("ok", False)
+
+    def events(self) -> list:
+        """Los eventos recibidos de los demás (el relay se los emite)."""
+        with self._lock:
+            out = list(self._inbound)
+            self._inbound.clear()
+            return out
+
+    def dropped(self) -> list:
+        """Los eventos que el relay rechazó (``bad``)."""
+        with self._lock:
+            out = list(self._dropped)
+            self._dropped.clear()
+            return out
+
+    # -- interno -------------------------------------------------------------
+    def _run(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._connect_and_loop())
+
+    async def _connect_and_loop(self) -> None:
+        import websockets.asyncio.client as ws_client
+
+        self._ws = await ws_client.connect(self.uri)
+        self._connected.set()
+        try:
+            async for raw in self._ws:
+                self._on_inbound(raw)
+        finally:
+            self._connected.clear()
+
+    def _on_inbound(self, raw: bytes) -> None:
+        import json as _json
+
+        try:
+            msg = _json.loads(raw)
+        except Exception:
+            return
+        op = msg.get("op")
+        if op == "event":
+            ev = NostrEvent.from_dict(msg["event"])
+            with self._lock:
+                self._inbound.append(ev)
+        elif op == "rejected":
+            # El relay rechazó un publish (el nuestro). El ``rejected`` va
+            # **solo al remitente** y lleva el ``event`` completo, para que
+            # lo guarde en ``dropped()`` (mismo contrato que el relay
+            # in-memory). Si no lo lleva, se resuelve igualmente.
+            if "event" in msg:
+                ev = NostrEvent.from_dict(msg["event"])
+                with self._lock:
+                    self._dropped.append(ev)
+            # Resuelve el ``ok_wait`` con ``ok=False`` (para que ``publish``
+            # no se bloquee).
+            if self._ok_wait is not None:
+                ready, result = self._ok_wait
+                result["ok"] = False
+                ready.set()
+        elif op == "ok":
+            # Responde a un publish: el relay aceptó el evento.
+            if self._ok_wait is not None:
+                ready, result = self._ok_wait
+                result["ok"] = True
+                ready.set()
+
+    def _do_send(self, payload: str) -> None:
+        # ``_do_send`` corre en el loop (vía ``call_soon_threadsafe``), así
+        # ``ensure_future`` se agenda directamente (sin anidar).
+        if self._ws is not None:
+            asyncio.ensure_future(self._ws.send(payload))
+
+    def _do_close(self) -> None:
+        # ``close`` es una coroutine en websockets 15.x: hay que agendarla
+        # (``ensure_future``), no solo llamarla (sería un no-op).
+        if self._ws is not None:
+            asyncio.ensure_future(self._ws.close())
