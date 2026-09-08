@@ -264,9 +264,9 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **128 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+- **144 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
   16 config + 2 wiring + 35 capa 3: 13 gossip + 12 requirements + 10
-  heartbeat) y 3 demos que pasan.
+  heartbeat + 16 malla: transport/nodo/red/pipeline + QUIC e2e) y 3 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -276,15 +276,18 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 
 **En construcción / pendiente:**
 
-- **Plano de transporte (capa 3)** — los mecanismos de malla están construidos
-  y testeados: `gossip` (propagación transitoria, floor de versión, regla
-  path-rich), `requirements` (requisitos inmutables + admisión + atestación de
-  release) y `heartbeat` (TTL + detección de caída / `CTRL_PEER_DOWN`). El
-  transporte QUIC E2E (handshake ECDSA P-256, ALPN, datos) está verificado en
-  un probe (aioquic), fuera del repo. **No está cableado** en el pipeline ni
-  expuesto como API de red: el framework sigue siendo in-proceso hoy; la
-  integración multi-nodo (discovery Nostr/mDNS, relays, bootstrap firmado como
-  en MeshLLM) queda pendiente.
+- **Capa 3 integrada en el pipeline** — el transporte de malla está cableado:
+  `transport.py` (`InMemoryTransport` in-proceso + `QuicTransport` aioquic),
+  `mesh_node.py` (un par: firma/publica gists, heartbeat, ciclo de vida),
+  `mesh_network.py` (conecta nodos, drena hasta convergencia) y
+  `mesh_pipeline.py` (`MeshPipeline`: el pipeline corre **sobre** la malla —
+  cada worker publica su gist **por la malla** y lo admite en el
+  `SecureSharedContext` de su nodo; al drenar, todos los nodos convergen al
+  mismo conjunto de gists). Cubierto por `test_mesh.py` (15 tests).
+- **Despliegue multi-nodo (red)** — la capa 3 corre in-proceso (bus
+  in-memory). El `QuicTransport` (aioquic) está presente para el despliegue
+  multi-proceso; queda por cablear discovery (Nostr/mDNS), relays y bootstrap
+  firmado (como en MeshLLM) para nodos en hosts distintos.
 - **Modelo real en producción** — la config de serie existe y la wiring está
   probada; queda por fijar un endpoint concreto y estable (hoy apunta al
   local de Unsloth, cuyo modelo hay que cargar antes de correr).
@@ -326,6 +329,10 @@ delm/
     gossip.py          PeerAnnouncement/GossipTable      (propagación transitoria)
     requirements.py    MeshRequirements/AdmissionEvaluator (requisitos inmutables)
     heartbeat.py       HeartbeatTracker                  (TTL + detección de caída)
+    transport.py       InMemoryTransport/QuicTransport   (datagramas de malla)
+    mesh_node.py       MeshNode                          (un par: firma+publica)
+    mesh_network.py    MeshNetwork                       (conecta nodos, drena)
+    mesh_pipeline.py   MeshPipeline/MeshWorker           (pipeline sobre la malla)
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
@@ -338,6 +345,10 @@ delm/
     test_mejoras.py    metrics + expansion cableados
     test_config.py     loader de config (env / yaml / precedencia)
     test_real_model_wiring.py   wiring de cliente real (mock OpenAI-compat)
+    test_gossip.py     capa 3: propagación transitoria
+    test_requirements.py capa 3: requisitos inmutables
+    test_heartbeat.py  capa 3: heartbeat
+    test_mesh.py       capa 3: transport/nodo/red/pipeline (integración)
 ```
 
 ---
