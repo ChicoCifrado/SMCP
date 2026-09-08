@@ -178,7 +178,7 @@ python -m delm.demo.run_taint_demo      # Capa 5: cuarentena de prompt-injection
 python -m pytest
 ```
 
-El suite está repartido en nueve archivos, todos deterministas:
+El suite está repartido en once archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -197,6 +197,10 @@ El suite está repartido en nueve archivos, todos deterministas:
   de release, gates de admisión.
 - `test_heartbeat.py` — capa 3: registro, beat, frescura, `sweep`, revivir,
   retiro.
+- `test_mesh.py` — capa 3: transport/nodo/red/pipeline (integración),
+  incluyendo el pipeline corriendo **sobre QUIC** (aioquic).
+- `test_deployment.py` — capa 4: discovery, relays, bootstrap (firma del
+  owner) y control-plane (órdenes firmadas).
 
 ### Usar un modelo real
 
@@ -264,9 +268,10 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **144 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
-  16 config + 2 wiring + 35 capa 3: 13 gossip + 12 requirements + 10
-  heartbeat + 16 malla: transport/nodo/red/pipeline + QUIC e2e) y 3 demos que pasan.
+- **154 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+  16 config + 2 wiring + 51 capa 3: 13 gossip + 12 requirements + 10
+  heartbeat + 16 malla: transport/nodo/red/pipeline + QUIC e2e + 10 capa 4:
+  discovery/relays/bootstrap/control-plane) y 3 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -283,11 +288,22 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   `mesh_pipeline.py` (`MeshPipeline`: el pipeline corre **sobre** la malla —
   cada worker publica su gist **por la malla** y lo admite en el
   `SecureSharedContext` de su nodo; al drenar, todos los nodos convergen al
-  mismo conjunto de gists). Cubierto por `test_mesh.py` (15 tests).
+  mismo conjunto de gists). Cubierto por `test_mesh.py` (16 tests).
+- **Capa 4 — despliegue multi-proceso** — `delm/core/deployment.py`: discovery
+  (el owner firma cada anuncio; un nodo se publica y los demás lo descubren),
+  relays (el bus hace broadcast: un publish llega a todos), bootstrap
+  (la firma del owner es el *trust anchor*: un anuncio/orden no verificable se
+  descarta, anti-MITM) y control-plane (el owner emite órdenes firmadas
+  up/down que el nodo verifica y ejecuta). El transporte de anuncio
+  (`DiscoveryBus`) es in-memory y swappable: el adaptador Nostr/mDNS real
+  implementa la misma interfaz y se usa en su lugar. Cubierto por
+  `test_deployment.py` (10 tests).
 - **Despliegue multi-nodo (red)** — la capa 3 corre in-proceso (bus
-  in-memory). El `QuicTransport` (aioquic) está presente para el despliegue
-  multi-proceso; queda por cablear discovery (Nostr/mDNS), relays y bootstrap
-  firmado (como en MeshLLM) para nodos en hosts distintos.
+  in-memory); la capa 4 (`deployment.py`) ya implementa discovery, relays y
+  bootstrap firmado. Lo que queda para nodos en hosts distintos es solo el
+  **adaptador real Nostr/mDNS** (hoy el transporte de anuncio es el
+  `DiscoveryBus` in-memory, swappable) y el transporte QUIC entre hosts
+  (el `QuicTransport` ya está presente para el loopback).
 - **Modelo real en producción** — la config de serie existe y la wiring está
   probada; queda por fijar un endpoint concreto y estable (hoy apunta al
   local de Unsloth, cuyo modelo hay que cargar antes de correr).
@@ -333,6 +349,7 @@ delm/
     mesh_node.py       MeshNode                          (un par: firma+publica)
     mesh_network.py    MeshNetwork                       (conecta nodos, drena)
     mesh_pipeline.py   MeshPipeline/MeshWorker           (pipeline sobre la malla)
+    deployment.py      Owner/DiscoveryBus/DeploymentNode (capa 4: discovery, relays, bootstrap, control-plane)
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
@@ -349,6 +366,7 @@ delm/
     test_requirements.py capa 3: requisitos inmutables
     test_heartbeat.py  capa 3: heartbeat
     test_mesh.py       capa 3: transport/nodo/red/pipeline (integración)
+    test_deployment.py capa 4: discovery, relays, bootstrap, control-plane
 ```
 
 ---
