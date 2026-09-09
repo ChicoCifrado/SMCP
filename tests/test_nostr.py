@@ -279,3 +279,85 @@ def test_relay_client_same_contract_as_inmemory(relay_server):
         assert isinstance(c1.dropped(), list)
     finally:
         c1.close()
+
+
+# -- Malla sobre Nostr (NostrTransport) --------------------------------------
+# ``NostrTransport`` lleva la malla (capa 3) **a red**: implementa
+# ``MeshTransport`` (``send``/``poll``/``close``) sobre un
+# :class:`NostrRelayClient`. El relay emite a los demás (**excluye al
+# remitente**), así el transporte es *best-effort broadcast*: ``t1.send``
+# llega a ``t2`` (y a los demás, si los hay). Mismo espíritu que los tests
+# del relay: funciones normales + polling para el async.
+
+
+def _make_transport(relay_server):
+    """Crea un :class:`NostrTransport` conectado al relay (devuelve (t, c))."""
+    from delm.core.nostr import NostrRelayClient, NostrKey, NostrTransport
+    key = NostrKey.new()
+    client = NostrRelayClient(f"ws://127.0.0.1:{relay_server.port}")
+    client.connect()
+    return NostrTransport(client, key), client
+
+
+def _wait_poll(transport, timeout: float = 5.0, interval: float = 0.05) -> list:
+    """Espera a que el transporte tenga datagramas (poll y devuelve)."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        got = transport.poll()
+        if got:
+            return got
+        time.sleep(interval)
+    return []
+
+
+def test_nostr_transport_peer_id_is_pubkey(relay_server):
+    """El ``peer_id`` de un :class:`NostrTransport` es su ``pubkey`` x-only."""
+    t, c = _make_transport(relay_server)
+    try:
+        # El peer_id es el pubkey (hex de 64) y coincide con la key.
+        assert len(t.peer_id) == 64
+        assert t.peer_id == t.key.pubkey.hex()
+    finally:
+        c.close()
+
+
+def test_nostr_transport_roundtrip(relay_server):
+    """``t1.send`` llega a ``t2`` (el relay emite a los demás).
+
+    ``t1.send(to, payload)`` firma un ``NostrEvent`` y lo publica; el relay
+    lo emite a ``t2`` (y a los demás, si los hay). ``t2.poll()`` devuelve
+    ``[(from_id, payload), ...]`` con el ``from_id`` del remitente.
+    """
+    t1, c1 = _make_transport(relay_server)
+    t2, c2 = _make_transport(relay_server)
+    try:
+        t1.send(t2.peer_id, b"hola malla")
+        got = _wait_poll(t2)
+        assert len(got) == 1
+        from_id, payload = got[0]
+        assert payload == b"hola malla"
+        # El from_id es el pubkey del remitente (t1).
+        assert from_id == t1.key.pubkey.hex()
+        # t1 NO lo recibe (el relay excluye al remitente).
+        assert t1.poll() == []
+    finally:
+        c1.close()
+        c2.close()
+
+
+def test_nostr_transport_is_mesh_transport(relay_server):
+    """:class:`NostrTransport` implementa ``MeshTransport`` (swappable).
+
+    Es swappable con :class:`InMemoryTransport` / :class:`QuicTransport`:
+    mismo contrato (``send``/``poll``/``close``), así un ``MeshNode`` lo usa
+    sin cambiar.
+    """
+    from delm.core.transport import MeshTransport
+    t, c = _make_transport(relay_server)
+    try:
+        assert isinstance(t, MeshTransport)
+        for name in ("send", "poll", "close"):
+            assert hasattr(t, name)
+    finally:
+        c.close()

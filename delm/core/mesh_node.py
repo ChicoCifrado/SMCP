@@ -259,14 +259,20 @@ class MeshNode:
             MSG_PEER_LEAVE, json.dumps({"peer_id": peer_id}).encode()))
 
     # -- ciclo de vida ---------------------------------------------------------
-    def run_tick(self) -> list[tuple[str, bytes]]:
+    def run_tick(self, incoming: list[tuple[str, bytes]] | None = None
+                 ) -> list[tuple[str, bytes]]:
         """Un paso del ciclo: procesa datagramas entrantes y emite salidas.
 
-        Devuelve las salidas enviadas en este tick (para tests/observabilidad).
+        Si ``incoming`` se da (modo Nostr, donde ``tick_all`` ya drenó la
+        bandeja), se procesa directamente; si no, se drena
+        ``self.transport.poll()``. Devuelve las salidas enviadas en este
+        tick (para tests/observabilidad).
         """
         sent: list[tuple[str, bytes]] = []
         # 1. Procesa los datagramas entrantes.
-        for from_id, payload in self.transport.poll():
+        if incoming is None:
+            incoming = self.transport.poll()
+        for from_id, payload in incoming:
             self.on_datagram(from_id, payload)
         # 2. Envía su anuncio a los vecinos (gossip) y su heartbeat.
         for nbr in list(self._neighbors):

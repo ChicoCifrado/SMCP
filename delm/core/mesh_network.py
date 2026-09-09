@@ -48,13 +48,18 @@ class MeshNetwork:
     nodo, tras verificar la firma del autor).
     """
 
-    def __init__(self, requirements: MeshRequirements, swarm: Any = None) -> None:
+    def __init__(self, requirements: MeshRequirements, swarm: Any = None,
+                 nostr: Any = None) -> None:
         self.requirements = requirements
         self.nodes: dict[str, MeshNode] = {}
         self._bus = _Bus()
         # ``swarm`` es un ``QuicSwarm`` compartido (modo QUIC) o ``None``
         # (modo in-proceso, ``InMemoryTransport``).
         self._swarm = swarm
+        # ``nostr`` es un ``NostrSwarm`` (modo Nostr, la malla **sobre red**):
+        # cada nodo usa un :class:`~delm.core.nostr.NostrTransport` (el relay
+        # de red hace el fan-out). Si no, ``None``.
+        self._nostr = nostr
         self._ticks = 0
 
     # -- creación de nodos ----------------------------------------------------
@@ -63,21 +68,34 @@ class MeshNetwork:
                  capabilities: tuple[str, ...] = ()) -> MeshNode:
         """Crea un nodo y lo añade a la malla.
 
-        El transporte depende del modo: si hay ``swarm`` (QUIC), el nodo usa
-        un ``QuicTransport`` sobre el swarm (y se añade al swarm); si no,
-        usa ``InMemoryTransport`` sobre el bus in-memory.
+        El transporte depende del modo:
+
+        * **Nostr** (``nostr``): ``NostrSwarm.add_peer`` genera la ``NostrKey``
+          y el ``peer_id`` del nodo es su ``pubkey`` x-only (hex de 64); el
+          transporte es un :class:`~delm.core.nostr.NostrTransport` (el relay
+          de red hace el fan-out).
+        * **QUIC** (``swarm``): ``QuicSwarm.add_peer`` y un ``QuicTransport``.
+        * **in-proceso** (por defecto): ``InMemoryTransport`` sobre el bus.
         """
         if peer_id in self.nodes:
             raise ValueError(f"nodo ya existe: {peer_id!r}")
         ctx = SecureSharedContext()
-        key = KeyPair.new(peer_id)
-        if self._swarm is not None:
-            self._swarm.add_peer(peer_id)
-            transport = QuicTransport(self._swarm, peer_id)
+        if self._nostr is not None:
+            # El pubkey es la identidad del nodo en la malla Nostr.
+            real_id = self._nostr.add_peer(peer_id)
+            key = KeyPair.new(real_id)
+            transport = self._nostr.transport_for(real_id)
+            node_id = real_id
         else:
-            transport = InMemoryTransport(self._bus, peer_id)
+            node_id = peer_id
+            key = KeyPair.new(peer_id)
+            if self._swarm is not None:
+                self._swarm.add_peer(peer_id)
+                transport = QuicTransport(self._swarm, peer_id)
+            else:
+                transport = InMemoryTransport(self._bus, peer_id)
         node = MeshNode(
-            peer_id=peer_id,
+            peer_id=node_id,
             version=version,
             capabilities=capabilities,
             transport=transport,
@@ -85,7 +103,7 @@ class MeshNetwork:
             key=key,
             req=self.requirements,
         )
-        self.nodes[peer_id] = node
+        self.nodes[node.peer_id] = node
         return node
 
     # -- drenado / convergencia ----------------------------------------------
@@ -93,21 +111,29 @@ class MeshNetwork:
         """Un paso: drena un tick sobre **todos** los nodos.
 
         En modo QUIC, antes de procesar se bombea el swarm (handshake +
-        datagramas), para que los datos estén en ``next_event`` cuando
-        ``run_tick`` los drena. Devuelve el nº de datagramas producidos en
-        este paso (para detectar convergencia).
+        datagramas). En modo Nostr, se drena la bandeja entrante de cada
+        nodo (la cuenta para la convergencia). Devuelve el nº de
+        datagramas producidos en este paso.
         """
-        # En modo QUIC, bombea el swarm (handshake + datagramas).
         if self._swarm is not None:
             pumped = self._swarm.pump()
         else:
             pumped = 0
         produced = pumped
         for node in self.nodes.values():
-            if self._swarm is None:
+            if self._nostr is not None:
+                # Nostr: drena la bandeja entrante (la cuenta para
+                # convergencia) y la pasa a run_tick.
+                incoming = node.transport.poll()
+                produced += len(incoming)
+                node.run_tick(incoming=incoming)
+            elif self._swarm is None:
                 # In-memory: cuenta los datagramas pendientes en el bus.
                 produced += len(self._bus.queue(node.peer_id))
-            node.run_tick()
+                node.run_tick()
+            else:
+                # QUIC: el conteo es el pump (ya en produced); run_tick drena.
+                node.run_tick()
         self._ticks += 1
         return produced
 

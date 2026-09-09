@@ -79,7 +79,8 @@ class MeshPipeline:
                  requirements: Optional[MeshRequirements] = None,
                  secure: bool = True,
                  metrics=None,
-                 quic: bool = False) -> None:
+                 quic: bool = False,
+                 nostr: bool = False) -> None:
         self.llm = llm
         self.n_workers = n_workers
         self.secure = secure
@@ -94,7 +95,15 @@ class MeshPipeline:
             self._swarm = QuicSwarm()
         else:
             self._swarm = None
-        self.mesh = MeshNetwork(requirements, swarm=self._swarm)
+        # Modo Nostr: la malla corre **sobre red** (un relay Nostr hace el
+        # fan-out). Un ``NostrSwarm`` compartido; si no, ``None``.
+        if nostr:
+            from delm.core.transport import NostrSwarm
+            self._nostr = NostrSwarm()
+        else:
+            self._nostr = None
+        self.mesh = MeshNetwork(requirements, swarm=self._swarm,
+                                 nostr=self._nostr)
         # Un nodo por worker.
         self._nodes: list[MeshNode] = [
             self.mesh.add_node(f"worker-{i}", version=(1, 0), capabilities=())

@@ -248,3 +248,39 @@ def test_mesh_pipeline_secure_admission():
     assert g.digest
     assert g.signature
     assert g.author_id
+
+
+def test_mesh_pipeline_runs_over_nostr():
+    """El pipeline corre **sobre red vía Nostr** y converge igual.
+
+    Mismo contrato que :func:`test_mesh_pipeline_runs_and_converges`, pero el
+    transporte es un :class:`~delm.core.nostr.NostrTransport` (el relay Nostr
+    hace el fan-out: cada nodo firma un ``NostrEvent`` BIP340 y el relay lo
+    reemite a los demás). La malla converge y cada nodo recibe todos los
+    gists.
+    """
+    from delm.core.nostr import NostrTransport
+    llm = FakeLLMClient()
+    req = MeshRequirements(mesh_id="m1", version_floor=(1, 0),
+                           protocol_generation=1)
+    pipe = MeshPipeline(llm=llm, n_workers=4, requirements=req, nostr=True)
+    # Verifica que el transporte es Nostr (no in-memory).
+    assert pipe._nostr is not None
+    assert any(isinstance(n.transport, NostrTransport) for n in pipe.mesh)
+    tasks = [Task(label=f"t{i}", body=f"do {i}", kind="solve")
+            for i in range(4)]
+    try:
+        out = _run(pipe.run(tasks))
+    finally:
+        # Cierra el relay (libera el puerto).
+        if getattr(pipe, "_nostr", None) is not None:
+            pipe._nostr.close()
+    # El pipeline corre sobre Nostr y converge.
+    assert out.mesh_status.converged is True
+    assert out.mesh_status.peers == 4
+    # Cada nodo tiene el conjunto completo de gists (convergencia).
+    sizes = [len(n.ctx) for n in pipe.mesh]
+    assert len(set(sizes)) == 1, f"no converge: {sizes}"
+    assert sizes[0] == 4
+    # La respuesta se produce.
+    assert out.answer

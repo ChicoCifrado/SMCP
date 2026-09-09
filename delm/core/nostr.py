@@ -25,6 +25,8 @@ import os
 import threading
 from typing import TYPE_CHECKING, Optional
 
+from delm.core.transport import MeshTransport
+
 if TYPE_CHECKING:
     # Evita un import circular en runtime: NostrDiscoveryTransport tipa
     # Announcement (de deployment) solo para el type checker.
@@ -742,3 +744,75 @@ class NostrRelayClient:
         # (``ensure_future``), no solo llamarla (sería un no-op).
         if self._ws is not None:
             asyncio.ensure_future(self._ws.close())
+
+
+# ---------------------------------------------------------------------------
+# Transporte de malla Nostr (capa 3 sobre red)
+# ---------------------------------------------------------------------------
+class NostrTransport(MeshTransport):
+    """Transporte de malla Nostr: lleva la malla (capa 3) **a red**.
+
+    Implementa :class:`~delm.core.transport.MeshTransport` (``send`` /
+    ``poll`` / ``close``) sobre un :class:`NostrRelayClient` de red, así un
+    :class:`~delm.core.mesh_node.MeshNode` puede correr **sobre la red**
+    (no solo in-proceso). Es swappable con
+    :class:`~delm.core.transport.InMemoryTransport` /
+    :class:`~delm.core.transport.QuicTransport`.
+
+    * **Identidad**: el ``peer_id`` de un nodo es su ``pubkey`` x-only
+      (BIP340, hex de 64). El ``send`` firma un ``NostrEvent`` (``kind=10001``)
+      con la :class:`NostrKey` del nodo; el ``poll`` deriva el ``from_id`` del
+      ``pubkey`` del evento recibido.
+    * **``send(to, payload)``**: firma ``NostrEvent`` (``content =
+      base64(payload)``, ``tags = [["d", to]]``) y lo publica vía el
+      :class:`NostrRelayClient`. El relay **verifica la firma BIP340** y la
+      emite a los demás (**excluye al remitente**).
+    * **``poll()``**: drena ``client.events()`` (destructivo), filtra los
+      ``kind=10001`` y devuelve ``[(from_id, payload), ...]`` (el contrato
+      :class:`~delm.core.transport.MeshTransport`).
+
+    El relay ya hace el *fan-out* (emite a todos menos al remitente), así el
+    transporte no hace broadcast: solo adapta. ``to`` / ``from_id`` son
+    ``pubkey`` hex (el espacio de identidad de la malla Nostr).
+    """
+
+    KIND = 10001  # datagrama de malla (gossip / gist / heartbeat)
+
+    def __init__(self, client: "NostrRelayClient", key: "NostrKey") -> None:
+        self.client = client
+        self.key = key
+
+    @property
+    def peer_id(self) -> str:
+        """El ``peer_id`` de este nodo: su ``pubkey`` x-only (hex de 64)."""
+        return self.key.pubkey.hex()
+
+    # -- MeshTransport -------------------------------------------------------
+    def send(self, to: str, payload: bytes) -> None:
+        """Envía ``payload`` a ``to``: firma un ``NostrEvent`` y lo publica.
+
+        ``to`` es el ``pubkey`` hex del destino. El relay verifica la firma
+        BIP340 y la emite a los demás (excluye al remitente).
+        """
+        ev = NostrEvent.signed(
+            self.key, 0, self.KIND, [["d", to]],
+            base64.b64encode(payload).decode("ascii"),
+        )
+        self.client.publish(ev)
+
+    def poll(self) -> list:
+        """Drena ``client.events()``: devuelve ``[(from_id, payload), ...]``.
+
+        ``from_id`` es el ``pubkey`` hex del remitente (derivado del ``pubkey``
+        del evento). Solo los ``kind=10001`` (los datagramas de malla).
+        """
+        out: list = []
+        for ev in self.client.events():
+            if ev.kind != self.KIND:
+                continue
+            out.append((ev.pubkey.hex(), base64.b64decode(ev.content)))
+        return out
+
+    def close(self) -> None:
+        """Cierra el cliente de red."""
+        self.client.close()

@@ -209,8 +209,12 @@ class QuicSwarm:
     def peers(self) -> dict[str, _QuicPeer]:
         return self._peers
 
-    def add_peer(self, peer_id: str) -> None:
+    def add_peer(self, peer_id: str, key=None) -> None:
         """Añade un par y crea sus conexiones con los pares ya existentes.
+
+        ``key`` es opcional y lo ignora este transporte (solo lo usa el swarm
+        Nostr, que lo necesita para firmar); se acepta para que el contrato
+        de swarm sea uniforme (``add_peer(peer_id, key)``).
 
         Para cada par ``p`` ya en la malla, ``peer_id`` y ``p`` forman un par:
         el de menor índice es **cliente** y el de mayor, **servidor**. Así el
@@ -225,6 +229,11 @@ class QuicSwarm:
             lo, hi = (p, peer_id) if p < peer_id else (peer_id, p)
             self._mk_client(lo, hi)
             self._mk_server(lo, hi)
+
+    def transport_for(self, peer_id: str) -> "QuicTransport":
+        """La :class:`QuicTransport` de ``peer_id`` (lo que un
+        :class:`~delm.core.mesh_node.MeshNode` usa como transporte)."""
+        return QuicTransport(self, peer_id)
 
     def connect(self) -> None:
         """Asegura que todos los pares están conectados (idempotente).
@@ -390,3 +399,76 @@ class QuicTransport(MeshTransport):
 
     def close(self) -> None:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Orquestador Nostr (malla sobre red, capa 3)
+# ---------------------------------------------------------------------------
+class NostrSwarm:
+    """Orquestador de la malla **sobre red** vía Nostr (capa 3).
+
+    Es el equivalente Nostr de :class:`QuicSwarm`: crea un
+    :class:`~delm.core.nostr.NostrRelayServer` (el relay) y, para cada par,
+    un :class:`~delm.core.nostr.NostrRelayClient` + su
+    :class:`~delm.core.nostr.NostrTransport`. El relay hace el fan-out
+    (emite a todos menos al remitente), así el transporte no hace broadcast.
+
+    * **Identidad**: el ``peer_id`` de un par es su ``pubkey`` x-only (hex de
+      64, BIP340). ``add_peer`` genera una :class:`~delm.core.nostr.NostrKey`
+      si no se da una, y expone el ``pubkey`` como el ``peer_id``.
+    * **``transport_for(peer_id)``**: el :class:`~delm.core.nostr.NostrTransport`
+      del par (lo que un :class:`~delm.core.mesh_node.MeshNode` usa).
+    * **``pump()``**: no-op (el relay lo hace en su thread); se mantiene para
+      que :meth:`MeshNetwork.drain` lo pueda llamar de forma uniforme.
+
+    El relay corre en un thread (``NostrRelayServer.start``); ``close()`` lo
+    para. ``port`` expone el puerto del relay (para los tests).
+    """
+
+    def __init__(self) -> None:
+        from delm.core.nostr import NostrRelayServer, NostrRelayClient, NostrKey
+        self._server = NostrRelayServer()
+        self._server.start()
+        self._clients: dict[str, "NostrRelayClient"] = {}
+        self._keys: dict[str, "NostrKey"] = {}
+
+    # -- API pública -------------------------------------------------------
+    @property
+    def port(self) -> int:
+        """El puerto del relay (para los tests)."""
+        return int(self._server.port or 0)
+
+    def add_peer(self, peer_id: str, key=None) -> str:
+        """Añade un par y devuelve su ``peer_id`` (el ``pubkey`` hex).
+
+        Si ``key`` no se da, se genera una :class:`~delm.core.nostr.NostrKey`
+        aleatoria. El ``peer_id`` retornado es el ``pubkey`` x-only (hex de
+        64) de la key, que es la **identidad** del par en la malla Nostr.
+        """
+        from delm.core.nostr import NostrKey, NostrRelayClient
+        if key is None:
+            key = NostrKey.new()
+        real_id = key.pubkey.hex()
+        self._keys[real_id] = key
+        client = NostrRelayClient(f"ws://127.0.0.1:{self._server.port}")
+        client.connect()
+        self._clients[real_id] = client
+        return real_id
+
+    def transport_for(self, peer_id: str):
+        """El :class:`~delm.core.nostr.NostrTransport` de ``peer_id``."""
+        from delm.core.nostr import NostrTransport
+        return NostrTransport(self._clients[peer_id], self._keys[peer_id])
+
+    def pump(self) -> int:
+        """No-op: el relay lo hace en su thread. Devuelve 0."""
+        return 0
+
+    def close(self) -> None:
+        """Cierra los clientes y para el relay."""
+        for client in self._clients.values():
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001 - cierre tolerante
+                pass
+        self._server.stop()
