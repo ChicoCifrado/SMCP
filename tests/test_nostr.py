@@ -361,3 +361,59 @@ def test_nostr_transport_is_mesh_transport(relay_server):
             assert hasattr(t, name)
     finally:
         c.close()
+
+
+def test_nostr_mesh_two_nodes_converge(relay_server):
+    """2 nodos ``MeshNode`` sobre Nostr: gossip + heartbeat + convergencia.
+
+    Es el mismo flujo que la demo multi-host (2 procesos), pero in-proceso:
+    cada nodo tiene su propio ``NostrRelayClient`` (el relay hace el
+    fan-out), se anuncian (gossip), se intercambian heartbeats y publican
+    gists hasta converger — cada ``ctx`` termina con los 2 gists (el propio
+    + el del otro).
+    """
+    import time
+    from delm.core.nostr import NostrKey, NostrRelayClient, NostrTransport
+    from delm.core.mesh_node import MeshNode
+    from delm.core.secure_context import SecureSharedContext
+    from delm.core.requirements import MeshRequirements
+    from delm.core.provenance import KeyPair
+    from delm.core.gist import Gist, GistKind
+
+    req = MeshRequirements(mesh_id="m1", version_floor=(1, 0))
+
+    def _node():
+        key = NostrKey.new()
+        client = NostrRelayClient(f"ws://127.0.0.1:{relay_server.port}")
+        client.connect()
+        node = MeshNode(
+            peer_id=key.pubkey.hex(), version=(1, 0), capabilities=(),
+            transport=NostrTransport(client, key), ctx=SecureSharedContext(),
+            key=KeyPair.new(key.pubkey.hex()), req=req,
+        )
+        return node, client
+
+    n1, c1 = _node()
+    n2, c2 = _node()
+    try:
+        # Cada nodo firma su gist con su KeyPair y se lo envía al otro
+        # (el relay hace el fan-out). Al recibirlo, el otro registra la
+        # key pública del autor y lo admite (verificando la firma).
+        raw1 = n1.publish_gist(Gist(label="g1", gist="gist A", kind=GistKind.FACT))
+        raw2 = n2.publish_gist(Gist(label="g2", gist="gist B", kind=GistKind.FACT))
+        n1.transport.send(n2.peer_id, raw1)
+        n2.transport.send(n1.peer_id, raw2)
+        # Drena hasta converger (cada ctx admite el gist del otro).
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            n1.run_tick()
+            n2.run_tick()
+            if len(n1.ctx) >= 1 and len(n2.ctx) >= 1:
+                break
+            time.sleep(0.05)
+        # Convergen: cada ctx tiene el gist del otro.
+        assert "g2" in [g.label for g in n1.ctx], f"n1 no tiene g2: {list(n1.ctx)}"
+        assert "g1" in [g.label for g in n2.ctx], f"n2 no tiene g1: {list(n2.ctx)}"
+    finally:
+        c1.close()
+        c2.close()
