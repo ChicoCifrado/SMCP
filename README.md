@@ -283,12 +283,13 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **177 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
-  16 config + 2 wiring + 52 capa 3: 13 gossip + 12 requirements + 10
+- **180 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+  16 config + 2 wiring + 55 capa 3: 13 gossip + 12 requirements + 10
   heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
-  19 capa 3/4 Nostr: BIP340 contra los 19 vectores + relay de red +
-  NostrTransport + convergencia de malla + 13 capa 4: discovery/relays/
-  bootstrap/control-plane + transporte Nostr de red) y 4 demos que pasan.
+  3 QUIC entre hosts: framing/round-trip/malla completa + 19 capa 3/4 Nostr:
+  BIP340 contra los 19 vectores + relay de red + NostrTransport + convergencia
+  de malla + 13 capa 4: discovery/relays/bootstrap/control-plane + transporte
+  Nostr de red) y 4 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -323,10 +324,15 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   `MeshTransport` `send`/`poll`) reemplaza a `InMemoryTransport`/`QuicTransport`
   y `MeshNetwork`/`MeshPipeline` lo activan con `nostr=True`. La convergencia
   es la misma que in-memory/QUIC (2 nodos, gossip, converge al mismo conjunto
-  de gists). Lo que queda para nodos en hosts distintos es el transporte QUIC
-  entre hosts (el `QuicTransport` ya está presente para el loopback) y el
-  `NostrDiscoveryTransport` soporta la forma de red (un transporte por nodo,
-  cada uno con su `NostrRelayClient`).
+  de gists). El **transporte QUIC entre hosts** (`quic_host.py`) está
+  implementado: `QuicHostSwarm` (equivalente a `QuicSwarm`, pero con red real)
+  crea un `QuicHostNode` por par (cada uno con su event loop asyncio en un
+  hilo), asigna un puerto por par (el par de mayor índice es servidor y
+  escucha; el de menor, cliente y se conecta) y expone `QuicHostTransport`
+  (mismo contrato `send`/`poll` que `QuicSwarm`). Cubierto por
+  `test_quic_host.py` (framing, round-trip 1 par, malla completa 3 nodos).
+  El `NostrDiscoveryTransport` soporta la forma de red (un transporte por
+  nodo, cada uno con su `NostrRelayClient`).
 - **Modelo real en producción** — la config de serie existe y la wiring está
   probada; queda por fijar un endpoint concreto y estable (hoy apunta al
   local de Unsloth, cuyo modelo hay que cargar antes de correr).
