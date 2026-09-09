@@ -272,11 +272,12 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **172 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
-  16 config + 2 wiring + 51 capa 3: 13 gossip + 12 requirements + 10
-  heartbeat + 16 malla: transport/nodo/red/pipeline + QUIC e2e + 15 nostr:
-  BIP340 contra los 19 vectores + relay de red + 13 capa 4: discovery/relays/
-  bootstrap/control-plane + transporte Nostr de red) y 3 demos que pasan.
+- **176 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+  16 config + 2 wiring + 52 capa 3: 13 gossip + 12 requirements + 10
+  heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
+  18 capa 3/4 Nostr: BIP340 contra los 19 vectores + relay de red +
+  NostrTransport + 13 capa 4: discovery/relays/bootstrap/control-plane +
+  transporte Nostr de red) y 3 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -293,7 +294,8 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   `mesh_pipeline.py` (`MeshPipeline`: el pipeline corre **sobre** la malla —
   cada worker publica su gist **por la malla** y lo admite en el
   `SecureSharedContext` de su nodo; al drenar, todos los nodos convergen al
-  mismo conjunto de gists). Cubierto por `test_mesh.py` (16 tests).
+  mismo conjunto de gists). Cubierto por `test_mesh.py` (17 tests,
+  incluyendo la convergencia sobre red vía Nostr).
 - **Capa 4 — despliegue multi-proceso** — `delm/core/deployment.py`: discovery
   (el owner firma cada anuncio; un nodo se publica y los demás lo descubren),
   relays (el bus hace broadcast: un publish llega a todos), bootstrap
@@ -303,15 +305,17 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   (`DiscoveryBus`) es in-memory y swappable: el adaptador Nostr/mDNS real
   implementa la misma interfaz y se usa en su lugar. Cubierto por
   `test_deployment.py` (13 tests).
-- **Despliegue multi-nodo (red)** — la capa 3 corre in-proceso (bus
-  in-memory); la capa 4 (`deployment.py`) ya implementa discovery, relays y
-  bootstrap firmado. El **adaptador real Nostr** ya existe: `nostr.py` trae
-  `NostrRelayServer`/`NostrRelayClient` (un relay de red por WebSocket,
-  swappable con el `NostrRelay` in-memory) y `NostrDiscoveryTransport`
-  soporta la forma de red (un transporte por nodo, cada uno con su
-  `NostrRelayClient`). Lo que queda para nodos en hosts distintos es el
-  transporte QUIC entre hosts (el `QuicTransport` ya está presente para el
-  loopback).
+- **Despliegue multi-nodo (red)** — la capa 3 **corre sobre red** vía Nostr:
+  `NostrSwarm` (equivalente a `QuicSwarm`) crea un `NostrRelayServer` (el
+  relay) y, por par, una `NostrKey` (identidad = `pubkey` x-only) + un
+  `NostrRelayClient`; `NostrTransport` (adaptador BIP340 al contrato
+  `MeshTransport` `send`/`poll`) reemplaza a `InMemoryTransport`/`QuicTransport`
+  y `MeshNetwork`/`MeshPipeline` lo activan con `nostr=True`. La convergencia
+  es la misma que in-memory/QUIC (2 nodos, gossip, converge al mismo conjunto
+  de gists). Lo que queda para nodos en hosts distintos es el transporte QUIC
+  entre hosts (el `QuicTransport` ya está presente para el loopback) y el
+  `NostrDiscoveryTransport` soporta la forma de red (un transporte por nodo,
+  cada uno con su `NostrRelayClient`).
 - **Modelo real en producción** — la config de serie existe y la wiring está
   probada; queda por fijar un endpoint concreto y estable (hoy apunta al
   local de Unsloth, cuyo modelo hay que cargar antes de correr).
