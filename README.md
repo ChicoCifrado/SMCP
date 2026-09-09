@@ -172,6 +172,17 @@ python -m delm.demo.run_security_demo   # Capas 1+2: firma, integridad, inmutabi
 python -m delm.demo.run_taint_demo      # Capa 5: cuarentena de prompt-injection
 ```
 
+### Demo multi-host (capa 3 sobre red)
+
+```bash
+python -m delm.demo.run_multihost_demo
+```
+
+Arranca 1 relay Nostr + 2 nodos en **procesos distintos**: cada nodo firma su
+gist (BIP340), se intercambian gossip/heartbeat por Nostr y convergen al
+mismo conjunto de gists. Es la demo de punta a punta del despliegue
+multi-host (la malla corre sobre red, no in-proceso).
+
 ### Probar
 
 ```bash
@@ -272,12 +283,12 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **176 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+- **177 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
   16 config + 2 wiring + 52 capa 3: 13 gossip + 12 requirements + 10
   heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
-  18 capa 3/4 Nostr: BIP340 contra los 19 vectores + relay de red +
-  NostrTransport + 13 capa 4: discovery/relays/bootstrap/control-plane +
-  transporte Nostr de red) y 3 demos que pasan.
+  19 capa 3/4 Nostr: BIP340 contra los 19 vectores + relay de red +
+  NostrTransport + convergencia de malla + 13 capa 4: discovery/relays/
+  bootstrap/control-plane + transporte Nostr de red) y 4 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
