@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "delm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Decentralized Language Models (DELM) — clean-room implementation: shared verified context, dependency-aware task queue, admission verification, selective unfolding, parallel workers."
 readme = "README.md"
 requires-python = ">=3.11"
