@@ -6,3 +6,21 @@ aiohttp>=3.9          # async http for optional fetches
 # Dev / test
 pytest>=8.0
 pytest-asyncio>=0.23
+
+# ---------------------------------------------------------------------------
+# Extras (opcionales, por transporte/capa) — ver pyproject.toml [project.optional-dependencies]
+#   pip install delm[nostr]  -> relay Nostr de red (capa 4)
+#   pip install delm[quic]   -> QUIC entre hosts (capa 3)
+#   pip install delm[mdns]   -> mDNS discovery (capa 4)
+#   pip install delm[all]    -> los tres anteriores
+# El fallback HMAC (pre-shared key) no necesita extra: es stdlib.
+# ---------------------------------------------------------------------------
+
+# [nostr] relay Nostr de red (capa 4)
+websockets>=12.0
+
+# [quic] QUIC entre hosts (capa 3)
+aioquic>=1.0
+
+# [mdns] mDNS discovery (capa 4)
+aiozeroconf>=0.9

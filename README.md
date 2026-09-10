@@ -154,6 +154,24 @@ pip install -e .
 
 Requiere Python 3.11+.
 
+### Extras (dependencias por transporte)
+
+Las capas de red tienen dependencias opcionales declaradas como **extras** en
+`pyproject.toml` (`[project.optional-dependencies]`):
+
+```bash
+pip install delm[nostr]   # websockets  -> relay Nostr de red (capa 4)
+pip install delm[quic]    # aioquic     -> QUIC entre hosts (capa 3)
+pip install delm[mdns]    # aiozeroconf -> mDNS discovery (capa 4)
+pip install delm[all]     # los tres anteriores
+```
+
+El núcleo (capas 1-5, firma, integridad, inmutabilidad, taint) **no necesita
+extras**: corre con stdlib. El fallback HMAC (pre-shared key) también es stdlib
+(no requiere `cryptography`), pero el **modo estricto** (default) hace que el
+pipeline real no lo use sin que nadie lo note — ver
+[Conocido/por diseño](#conocido--por-diseño).
+
 ### Demo sin API key
 
 ```bash
@@ -292,7 +310,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **216 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **225 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -305,9 +323,10 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   por `pubkey`, dedup, límite de tamaño, snapshot/restore y default efímero +
   13 capa 4: discovery/relays/bootstrap/control-plane + transporte
   Nostr de red + 8 mDNS: el transporte de discovery mDNS (swappable con
-  `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) + 2 demo
-  multi-host: convergencia sobre QUIC (default) y Nostr (`--nostr`), y 4
-  demos que pasan.
+  `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) + 9 modo
+  estricto: el provenance no degrada silenciosamente a HMAC (lanza en estricto,
+  warning en no-estricto, `allow_hmac_fallback`) + 2 demo multi-host:
+  convergencia sobre QUIC (default) y Nostr (`--nostr`), y 4 demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -371,8 +390,14 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   clasificador LLM a propósito: costaría por gist y reintroduciría
   no-determinismo; el umbral + taint ya contienen el caso.
 - **La firma ed25519 tiene fallback HMAC** si `cryptography` no está disponible
-  (pre-shared key). En producción se asume `cryptography` presente; el fallback
-  es para que el framework corra con cero dependencias.
+  (pre-shared key). **El modo estricto es el default** (`STRICT_MODE=True` en
+  `provenance.py`): el pipeline real **no degrada silenciosamente** a HMAC —
+  `KeyPair.new()` lanza `RuntimeError` si falta `cryptography`, en vez de
+  firmar con la clave pre-compartida sin que nadie lo note. Para el modo de
+  test/zero-deps, `STRICT_MODE=False` o `allow_hmac_fallback=True` degradan a
+  HMAC **con warning visible** (el fallback ya no es silencioso). Los extras
+  (`delm[nostr]`, `delm[quic]`, `delm[mdns]`, `delm[all]`) declaran las deps
+  reales en `pyproject.toml`.
 
 ---
 

@@ -47,6 +47,19 @@ except Exception:  # noqa: BLE001 - degrade to HMAC
 #: True when real ed25519 signatures are available.
 HAVE_ED25519 = _HAVE_Cryptography
 
+#: Modo estricto (default): el pipeline real NO degrada silenciosamente a
+#: HMAC si ``cryptography`` no está disponible. En modo estricto,
+#: ``KeyPair.new()`` (kind=None) lanza si no hay ed25519, en vez de
+#: degradar a HMAC (pre-shared key). El modo no-estricto (``STRICT_MODE=False``)
+#: o ``allow_hmac_fallback=True`` permiten el fallback (con warning) para el
+#: modo de test/zero-deps.
+#:
+#: Rationale: un despliegue sin ``cryptography`` que firma con el fallback
+#: HMAC sin que nadie lo note deja de ser verificación pública asimétrica
+#: (la clave pre-compartida ES el trust anchor). El modo estricto hace que
+#: ese despliegue *falle claro* en vez de degradar silenciosamente.
+STRICT_MODE = True
+
 
 # --------------------------------------------------------------------------
 # Canonical digest
@@ -113,10 +126,45 @@ class KeyPair:
     public_key: bytes
 
     @classmethod
-    def new(cls, author_id: str, kind: str | None = None) -> "KeyPair":
-        """Create a fresh key. ``kind=None`` picks ed25519 if available."""
+    def new(cls, author_id: str, kind: str | None = None,
+            *, allow_hmac_fallback: bool = False) -> "KeyPair":
+        """Create a fresh key. ``kind=None`` picks ed25519 if available.
+
+        En **modo estricto** (``STRICT_MODE=True``, el default), ``kind=None``
+        lanza ``RuntimeError`` si no hay ed25519 disponible, en vez de
+        degradar silenciosamente a HMAC (pre-shared key). El modo estricto
+        hace que un despliegue sin ``cryptography`` *falle claro* en vez de
+        firmar con el fallback sin que nadie lo note.
+
+        Para el modo de test/zero-deps, se puede:
+
+        * ``STRICT_MODE = False`` (módulo-level), o
+        * ``allow_hmac_fallback=True`` (por llamada) — en cuyo caso se degrada
+          a HMAC **con warning** visible (el fallback ya no es silencioso).
+        """
         if kind is None:
-            kind = "ed25519" if HAVE_ED25519 else "hmac"
+            if HAVE_ED25519:
+                kind = "ed25519"
+            elif STRICT_MODE and not allow_hmac_fallback:
+                raise RuntimeError(
+                    "ed25519 no disponible (falta 'cryptography') y el modo "
+                    "estricto está activo: no se degrada silenciosamente a "
+                    "HMAC (pre-shared key). Instala 'cryptography' para "
+                    "ed25519, o usa allow_hmac_fallback=True / STRICT_MODE=False "
+                    "para el modo de test/zero-deps."
+                )
+            else:
+                # Modo no-estricto: fallback a HMAC con warning visible.
+                import warnings
+                warnings.warn(
+                    "Falling back to HMAC (pre-shared key) because "
+                    "'cryptography' is not available. This is NOT public "
+                    "verification (asymmetric); the shared key is the trust "
+                    "anchor. Install 'cryptography' for real ed25519.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                kind = "hmac"
         if kind == "ed25519":
             if not HAVE_ED25519:
                 raise RuntimeError("ed25519 requested but 'cryptography' is not installed")

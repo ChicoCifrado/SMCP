@@ -21,6 +21,18 @@ classifiers = [
 delm-demo = "delm.demo.run_demo:main"
 delm-real-demo = "delm.demo.run_real_demo:main"
 
+# Extras: dependencias opcionales por transporte/capa.
+#   delm[nostr]  -> websockets (relay Nostr de red, capa 4)
+#   delm[quic]   -> aioquic (QUIC entre hosts, capa 3)
+#   delm[mdns]   -> aiozeroconf (mDNS discovery, capa 4)
+#   delm[all]    -> los tres anteriores
+# El fallback HMAC (pre-shared key) no necesita extra: es stdlib.
+[project.optional-dependencies]
+nostr = ["websockets>=12.0"]
+quic = ["aioquic>=1.0"]
+mdns = ["aiozeroconf>=0.9"]
+all = ["websockets>=12.0", "aioquic>=1.0", "aiozeroconf>=0.9"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["delm*"]
