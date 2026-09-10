@@ -27,4 +27,7 @@ include = ["delm*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not slow'"
+markers = [
+    "slow: tests de integración lentos (handshake QUIC, subprocess); excludir con -m 'not slow'",
+]

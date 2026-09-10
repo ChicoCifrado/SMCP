@@ -175,12 +175,16 @@ python -m delm.demo.run_taint_demo      # Capa 5: cuarentena de prompt-injection
 ### Demo multi-host (capa 3 sobre red)
 
 ```bash
-python -m delm.demo.run_multihost_demo
+python -m delm.demo.run_multihost_demo          # QUIC (default): 2 nodos, procesos distintos
+python -m delm.demo.run_multihost_demo --nostr  # relay Nostr: 1 relay + 2 nodos
 ```
 
-Arranca 1 relay Nostr + 2 nodos en **procesos distintos**: cada nodo firma su
-gist (BIP340), se intercambian gossip/heartbeat por Nostr y convergen al
-mismo conjunto de gists. Es la demo de punta a punta del despliegue
+El **default** corre sobre **QUIC** (el despliegue real): 2 nodos en
+**procesos distintos** que se conectan entre sí (``B`` servidor, ``A``
+cliente), cada uno firma su gist (BIP340), se intercambian gossip/heartbeat
+por QUIC y convergen al mismo conjunto de gists. La flag ``--nostr``
+arranca el modo anterior (1 relay Nostr + 2 nodos que se intercambian
+gossip/heartbeat por Nostr). Es la demo de punta a punta del despliegue
 multi-host (la malla corre sobre red, no in-proceso).
 
 ### Probar
@@ -283,15 +287,16 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **188 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+- **190 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
   16 config + 2 wiring + 55 capa 3: 13 gossip + 12 requirements + 10
   heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
   3 QUIC entre hosts: framing/round-trip/malla completa + 19 capa 3/4 Nostr:
   BIP340 contra los 19 vectores + relay de red + NostrTransport + convergencia
   de malla + 13 capa 4: discovery/relays/bootstrap/control-plane + transporte
   Nostr de red + 8 mDNS: el transporte de discovery mDNS (swappable con
-  `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) y 4 demos
-  que pasan.
+  `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) + 2 demo
+  multi-host: convergencia sobre QUIC (default) y Nostr (`--nostr`), y 4
+  demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -404,6 +409,7 @@ delm/
     test_nostr.py      capa 4: BIP340 (19 vectores) + relay de red (NostrRelayServer/Client)
     test_deployment.py capa 4: discovery, relays, bootstrap, control-plane, transporte Nostr
     test_mdns.py       capa 4: discovery mDNS (MdnsDiscoveryTransport, swappable con DiscoveryBus)
+    test_demo_multihost.py  demo multi-host: convergencia QUIC (default) + Nostr (slow)
 ```
 
 ---
