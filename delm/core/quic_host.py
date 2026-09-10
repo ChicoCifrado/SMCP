@@ -74,8 +74,13 @@ def _deframe(buf: bytes) -> tuple[list[bytes], bytes]:
 # ---------------------------------------------------------------------------
 # Cert auto-firmado ECDSA P-256 — mismo que QuicSwarm
 # ---------------------------------------------------------------------------
-def _make_cert() -> tuple[Any, Any, bytes]:
-    """Cert ECDSA P-256 auto-firmado.
+def _make_cert(cn: str) -> tuple[Any, Any, bytes]:
+    """Cert ECDSA P-256 auto-firmado con ``CN = cn`` (la identidad del nodo).
+
+    ``cn`` es el ``peer_id`` del nodo: el CN del cert **enlaza la identidad**
+    del nodo con su transporte (el enlace identidad-cert, issue #5). El
+    cliente verifica que el ``CN`` del cert del par coincide con el
+    ``peer_id`` del par (la verificación post-handshake).
 
     Devuelve ``(cert, key, cert_pem)``: el objeto :class:`x509.Certificate`
     (para ``configuration.certificate``), la key privada (para
@@ -87,7 +92,7 @@ def _make_cert() -> tuple[Any, Any, bytes]:
     from cryptography.hazmat.primitives.asymmetric import ec
 
     key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "smcp")])
+    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, cn)])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()
@@ -133,11 +138,26 @@ class QuicHostNode:
     """
 
     def __init__(self, peer_id: str, host: str,
-                 peers: dict[str, tuple[str, str, int]]) -> None:
+                 peers: dict[str, tuple[str, str, int]],
+                 insecure: bool = False,
+                 cert_cn: str | None = None) -> None:
         self.peer_id = peer_id
         self.host = host
         # Los pares: {par: (role, peer_host, port)}.
         self.peers = dict(peers)
+        # El modo ``insecure`` (fallback explícito): si es True, el cliente
+        # NO verifica el enlace identidad-cert (el ``verify_mode=0`` de
+        # antes). El default (False) verifica.
+        self.insecure = insecure
+        # La identidad que el nodo presenta en su cert (el CN). Por defecto,
+        # el ``peer_id`` del nodo (identidad enlazada, issue #5): el CN del
+        # cert ES la identidad que firma gists/anuncios. ``cert_cn`` permite
+        # simular una identidad distinta (un MITM con un cert propio) — para
+        # tests.
+        self._cert_cn = cert_cn if cert_cn is not None else peer_id
+        cert, key, _ = _make_cert(self._cert_cn)
+        self._cert = cert
+        self._cert_key = key
         # Colas thread-safe (el event loop corre en un hilo dedicado).
         # _out[par] = cola de salidas hacia ``par``.
         self._out: dict[str, "queue.Queue[bytes]"] = {
@@ -221,17 +241,35 @@ class QuicHostNode:
         """La conexión cliente: ``connect()`` a ``peer_host:port``.
 
         Abre un stream bidireccional y corre ``_read``/``_write``.
+
+        **Enlace identidad-cert** (issue #5): el nodo presenta su cert
+        (``CN = peer_id``) y, tras el handshake, verifica que el ``CN`` del
+        cert del par coincide con el ``peer_id`` del par (``par``). Si no
+        coincide, el par no es quien dice ser (un MITM con un cert propio) y
+        la conexión no se usa. En modo ``insecure`` (fallback), no se
+        verifica.
         """
         from aioquic.asyncio import connect
         from aioquic.quic.configuration import QuicConfiguration
 
-        _, _, cert_pem = _make_cert()
+        # El nodo presenta su cert (CN = peer_id). ``verify_mode=0``: no se
+        # verifica la cadena (certs auto-firmados); el enlace se verifica
+        # post-handshake por el CN (la identidad).
         cfg = QuicConfiguration(
             is_client=True, alpn_protocols=["smcp/1"],
-            cadata=cert_pem, verify_mode=0,
+            certificate=self._cert, private_key=self._cert_key,
+            verify_mode=0,
         )
         async with connect(peer_host, port, configuration=cfg) as protocol:
             reader, writer = await protocol.create_stream()
+            # Verifica el enlace identidad-cert (salvo en modo ``insecure``).
+            # El cert del par se recibe durante el handshake (asíncrono); se
+            # espera a que esté disponible antes de verificarlo.
+            if not self.insecure:
+                peer_cert = await self._wait_for_peer_cert(protocol)
+                if not self._check_peer_identity(peer_cert, par):
+                    writer.close()
+                    return
             try:
                 await asyncio.gather(
                     self._write(par, writer),
@@ -239,6 +277,39 @@ class QuicHostNode:
                 )
             finally:
                 writer.close()
+
+    async def _wait_for_peer_cert(self, protocol, timeout: float = 5.0):
+        """Espera a que el cert del par esté disponible (handshake).
+
+        El cert del par se recibe durante el handshake (asíncrono). Se
+        espera (hasta ``timeout``) a que ``protocol`` lo tenga. Devuelve el
+        cert (un :class:`x509.Certificate`) o ``None`` (tiempo agotado).
+        """
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            quic = getattr(protocol, "_quic", None)
+            tls = getattr(quic, "tls", None) if quic else None
+            peer_cert = getattr(tls, "_peer_certificate", None) if tls else None
+            if peer_cert is not None:
+                return peer_cert
+            await asyncio.sleep(0.05)
+        return None
+
+    def _check_peer_identity(self, peer_cert, par: str) -> bool:
+        """Verifica el **enlace identidad-cert** del par (issue #5).
+
+        El ``CN`` del cert del par debe coincidir con el ``peer_id`` del par
+        (``par``). El ``CN`` es la identidad que firma gists/anuncios; si no
+        coincide, el par no es quien dice ser (un MITM con un cert propio).
+        Devuelve ``True`` si el enlace verifica (el par es legítimo).
+        """
+        if peer_cert is None:
+            return False
+        from cryptography.x509.oid import NameOID
+        cns = peer_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        if not cns:
+            return False
+        return cns[0].value == par
 
     async def _server(self, par: str, port: int) -> None:
         """La conexión servidor: ``serve()`` en ``port`` (dedicado a par).
@@ -249,10 +320,10 @@ class QuicHostNode:
         from aioquic.asyncio import serve
         from aioquic.quic.configuration import QuicConfiguration
 
-        cert, key, _ = _make_cert()
+        # El nodo presenta su cert (CN = peer_id; issue #5).
         cfg = QuicConfiguration(
             is_client=False, alpn_protocols=["smcp/1"],
-            certificate=cert, private_key=key,
+            certificate=self._cert, private_key=self._cert_key,
         )
         srv = await serve(self.host, port, configuration=cfg,
                           stream_handler=self._make_handler(par))
@@ -337,7 +408,7 @@ class QuicHostSwarm:
     * ``close()``: cierra todos los nodos.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, insecure: bool = False) -> None:
         self._nodes: dict[str, QuicHostNode] = {}
         # Los pares: {peer_id: host}.
         self._hosts: dict[str, str] = {}
@@ -345,6 +416,13 @@ class QuicHostSwarm:
         self._ports: dict[str, int] = {}
         self._next_port = 44000
         self._started = False
+        # Modo ``insecure`` (fallback): si es True, los nodos NO verifican
+        # el enlace identidad-cert (issue #5). El default (False) verifica.
+        self.insecure = insecure
+        # Overrides de la identidad (el CN) de un nodo: {peer_id: cert_cn}.
+        # Para simular un MITM (un nodo con un cert propio, CN != peer_id) —
+        # usado en tests.
+        self._cert_cn_overrides: dict[str, str] = {}
 
     # -- API pública ---------------------------------------------------
     @property
@@ -424,7 +502,25 @@ class QuicHostSwarm:
             else:
                 # Es cliente: se conecta a ``self._hosts[hi]:port``.
                 peers[other] = ("connect", self._hosts[hi], port)
-        return QuicHostNode(peer_id, self._hosts[peer_id], peers)
+        # La identidad (el CN) del nodo: por defecto, el ``peer_id`` (la
+        # identidad enlazada, issue #5). Si hay un override (un MITM en
+        # tests), se usa ese CN.
+        cert_cn = self._cert_cn_overrides.get(peer_id)
+        return QuicHostNode(
+            peer_id, self._hosts[peer_id], peers,
+            insecure=self.insecure, cert_cn=cert_cn,
+        )
+
+    def set_cert_cn(self, peer_id: str, cert_cn: str) -> None:
+        """Establece la identidad (el CN) de ``peer_id`` (para tests).
+
+        Simula un **MITM**: un nodo cuyo cert tiene un ``CN`` distinto de su
+        ``peer_id`` (un cert propio). Si ``peer_id`` ya está en la malla,
+        se regenera su nodo con el nuevo CN.
+        """
+        self._cert_cn_overrides[peer_id] = cert_cn
+        if peer_id in self._hosts:
+            self._rebuild()
 
 
 # ---------------------------------------------------------------------------
