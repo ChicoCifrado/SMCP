@@ -14,7 +14,9 @@ happened*:
   before its gist enters the shared context.
 
 The ledger is deliberately in-memory and synchronous so it can be unit-tested
-and replayed without I/O; a persistent backend can wrap it later.
+and replayed without I/O; :class:`LedgerFile` provides **opt-in** append-only
+persistence (``dump``/``load``/audit export) over the same canonical line
+format, so the default path stays I/O-free.
 """
 
 from __future__ import annotations
@@ -25,6 +27,9 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+#: Versión del formato de línea de ``LedgerFile`` (un JSON por entrada).
+LEDGER_FORMAT_VERSION = 1
 
 
 class TrustPolicy(str, Enum):
@@ -77,11 +82,21 @@ class AdmissionLedger:
         self._entries.append(entry)
         return entry
 
-    @staticmethod
-    def _hash(e: LedgerEntry) -> str:
-        blob = json.dumps(e.to_dict(), sort_keys=True, separators=(",", ":"))
-        blob = blob + "|" + e.prev_hash
+    @classmethod
+    def _hash_from_parts(cls, to_dict: dict, prev: str) -> str:
+        """Hash de una entrada a partir de su ``to_dict`` y ``prev_hash``.
+
+        Es el cálculo real del ``entry_hash``: ``sha256(canonical(to_dict) +
+        "|" + prev)``. Se extrae para reutilizarlo en :class:`LedgerFile`
+        (la persistencia) sin re-derivar el formato.
+        """
+        blob = json.dumps(to_dict, sort_keys=True, separators=(",", ":"))
+        blob = blob + "|" + prev
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _hash(cls, e: "LedgerEntry") -> str:
+        return cls._hash_from_parts(e.to_dict(), e.prev_hash)
 
     # -- read / verify ------------------------------------------------------
     def entries(self) -> list[LedgerEntry]:
@@ -103,6 +118,108 @@ class AdmissionLedger:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+    # -- persistence (opt-in) ----------------------------------------------
+    def dump(self, path: str) -> str:
+        """Escribe el ledger a ``path`` (append-only, una línea por entrada).
+
+        Devuelve el *hash de artefacto* (``sha256`` del contenido), útil para
+        verificar idempotencia: dos dumps del mismo estado dan el mismo hash.
+        El formato es una línea por entrada (el ``to_dict`` + ``entry_hash``),
+        el mismo cálculo de hash que la cadena en memoria.
+        """
+        text = "\n".join(
+            json.dumps({"v": LEDGER_FORMAT_VERSION, "d": e.to_dict(),
+                        "h": e.entry_hash}, sort_keys=True)
+            for e in self._entries
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def from_file(cls, path: str) -> "AdmissionLedger":
+        """Reconstruye un ledger desde ``path`` (replay).
+
+        Verifica la cadena al reconstruir (``verify_chain``); si el archivo
+        está corrupto o truncado, lanza ``ValueError`` (no se silencia).
+        """
+        ledger = cls()
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                d, h = rec["d"], rec["h"]
+                prev = "0" * 64 if not ledger._entries else \
+                    ledger._entries[-1].entry_hash
+                # Re-verificar el entry_hash contra el contenido.
+                if AdmissionLedger._hash_from_parts(d, d["prev_hash"]) != h:
+                    raise ValueError(
+                        "entry_hash no coincide con el contenido (corrupto)"
+                    )
+                if d["prev_hash"] != prev:
+                    raise ValueError(
+                        "prev_hash no enlaza con la cadena (truncado/corrupto)"
+                    )
+                ledger._entries.append(LedgerEntry(
+                    seq=d["seq"], ts=d["ts"], author_id=d["author"],
+                    label=d["label"], digest=d["digest"],
+                    signature=bytes.fromhex(d["sig"]), sig_kind=d["sig_kind"],
+                    accepted=d["accepted"], reason=d["reason"],
+                    prev_hash=d["prev_hash"], entry_hash=h,
+                ))
+        return ledger
+
+
+class LedgerFile:
+    """Persistencia append-only del :class:`AdmissionLedger` (opt-in).
+
+    Un wrapper sobre un archivo que mantiene la cadena en memoria y expone
+    ``append``/``flush``/``load``/``export_audit``. El archivo es append-only:
+    ``append`` escribe la nueva línea al final; ``load`` relee y verifica la
+    cadena; ``export_audit`` produce un dump JSON idempotente para auditoría
+    externa (entradas + hash de cadena + ``policy_hash``).
+
+    Un archivo corrupto se rechaza (``load`` lanza), no se reescribe.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.ledger = AdmissionLedger()
+
+    def append(self, author_id: str, label: str, digest: str,
+               signature: bytes, sig_kind: str, accepted: bool,
+               reason: str) -> LedgerEntry:
+        """Añade una entrada (la cadena en memoria; ``flush`` la persiste)."""
+        return self.ledger.append(author_id, label, digest, signature,
+                                   sig_kind, accepted, reason)
+
+    def flush(self) -> str:
+        """Persiste la cadena al archivo (idempotente). Devuelve el hash."""
+        return self.ledger.dump(self.path)
+
+    def load(self) -> AdmissionLedger:
+        """Recarga el archivo y verifica la cadena (rechaza corrupto)."""
+        self.ledger = AdmissionLedger.from_file(self.path)
+        return self.ledger
+
+    def export_audit(self, policy_hash: str = "") -> dict:
+        """Dump JSON de auditoría (idempotente): entradas + hash de cadena
+        + ``policy_hash``. Determinista: el mismo estado da el mismo dict."""
+        return {
+            "format": LEDGER_FORMAT_VERSION,
+            "count": len(self.ledger._entries),
+            "policy_hash": policy_hash,
+            "chain": [
+                {"seq": e.seq, "author": e.author_id, "label": e.label,
+                 "digest": e.digest, "accepted": e.accepted,
+                 "reason": e.reason, "prev_hash": e.prev_hash,
+                 "entry_hash": e.entry_hash}
+                for e in self.ledger._entries
+            ],
+        }
 
 
 class TrustGate:
