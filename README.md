@@ -283,13 +283,15 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **180 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
+- **188 tests en verde** (14 núcleo + 18 seguridad + 15 taint + 28 mejoras +
   16 config + 2 wiring + 55 capa 3: 13 gossip + 12 requirements + 10
   heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
   3 QUIC entre hosts: framing/round-trip/malla completa + 19 capa 3/4 Nostr:
   BIP340 contra los 19 vectores + relay de red + NostrTransport + convergencia
   de malla + 13 capa 4: discovery/relays/bootstrap/control-plane + transporte
-  Nostr de red) y 4 demos que pasan.
+  Nostr de red + 8 mDNS: el transporte de discovery mDNS (swappable con
+  `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) y 4 demos
+  que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -314,9 +316,11 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   (la firma del owner es el *trust anchor*: un anuncio/orden no verificable se
   descarta, anti-MITM) y control-plane (el owner emite órdenes firmadas
   up/down que el nodo verifica y ejecuta). El transporte de anuncio
-  (`DiscoveryBus`) es in-memory y swappable: el adaptador Nostr/mDNS real
-  implementa la misma interfaz y se usa en su lugar. Cubierto por
-  `test_deployment.py` (13 tests).
+  (`DiscoveryBus`) es in-memory y **swappable**: `NostrDiscoveryTransport`
+  (vía un relay Nostr) y `MdnsDiscoveryTransport` (vía un medio mDNS,
+  `delm/core/mdns.py`) implementan la misma interfaz y se usan en su lugar —
+  `DeploymentNode` no cambia. Cubierto por `test_deployment.py` (13 tests) y
+  `test_mdns.py` (8 tests).
 - **Despliegue multi-nodo (red)** — la capa 3 **corre sobre red** vía Nostr:
   `NostrSwarm` (equivalente a `QuicSwarm`) crea un `NostrRelayServer` (el
   relay) y, por par, una `NostrKey` (identidad = `pubkey` x-only) + un
@@ -380,6 +384,7 @@ delm/
     mesh_pipeline.py   MeshPipeline/MeshWorker           (pipeline sobre la malla)
     deployment.py      Owner/DiscoveryBus/DeploymentNode (capa 4: discovery, relays, bootstrap, control-plane)
     nostr.py           BIP340 + NostrEvent + NostrRelay/Server/Client (capa 4: relay de red)
+    mdns.py            MdnsBus/MdnsDiscoveryTransport    (capa 4: discovery mDNS, swappable con DiscoveryBus)
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
@@ -398,6 +403,7 @@ delm/
     test_mesh.py       capa 3: transport/nodo/red/pipeline (integración)
     test_nostr.py      capa 4: BIP340 (19 vectores) + relay de red (NostrRelayServer/Client)
     test_deployment.py capa 4: discovery, relays, bootstrap, control-plane, transporte Nostr
+    test_mdns.py       capa 4: discovery mDNS (MdnsDiscoveryTransport, swappable con DiscoveryBus)
 ```
 
 ---
