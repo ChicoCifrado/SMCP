@@ -474,7 +474,11 @@ class NostrRelayServer:
     ``stop()`` lo cierra.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int = 0,
+                 rate_limit: float = 100.0,
+                 max_event_bytes: int = 65536,
+                 dedup_window: int = 1024,
+                 state_path: str | None = None) -> None:
         self.host = host
         self.port = port
         self._thread: Optional[threading.Thread] = None
@@ -483,6 +487,24 @@ class NostrRelayServer:
         self._ready = threading.Event()
         self._bound_port: Optional[int] = None
         self._conns: set = set()  # conexiones activas (ws)
+        # -- Guardia de relay (issue #6) --------------------------------------
+        # Rate-limit por ``pubkey``: máx. ``rate_limit`` eventos/seg por
+        # identidad (los excedentes se rechazan, mismo path de ``rejected``).
+        self._rate_limit = float(rate_limit)
+        # Límite de tamaño de evento: los ``raw`` de más de ``max_event_bytes``
+        # se rechazan (mismo path de ``rejected``).
+        self._max_event_bytes = int(max_event_bytes)
+        # Dedup: ventana acotada de ids de eventos ya vistos (``dedup_window``).
+        self._dedup_window = int(dedup_window)
+        # Estado (lo guarda ``_state_lock``):
+        self._state_lock = threading.Lock()
+        self._seen: dict[str, None] = {}   # id (hex) -> None (LRU por orden)
+        self._rate: dict[str, list] = {}   # pubkey (hex) -> [count, window_start]
+        self._accepted: list = []          # eventos aceptados (para snapshot)
+        # Persistencia opcional (opt-in; el default sigue efímero).
+        self._state_path = state_path
+        if state_path is not None:
+            self._load_state(state_path)
 
     # -- ciclo de vida -------------------------------------------------------
     def start(self) -> None:
@@ -546,6 +568,11 @@ class NostrRelayServer:
     async def _on_message(self, ws, raw: bytes) -> None:
         import json as _json
 
+        # Límite de tamaño de evento (issue #6): un ``raw`` de más de
+        # ``max_event_bytes`` se rechaza (mismo path de ``rejected``).
+        if len(raw) > self._max_event_bytes:
+            await self._reject(ws, "demasiado grande", None)
+            return
         try:
             msg = _json.loads(raw)
         except Exception:
@@ -554,25 +581,141 @@ class NostrRelayServer:
         if op == "event":
             ev = NostrEvent.from_dict(msg["event"])
             if ev.verify():
-                # Aceptado: emite a los demás (no al que lo envía).
-                await self._broadcast(ws, ev)
-                await self._send(ws, {"op": "ok", "id": ev.event_id().hex()})
+                # Guardia de relay (issue #6): dedup + rate-limit por pubkey.
+                why = self._guard_why(ev)
+                if why is not None:
+                    await self._reject(ws, why, ev)
+                else:
+                    await self._accept(ws, ev)
             else:
-                # Rechazado: el relay devuelve "rejected" **con el "event"
-                # completo**, para que el remitente lo guarde en
-                # ``dropped()``. "rejected" es la respuesta a un publish
-                # (va **solo al remitente**; los otros no lo reciben).
-                await self._send(
-                    ws,
-                    {
-                        "op": "rejected",
-                        "id": ev.event_id().hex(),
-                        "why": "firma no verificable",
-                        "event": ev.to_dict(),
-                    },
-                )
+                # Rechazado: firma no verificable.
+                await self._reject(ws, "firma no verificable", ev)
         # "req" / "close": el transporte gestiona la suscripción a su nivel;
         # el relay solo emite (broadcast) y verifica.
+
+    def _guard_why(self, ev: "NostrEvent") -> str | None:
+        """La guardia de relay (issue #6): ``None`` si ``ev`` se acepta.
+
+        * **Dedup**: si el ``id`` del evento ya se vio (``_seen``), se
+          rechaza (un solo broadcast por evento).
+        * **Rate-limit por pubkey**: si la identidad (``pubkey``) superó el
+          umbral (``_rate_limit`` eventos/seg en la ventana), se rechaza.
+        Devuelve la razón (``why``) si se rechaza, ``None`` si se acepta.
+        """
+        import time
+
+        ev_id = ev.event_id().hex()
+        pub = ev.pubkey.hex()
+        now = time.time()
+        # --- dedup ---
+        with self._state_lock:
+            if ev_id in self._seen:
+                return "duplicado"
+            # --- rate-limit por pubkey ---
+            st = self._rate.get(pub)
+            if st is None:
+                self._rate[pub] = [1, now]
+            elif now - st[1] >= 1.0:
+                self._rate[pub] = [1, now]
+            else:
+                st[0] += 1
+                if st[0] > self._rate_limit:
+                    return "rate-limit"
+        return None
+
+    async def _accept(self, ws, ev: "NostrEvent") -> None:
+        """Acepta ``ev``: lo emite a los demás y lo registra (estado)."""
+        import json as _json
+
+        ev_id = ev.event_id().hex()
+        # Emite a los demás (no al que lo envía).
+        await self._broadcast(ws, ev)
+        await self._send(ws, {"op": "ok", "id": ev_id})
+        # Registra en el estado (dedup + rate-limit + snapshot).
+        with self._state_lock:
+            self._seen[ev_id] = None
+            # El LRU: si ``_seen`` crece más allá de la ventana, se descarta
+            # el más antiguo (FIFO: el primer insertado).
+            if len(self._seen) > self._dedup_window:
+                self._seen.pop(next(iter(self._seen)))
+            self._accepted.append(ev)
+            # Acota ``_accepted`` (para no crecer sin límite).
+            if len(self._accepted) > self._dedup_window:
+                self._accepted.pop(0)
+        self._maybe_save()
+
+    async def _reject(self, ws, why: str, ev: "NostrEvent | None") -> None:
+        """Rechaza ``ev`` (o un ``raw`` sin evento): devuelve ``rejected``.
+
+        ``rejected`` va **solo al remitente** (los otros no lo reciben); si
+        ``ev`` no es ``None``, lo lleva (para que el remitente lo guarde en
+        ``dropped()``).
+        """
+        import json as _json
+
+        msg: dict = {"op": "rejected"}
+        if ev is not None:
+            msg["id"] = ev.event_id().hex()
+            msg["why"] = why
+            msg["event"] = ev.to_dict()
+        await self._send(ws, msg)
+
+    def _maybe_save(self) -> None:
+        """Guarda el estado si hay ``state_path`` (persistencia opcional)."""
+        if self._state_path is not None:
+            self.save_state(self._state_path)
+
+    # -- persistencia opcional (snapshot/restore) --------------------------
+    def save_state(self, path: str) -> None:
+        """Serializa el estado del relay a ``path`` (snapshot).
+
+        El snapshot guarda: los eventos aceptados (``events``), los ids
+        vistos (``seen``, para el dedup) y el estado de rate-limit
+        (``rate``, por ``pubkey``). Un relay restaurado (``load_state``)
+        reconstruye el estado y re-broadcasta igual que el original.
+        """
+        import json as _json
+
+        with self._state_lock:
+            events = [ev.to_dict() for ev in self._accepted]
+            seen = list(self._seen.keys())
+            rate = {pub: [st[0], st[1]] for pub, st in self._rate.items()}
+        state = {
+            "version": 1,
+            "events": events,
+            "seen": seen,
+            "rate": rate,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(state, f)
+
+    def load_state(self, path: str) -> None:
+        """Carga el estado del relay desde ``path`` (restore).
+
+        Reconstruye ``_accepted`` (los eventos aceptados), ``_seen`` (los
+        ids vistos) y ``_rate`` (el estado de rate-limit). Un relay
+        restaurado re-broadcasta igual que el original.
+        """
+        self._load_state(path)
+
+    def _load_state(self, path: str) -> None:
+        """Interno: carga el estado desde ``path`` (para ``__init__``)."""
+        import json as _json
+
+        try:
+            with open(path, encoding="utf-8") as f:
+                state = _json.load(f)
+        except (OSError, _json.JSONDecodeError):
+            return  # snapshot ausente/corrupto: parte de cero (efímero)
+        with self._state_lock:
+            self._accepted = [
+                NostrEvent.from_dict(ev) for ev in state.get("events", [])
+            ]
+            self._seen = {sid: None for sid in state.get("seen", [])}
+            self._rate = {
+                pub: [st[0], st[1]]
+                for pub, st in state.get("rate", {}).items()
+            }
 
     async def _broadcast(self, sender, ev) -> None:
         import json as _json

@@ -217,6 +217,11 @@ El suite está repartido en doce archivos, todos deterministas:
 - `test_nostr.py` — BIP340 (Schnorr secp256k1, x-only) verificado contra los
   19 vectores oficiales, y el relay de red Nostr (`NostrRelayServer`/
   `NostrRelayClient`): el round-trip, la verificación de firma y el rechazo.
+- `test_nostr_relay_guard.py` — capa 4: la **guardia del relay Nostr**
+  (`NostrRelayServer`): rate-limit por `pubkey` (los excedentes se
+  rechazan), dedup (reenvío del mismo `id` → un solo broadcast), límite de
+  tamaño de evento (`max_event_bytes`) y snapshot/restore opcional
+  (persistencia del estado: eventos aceptados + ids vistos + rate-limit).
 - `test_deployment.py` — capa 4: discovery, relays, bootstrap (firma del
   owner) y control-plane (órdenes firmadas), y el transporte Nostr (in-memory
   y de red) swappable con `DiscoveryBus`.
@@ -287,7 +292,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **211 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **216 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -296,11 +301,13 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   3 QUIC entre hosts: framing/round-trip/malla completa + 4 identidad: el
   enlace identidad-cert del QUIC (legítimo/MITM/insecure/`CN=peer_id`) +
   19 capa 3/4 Nostr: BIP340 contra los 19 vectores + relay de red +
-  NostrTransport + convergencia de malla + 13 capa 4: discovery/relays/
-  bootstrap/control-plane + transporte Nostr de red + 8 mDNS: el transporte
-  de discovery mDNS (swappable con `DiscoveryBus`, mismo contrato que
-  `DeploymentNode` no cambia) + 2 demo multi-host: convergencia sobre QUIC
-  (default) y Nostr (`--nostr`), y 4 demos que pasan.
+  NostrTransport + convergencia de malla + 5 guardia de relay: rate-limit
+  por `pubkey`, dedup, límite de tamaño, snapshot/restore y default efímero +
+  13 capa 4: discovery/relays/bootstrap/control-plane + transporte
+  Nostr de red + 8 mDNS: el transporte de discovery mDNS (swappable con
+  `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) + 2 demo
+  multi-host: convergencia sobre QUIC (default) y Nostr (`--nostr`), y 4
+  demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -423,6 +430,7 @@ delm/
     test_ledger_persistence.py  capa 2: persistencia append-only del AdmissionLedger (dump/load/export, opt-in)
     test_owner_rotation.py      capa 4: rotación/revocación de la clave del owner (control-plane, cadena de confianza)
     test_quic_identity.py       capa 3: enlace identidad-cert del QUIC (CN = peer_id, MITM, insecure)
+    test_nostr_relay_guard.py  capa 4: guardia del relay Nostr (rate-limit por pubkey, dedup, límite de tamaño, snapshot/restore)
 ```
 
 ---
