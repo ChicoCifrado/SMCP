@@ -186,6 +186,35 @@ class Owner:
         cmd.author = self.owner_id
         return cmd
 
+    def rotate(self, new_key: "KeyPair") -> Command:
+        """Emite una orden ``rotate`` firmada con la clave ACTUAL del owner.
+
+        Al aplicarse en el nodo, ``current_owner_key`` pasa a ser
+        ``new_key.public_key``: la cadena de confianza se extiende (el
+        eslabón se firma contra la cadena vigente, no contra la nueva).
+        ``new_key`` es la clave que pasa a ser el trust anchor.
+
+        No muta ``self.key``: el owner emite la orden y el *nodo* la aplica
+        (la clave del owner avanza cuando el nodo la aplica; ver
+        :meth:`Owner.advance` tras la aplicación).
+        """
+        import base64 as _b64
+        cmd = Command(
+            kind="rotate",
+            node_id="",
+            payload={"new_public_key": _b64.b64encode(new_key.public_key).decode("ascii")},
+        )
+        return self.sign_command(cmd)
+
+    def advance(self, new_key: "KeyPair") -> None:
+        """Avanza la clave del owner a ``new_key`` (tras aplicar una rotación).
+
+        El owner y el nodo comparten la cadena: cuando el nodo aplica una
+        rotación, el owner avanza su ``self.key`` para que las órdenes
+        siguientes se firmen contra la nueva cadena.
+        """
+        self.key = new_key
+
 
 # ---------------------------------------------------------------------------
 # Bus de descubrimiento (el "transporte de anuncio")
@@ -284,6 +313,13 @@ class DeploymentNode:
         self.commands: list[Command] = []          # órdenes ejecutadas
         self.dropped_commands: list[Command] = []  # órdenes no verificadas
         self._pending_commands: list[Command] = []
+        # Rotación/revocación de la clave del owner (control-plane).
+        # ``current_owner_key`` es el trust anchor VIGENTE (el eslabón actual
+        # de la cadena de confianza). Empieza en la clave inicial del owner.
+        self.current_owner_key: bytes = owner.public_key
+        # Histórico de rotaciones (append, inmutable): cada entrada registra
+        # el eslabón aplicado (old_key -> new_key, ts, firma de la orden).
+        self.rotation_history: list[dict] = []
         # Estado.
         self.status: str = "up"
 
@@ -333,11 +369,18 @@ class DeploymentNode:
         return accepted
 
     def _verify_announcement(self, ann: Announcement) -> bool:
-        """Verifica la firma del owner sobre el digest del anuncio."""
+        """Verifica la firma del owner contra la cadena vigente del nodo.
+
+        El nodo verifica contra ``current_owner_key`` (el eslabón que el
+        nodo tiene), no contra ``owner.public_key`` (que el owner puede haber
+        avanzado). Tras una rotación, ``current_owner_key`` es la nueva
+        clave y los anuncios siguientes (firmados por el owner tras
+        ``advance``) verifican contra ella.
+        """
         if not ann.signature or ann.author != self.owner.owner_id:
             return False
         return verify_public(
-            "ed25519", self.owner.public_key, ann.digest(), ann.signature
+            "ed25519", self.current_owner_key, ann.digest(), ann.signature
         )
 
     # -- Discovery: expiración (TTL) ---------------------------------------
@@ -378,10 +421,17 @@ class DeploymentNode:
         return executed
 
     def _verify_command(self, cmd: Command) -> bool:
+        """Verifica la firma de ``cmd`` contra la cadena de confianza VIGENTE.
+
+        ``cmd`` debe firmarse con la clave que el nodo tiene como
+        ``current_owner_key`` (el eslabón actual). Una orden firmada con una
+        clave no vigente (p. ej. una rotación emitida desde una clave que ya
+        no es la vigente) no verifica y se descarta (``dropped_commands``).
+        """
         if not cmd.signature or cmd.author != self.owner.owner_id:
             return False
         return verify_public(
-            "ed25519", self.owner.public_key, cmd.digest(), cmd.signature
+            "ed25519", self.current_owner_key, cmd.digest(), cmd.signature
         )
 
     def _apply(self, cmd: Command) -> None:
@@ -390,7 +440,34 @@ class DeploymentNode:
             self.status = "up"
         elif cmd.kind == "down":
             self.status = "down"
-        # "rotate" y otras: el nodo las maneja (aquí solo se registran).
+        elif cmd.kind == "rotate":
+            self._apply_rotate(cmd)
+        # otras: se registran (el nodo las maneja).
+
+    def _apply_rotate(self, cmd: Command) -> None:
+        """Aplica una rotación: ``current_owner_key`` pasa a ``new_key``.
+
+        La orden ya verificó contra la cadena vigente (``_verify_command``),
+        así que ``new_key`` es el siguiente eslabón de la cadena de
+        confianza. Se registra en ``rotation_history`` (append, inmutable) y
+        ``current_owner_key`` se actualiza.
+
+        Regla determinista contra doble rotación (la misma ``new_key``
+        emitida dos veces desde la misma cadena vigente): el segundo ``rotate``
+        ya no verifica, porque tras el primero ``current_owner_key`` ya es
+        ``new_key`` y la firma (hecha con la clave anterior) no verifica
+        contra la nueva. Así solo se aplica la primera vista.
+        """
+        import base64 as _b64
+        new_key = _b64.b64decode(cmd.payload["new_public_key"])
+        # Guardar el eslabón aplicado (old -> new) antes de actualizar.
+        self.rotation_history.append({
+            "old_key": self.current_owner_key,
+            "new_key": new_key,
+            "ts": self._now(),
+            "cmd_digest": cmd.digest(),
+        })
+        self.current_owner_key = new_key
 
     def inject_command(self, cmd: Command) -> None:
         """Inyecta una orden (el owner, en el loopback)."""

@@ -287,8 +287,10 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **200 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
-  /export del `AdmissionLedger` (append-only, opt-in) + 15 taint + 28 mejoras +
+- **207 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+  /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
+  revocación de la clave del owner (control-plane, cadena de confianza) +
+  15 taint + 28 mejoras +
   16 config + 2 wiring + 55 capa 3: 13 gossip + 12 requirements + 10
   heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
   3 QUIC entre hosts: framing/round-trip/malla completa + 19 capa 3/4 Nostr:
@@ -412,6 +414,7 @@ delm/
     test_mdns.py       capa 4: discovery mDNS (MdnsDiscoveryTransport, swappable con DiscoveryBus)
     test_demo_multihost.py  demo multi-host: convergencia QUIC (default) + Nostr (slow)
     test_ledger_persistence.py  capa 2: persistencia append-only del AdmissionLedger (dump/load/export, opt-in)
+    test_owner_rotation.py      capa 4: rotación/revocación de la clave del owner (control-plane, cadena de confianza)
 ```
 
 ---
