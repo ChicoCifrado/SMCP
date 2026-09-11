@@ -1,7 +1,8 @@
-# Runtime
+# Runtime (dependencias principales; ver pyproject.toml [project] dependencies)
 openai>=1.40.0        # OpenAI-compatible client (OpenRouter, etc.)
 pydantic>=2.0         # structured LLM output parsing
 aiohttp>=3.9          # async http for optional fetches
+cryptography>=42.0    # ed25519 (default del modo estricto del provenance)
 
 # Dev / test
 pytest>=8.0
@@ -13,7 +14,6 @@ pytest-asyncio>=0.23
 #   pip install delm[quic]   -> QUIC entre hosts (capa 3)
 #   pip install delm[mdns]   -> mDNS discovery (capa 4)
 #   pip install delm[all]    -> los tres anteriores
-# El fallback HMAC (pre-shared key) no necesita extra: es stdlib.
 # ---------------------------------------------------------------------------
 
 # [nostr] relay Nostr de red (capa 4)

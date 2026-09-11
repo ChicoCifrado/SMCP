@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Sin secretos: la suite es determinista y sin red externa. Las env vars
+# DELM_MODEL/DELM_BASE_URL son valores placeholder (no secretos): el
+# dry-run de run_real_demo solo resuelve la config, no llama al modelo.
+
+jobs:
+  # Suite completa (pytest). El addopts por defecto (-m 'not slow') excluye
+  # los tests de integración lentos (handshake QUIC, subprocess) para que el
+  # CI sea rápido; los tests de red local (loopback) y de lógica corren aquí.
+  suite:
+    name: suite-py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+      - name: Instalar delm[all] + deps de test
+        run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
+      - name: Suite completa (pytest)
+        run: python -m pytest
+
+  # Demos (las 4, como pasos separados para fail-fast por demo).
+  #   1. run_demo           -> el pipeline end-to-end (sin API key)
+  #   2. run_security_demo -> Capas 1+2 (firma, integridad, inmutabilidad)
+  #   3. run_taint_demo    -> Capa 5 (cuarentena de prompt-injection)
+  #   4. run_real_demo --dry-run -> resuelve la config (no llama al modelo)
+  # El dry-run necesita DELM_MODEL/DELM_BASE_URL (placeholder, no secreto):
+  # sin config committed (git-ignored) ni env, el dry-run retorna 2.
+  demos:
+    name: demos-py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      # Placeholder: el dry-run solo resuelve la config, no llama al modelo.
+      DELM_MODEL: ci-placeholder-model
+      DELM_BASE_URL: http://127.0.0.1:1/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+      - name: Instalar delm[all] + deps de test
+        run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
+      - name: "demo 1: run_demo (pipeline end-to-end)"
+        run: python -m delm.demo.run_demo
+      - name: "demo 2: run_security_demo (Capas 1+2)"
+        run: python -m delm.demo.run_security_demo
+      - name: "demo 3: run_taint_demo (Capa 5)"
+        run: python -m delm.demo.run_taint_demo
+      - name: "demo 4: run_real_demo --dry-run (resuelve la config)"
+        run: python -m delm.demo.run_real_demo --dry-run
+
+  # Check de conciliación README: el conteo declarado en el README debe cuadrar
+  # con `pytest --collect-only -q`. Si no cuadra, rompe el CI (fuerza la
+  # convención de actualizar el README al añadir/quitar tests).
+  readme-check:
+    name: readme-conciliacion
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+      - name: Instalar delm[all] + deps de test
+        run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
+      - name: Check de conciliación README
+        run: python scripts/check_readme_count.py

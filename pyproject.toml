@@ -16,6 +16,16 @@ classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+# Dependencias principales.
+#   cryptography -> ed25519 (el default del modo estricto del provenance).
+#     Es la base del trust anchor asimétrico; el fallback HMAC (pre-shared key)
+#     solo se usa en el modo no-estricto (test/zero-deps).
+dependencies = [
+    "openai>=1.40.0",
+    "pydantic>=2.0",
+    "aiohttp>=3.9",
+    "cryptography>=42.0",
+]
 
 [project.scripts]
 delm-demo = "delm.demo.run_demo:main"
@@ -26,7 +36,6 @@ delm-real-demo = "delm.demo.run_real_demo:main"
 #   delm[quic]   -> aioquic (QUIC entre hosts, capa 3)
 #   delm[mdns]   -> aiozeroconf (mDNS discovery, capa 4)
 #   delm[all]    -> los tres anteriores
-# El fallback HMAC (pre-shared key) no necesita extra: es stdlib.
 [project.optional-dependencies]
 nostr = ["websockets>=12.0"]
 quic = ["aioquic>=1.0"]
