@@ -71,9 +71,16 @@ def _toy_tasks(n: int) -> list[Task]:
 async def run(config: ModelConfig, tasks: int = 2, workers: int = 2,
               verbose: bool = True) -> dict:
     client = build_client(config)
-    pipe = DelmPipeline(llm=client, n_workers=workers)
     t0 = time.perf_counter()
-    outcome = await pipe.run(_toy_tasks(tasks))
+    try:
+        pipe = DelmPipeline(llm=client, n_workers=workers)
+        outcome = await pipe.run(_toy_tasks(tasks))
+    finally:
+        # The harness backend owns a subprocess; release it (plain HTTP client
+        # close() is a no-op, so calling it unconditionally is safe).
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
     wall = time.perf_counter() - t0
 
     out = {
@@ -124,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="number of micro-tasks to solve (default: 2)")
     ap.add_argument("--workers", type=int, default=2,
                     help="number of parallel workers (default: 2)")
+    ap.add_argument("--harness", action="store_true",
+                    help="use the DeepSeek Harness agent runtime backend "
+                         "(overrides the DELM_HARNESS env flag for this run)")
     ap.add_argument("--dry-run", action="store_true",
                     help="resolve the config and print it; call no model")
     args = ap.parse_args(argv)
@@ -136,6 +146,9 @@ def main(argv: list[str] | None = None) -> int:
         cfg_path = default if default.exists() else None
 
     config = load_config(cfg_path)
+    if args.harness:
+        from dataclasses import replace
+        config = replace(config, use_harness=True)
 
     if args.dry_run:
         print("=== dry-run (no model called) ===")
@@ -143,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"base_url  : {config.base_url or '(unset)'}")
         print(f"api_key   : {_mask_key(config.api_key)}")
         print(f"temperature: {config.temperature}")
+        print(f"backend   : {'harness' if config.use_harness else 'openai-compatible'}")
         if not config.model or not config.base_url:
             print("note      : model/base_url unset — set DELM_MODEL / "
                   "DELM_BASE_URL or pass --config")

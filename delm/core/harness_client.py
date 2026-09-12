@@ -108,6 +108,12 @@ class HarnessLLMClient(LLMClient):
         when ``None``.
     timeout:
         Per-turn request timeout (seconds).
+    reasoning_effort:
+        LLM reasoning budget passed to the harness (``low``/``medium``/
+        ``high``, or ``None`` for the runtime default). ``low`` keeps a
+        thinking model responsive for short turns.
+    max_tokens:
+        Optional cap on the model's output tokens per turn.
     """
 
     def __init__(
@@ -118,10 +124,14 @@ class HarnessLLMClient(LLMClient):
         key_file: Path = DEFAULT_KEY_FILE,
         dsh_home: str | None = None,
         timeout: float = 120.0,
+        reasoning_effort: str | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         self.model = model
         self.base_url = base_url
         self.timeout = timeout
+        self.reasoning_effort = reasoning_effort
+        self.max_tokens = max_tokens
         self._api_key = api_key
         self._key_file = Path(key_file)
         self._dsh_home = dsh_home
@@ -188,6 +198,8 @@ class HarnessLLMClient(LLMClient):
                 DeepSeekHarnessConfig(
                     provider=HARNESS_ROUTE_ID,
                     model=self.model,
+                    reasoning_effort=self.reasoning_effort,
+                    max_tokens=self.max_tokens,
                     dsh_home=dsh_home,
                     patches=(self._write_patch(),),
                     env={_KEY_ENV: self._resolve_key()},
@@ -242,6 +254,8 @@ def build_harness_client(
     key_file: Path = DEFAULT_KEY_FILE,
     dsh_home: str | None = None,
     timeout: float = 120.0,
+    reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
 ) -> HarnessLLMClient:
     """Build a :class:`HarnessLLMClient` from a :class:`~delm.config.ModelConfig`.
 
@@ -255,4 +269,6 @@ def build_harness_client(
         key_file=key_file,
         dsh_home=dsh_home,
         timeout=timeout,
+        reasoning_effort=reasoning_effort,
+        max_tokens=max_tokens,
     )

@@ -310,7 +310,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **225 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **231 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -325,8 +325,11 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   Nostr de red + 8 mDNS: el transporte de discovery mDNS (swappable con
   `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) + 9 modo
   estricto: el provenance no degrada silenciosamente a HMAC (lanza en estricto,
-  warning en no-estricto, `allow_hmac_fallback`) + 2 demo multi-host:
-  convergencia sobre QUIC (default) y Nostr (`--nostr`), y 4 demos que pasan.
+  warning en no-estricto, `allow_hmac_fallback`) + 6 adaptador DeepSeek
+  Harness: import lazy del módulo, subclase `LLMClient`, `build_client`
+  por defecto / `use_harness`, `DELM_HARNESS` en env (opt-in) + 2 demo
+  multi-host: convergencia sobre QUIC (default) y Nostr (`--nostr`), y 4
+  demos que pasan.
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
