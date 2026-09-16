@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeLM/SMCP — Consola 3D</title>
+<link rel="stylesheet" href="/assets/style.css">
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; background: #090a09; }
+  #scene { position: fixed; inset: 0; display: block; }
+  /* HUD superior */
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 22px;
+    background: linear-gradient(180deg, rgba(9,10,9,.85), rgba(9,10,9,0));
+    pointer-events: none;
+  }
+  #hud .brand { font: 600 15px var(--font-mono); color: var(--text); letter-spacing: .02em; }
+  #hud .brand b { color: var(--accent); }
+  #hud .hint { font: 12px var(--font-mono); color: var(--muted); margin-left: auto; }
+  /* Panel de salida */
+  #panel {
+    position: fixed; right: 18px; bottom: 18px; z-index: 5;
+    width: min(560px, 46vw); min-height: 120px; max-height: 52vh;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    display: flex; flex-direction: column; overflow: hidden;
+    backdrop-filter: blur(8px);
+  }
+  #panel .bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 13px; border-bottom: 1px solid var(--line);
+    font: 12px var(--font-mono); color: var(--muted);
+  }
+  #panel .bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+  #panel .bar .dot.on { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  #panel .bar .ttl { color: var(--text); font-weight: 600; }
+  #panel .bar .st { margin-left: auto; color: var(--muted); }
+  #panel .bar .st.ok { color: var(--accent); }
+  #panel .bar .st.err { color: #ff6b5b; }
+  #out {
+    padding: 12px 14px; overflow: auto; flex: 1;
+    font: 12.5px/1.55 var(--font-mono); color: var(--text); white-space: pre-wrap;
+  }
+  #out .ok { color: var(--accent); }
+  #out .dim { color: var(--muted); }
+  #out .err { color: #ff6b5b; }
+  /* Leyenda inferior-izq */
+  #legend {
+    position: fixed; left: 18px; bottom: 18px; z-index: 5;
+    display: flex; flex-direction: column; gap: 7px;
+    font: 11.5px var(--font-mono); color: var(--muted);
+    pointer-events: none;
+  }
+  #legend .row { display: flex; align-items: center; gap: 8px; }
+  #legend .sw { width: 12px; height: 12px; border-radius: 3px; }
+  #loading {
+    position: fixed; inset: 0; z-index: 9; display: grid; place-items: center;
+    background: #090a09; color: var(--muted); font: 13px var(--font-mono);
+    transition: opacity .4s;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="hud">
+    <div class="brand"><b>delm</b> · Consola de control 3D</div>
+    <div class="hint">arrastra para orbitar · rueda para zoom · clic en un nodo para ejecutar</div>
+  </div>
+
+  <div id="legend">
+    <div class="row"><span class="sw" style="background:#8fbf3f"></span> Núcleo DeLM (contexto verificado)</div>
+    <div class="row"><span class="sw" style="background:#58624b"></span> Función ejecutable (botón 3D)</div>
+    <div class="row"><span class="sw" style="background:#262b22"></span> Worker / agente (orbita)</div>
+  </div>
+
+  <div id="panel">
+    <div class="bar">
+      <span class="dot" id="dot"></span>
+      <span class="ttl" id="ttl">En espera</span>
+      <span class="st" id="st">elige una función</span>
+    </div>
+    <div id="out"><span class="dim">Clic en un nodo de la órbita para ejecutar una función del proyecto. La salida aparece aquí.</span></div>
+  </div>
+
+  <div id="loading">inicializando escena…</div>
+
+  <script src="/js/three.min.js"></script>
+  <script src="/console.js"></script>
+</body>
+</html>
