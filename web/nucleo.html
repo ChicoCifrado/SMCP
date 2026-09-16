@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090a09" />
+  <title>Núcleo — SMCP</title>
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="topbar">
+      <div class="brand">
+        <span class="mark">d</span>
+        <span>SMCP</span>
+      </div>
+      <nav class="topnav">
+        <a href="index.html">Inicio</a>
+        <a href="nucleo.html" aria-current="page">Núcleo</a>
+        <a href="seguridad.html">Seguridad</a>
+        <a href="demos.html">Demos</a>
+        <a href="arquitectura.html">Arquitectura</a>
+      </nav>
+      <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="hero">
+        <div class="wordmark">delm</div>
+        <h1>Núcleo DeLM</h1>
+        <p class="sub">
+          El ciclo de vida de una tarea en la malla: de <code>TaskQueue</code> a
+          <code>DelmPipeline.run</code>. Cada componente es puro en lo posible, observable y
+          sin estado oculto entre nodos.
+        </p>
+      </section>
+
+      <section>
+        <h2>Componentes</h2>
+        <div class="grid">
+          <div class="card">
+            <span class="tag">contexto</span>
+            <h3>SharedContext</h3>
+            <p>Contenedor inmutable del contexto compartido: tarea, mensajes y metadatos firmables. Es la unidad de verificación de la malla.</p>
+          </div>
+          <div class="card">
+            <span class="tag">cola</span>
+            <h3>TaskQueue</h3>
+            <p>Cola FIFO de tareas con prioridad y deduplicación por hash. Publica eventos de encolado para la telemetría.</p>
+          </div>
+          <div class="card">
+            <span class="tag">admisión</span>
+            <h3>AdmissionPipeline</h3>
+            <p>Encadena verificación de proveniencia, reglas y registro. Una tarea solo se admite si toda la cadena verifica.</p>
+          </div>
+          <div class="card">
+            <span class="tag">reglas</span>
+            <h3>RuleVerifier</h3>
+            <p>Evaluador declarativo de reglas de admisión (allow/deny por patrón de orígenes y destinos). Determinista y testeable.</p>
+          </div>
+          <div class="card">
+            <span class="tag">despliegue</span>
+            <h3>Unfolding</h3>
+            <p>Despliegue de la pila por nodos: resuelve dependencias y produce el orden de activación sin un orquestador central.</p>
+          </div>
+          <div class="card">
+            <span class="tag">orquestación</span>
+            <h3>DelmPipeline</h3>
+            <p>El punto de entrada: <code>run()</code> compone cola, admisión, verificación y despliegue en una sola ejecución observable.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Flujo de una tarea</h2>
+        <div class="codeblock">
+          <div class="bar">delm/core/pipeline.py — <span class="k">DelmPipeline.run()</span></div>
+<pre>result = pipeline.run(task)
+# 1. enqueue   → TaskQueue.put(task)            (dedupe por hash)
+# 2. admit     → AdmissionPipeline.verify(ctx) (cadena ed25519)
+# 3. verify    → RuleVerifier.evaluate(ctx)    (reglas declarativas)
+# 4. register  → AdmissionLedger.append(rec)   (append-only)
+# 5. unfold    → Unfolding.resolve(stack)      (orden por nodos)
+# 6. result    → RunResult(admitted, trace, ledger_ref)</pre>
+        </div>
+        <p class="lead" style="margin-top:18px">
+          Cada paso emite un evento con su referencia de evidencia; el resultado final
+          (<code>RunResult</code>) lleva la traza completa y la referencia al registro.
+        </p>
+      </section>
+
+      <section>
+        <h2>Propiedades</h2>
+        <div class="stats">
+          <div class="stat"><div class="num">6</div><div class="lbl">componentes</div></div>
+          <div class="stat"><div class="num">1</div><div class="lbl">punto de entrada</div></div>
+          <div class="stat"><div class="num">0</div><div class="lbl">estado oculto</div></div>
+          <div class="stat"><div class="num">100%</div><div class="lbl">trazado</div></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="in">
+        <span class="mark">d</span>
+        <span class="txt"><b>SMCP</b> — Shared Mesh Context Protocol</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

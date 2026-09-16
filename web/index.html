@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090a09" />
+  <title>SMCP — Shared Mesh Context Protocol</title>
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="topbar">
+      <div class="brand">
+        <span class="mark">d</span>
+        <span>SMCP</span>
+      </div>
+      <nav class="topnav">
+        <a href="index.html" aria-current="page">Inicio</a>
+        <a href="nucleo.html">Núcleo</a>
+        <a href="seguridad.html">Seguridad</a>
+        <a href="demos.html">Demos</a>
+        <a href="arquitectura.html">Arquitectura</a>
+      </nav>
+      <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="hero">
+        <div class="wordmark">delm</div>
+        <h1>Shared Mesh Context Protocol</h1>
+        <p class="sub">
+          Protocolo de malla para <strong>contexto compartido, admisión y trazabilidad</strong> de
+          sesiones de LLM. Sin orquestador central: cada nodo publica su estado, la malla lo
+          verifica y lo admite con evidencia criptográfica.
+        </p>
+        <div class="meta">
+          <span class="chip"><b>231</b> tests</span>
+          <span class="chip"><b>5</b> demos</span>
+          <span class="chip"><b>20</b> módulos</span>
+          <span class="chip"><b>0</b> orquestador central</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Secciones</h2>
+        <p class="lead">El protocolo se lee en cuatro capas: el núcleo de malla, la capa de
+        seguridad, las demos ejecutables y la arquitectura de módulos.</p>
+        <div class="links">
+          <a class="linkcard" href="nucleo.html">
+            <div class="k">01 · Núcleo</div>
+            <div class="t">DeLM Core</div>
+            <p class="d">SharedContext, TaskQueue, AdmissionPipeline, RuleVerifier, Unfolding y DelmPipeline: el ciclo de vida de una tarea en la malla.</p>
+          </a>
+          <a class="linkcard" href="seguridad.html">
+            <div class="k">02 · Seguridad</div>
+            <div class="t">Capa de evidencia</div>
+            <p class="d">Proveniencia ed25519, AdmissionLedger, taint y cuarentena, detector endurecido, métricas y ExpansionPolicy.</p>
+          </a>
+          <a class="linkcard" href="demos.html">
+            <div class="k">03 · Demos</div>
+            <div class="t">Ejecuciones reales</div>
+            <p class="d">Cinco demos con salida real: demo, seguridad, taint, multihost y demo real contra el modelo local.</p>
+          </a>
+          <a class="linkcard" href="arquitectura.html">
+            <div class="k">04 · Arquitectura</div>
+            <div class="t">Módulos y estado</div>
+            <p class="d">Los 20 módulos de delm/core, el estado actual del proyecto y la ruta de verificación.</p>
+          </a>
+        </div>
+      </section>
+
+      <section>
+        <h2>Principio</h2>
+        <p class="lead">
+          Una tarea entra a la malla con una <code>SharedContext</code> firmable. La
+          <code>AdmissionPipeline</code> verifica la cadena de proveniencia (ed25519), la
+          <code>RuleVerifier</code> aplica las reglas de admisión y el <code>AdmissionLedger</code>
+          lo registra append-only. Nada avanza sin evidencia; todo lo que avanza queda trazado.
+        </p>
+        <div class="stats">
+          <div class="stat"><div class="num">231</div><div class="lbl">tests verdes</div></div>
+          <div class="stat"><div class="num">5</div><div class="lbl">demos</div></div>
+          <div class="stat"><div class="num">3</div><div class="lbl">fases</div></div>
+          <div class="stat"><div class="num">0</div><div class="lbl">punto central</div></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="in">
+        <span class="mark">d</span>
+        <span class="txt"><b>SMCP</b> — Shared Mesh Context Protocol · protocolo de malla para contexto, admisión y trazabilidad.</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
