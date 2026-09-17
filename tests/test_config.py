@@ -184,4 +184,4 @@ def test_model_config_as_dict():
                       timeout_s=5.0)
     d = cfg.as_dict()
     assert d == {"model": "m", "base_url": "u", "api_key": "k",
-                "temperature": 0.1, "timeout_s": 5.0}
+                 "temperature": 0.1, "timeout_s": 5.0, "use_harness": False}
