@@ -30,7 +30,9 @@ import pytest
 
 # Endpoint por defecto: mesh local. Sobrescribe con MESH_LLM_URL.
 MESH_URL = os.environ.get("MESH_LLM_URL", "http://127.0.0.1:9337/v1")
-PROBE_TIMEOUT = 5.0  # s; un mesh que no responde cae rápido (skip, no hang)
+# Timeout del probe. Generoso: una malla remota puede tardar en cargar el
+# modelo al primer /models. Un mesh local responde en ms.
+PROBE_TIMEOUT = float(os.environ.get("MESH_PROBE_TIMEOUT", "30.0"))
 
 
 def _probe(url: str) -> str | None:
