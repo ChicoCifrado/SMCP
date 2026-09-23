@@ -94,11 +94,52 @@ class OpenAICompatibleClient(LLMClient):
                  **kwargs) -> None:
         # Imported laz so the package is importable without the SDK installed.
         from openai import AsyncOpenAI  # type: ignore
-        self._client = AsyncOpenAI(
-            base_url=base_url, api_key=api_key or "EMPTY", **kwargs
-        )
         self.model = model
         self.temperature = temperature
+        # Endpoints that need no auth (local servers) reject any
+        # Authorization header (401 "Invalid token payload"). Only send a
+        # Bearer token when a real key is configured; otherwise strip it
+        # via an httpx request hook so AsyncOpenAI still gets a non-empty
+        # api_key (it refuses api_key=None without OPENAI_API_KEY).
+        key = (api_key or "").strip()
+        if key:
+            self._client = AsyncOpenAI(
+                base_url=base_url, api_key=key, **kwargs
+            )
+            return
+        # No auth: endpoint local rejects any Authorization (401). Use a
+        # placeholder key (SDK refuses api_key=None) and strip the header
+        # on the wire. openai 3.x ships httpx2; older used httpx.
+        self._client = AsyncOpenAI(
+            base_url=base_url, api_key="delm-no-auth", **kwargs
+        )
+        try:
+            import httpx2  # type: ignore
+        except ImportError:  # pragma: no cover
+            import httpx as httpx2  # type: ignore
+
+        async def _strip_auth(request):
+            request.headers.pop("Authorization", None)
+            request.headers.pop("authorization", None)
+            return request
+
+        # Inject the hook into the SDK's transport without building a
+        # whole new AsyncClient (timeout/base_url/limits would be lost).
+        transport = getattr(self._client, "_custom_http_client", None)
+        if transport is None:
+            transport = getattr(self._client, "_client", None)
+        inner = getattr(transport, "_client", transport)
+        if inner is not None and hasattr(inner, "event_hooks"):
+            inner.event_hooks["request"] = list(
+                inner.event_hooks.get("request", [])
+            ) + [_strip_auth]
+        else:  # pragma: no cover — openai layout change
+            import copy
+            hc = copy.deepcopy(getattr(inner, "_transport", None))
+            self._client._custom_http_client = httpx2.AsyncClient(
+                event_hooks={"request": [_strip_auth]},
+                timeout=kwargs.get("timeout", 60),
+            )
 
     async def complete(self, prompt: str, system: str = "", **kwargs) -> str:
         messages = []
