@@ -14,7 +14,7 @@
     run: 0xffc233, err: 0xff6b5b, ok: 0x8fbf3f,
   };
 
-  // ---------- funciones (deben coincidir con /api/functions) ----------
+  // ---------- funciones (fallback; se sincroniza con /api/functions) ----------
   var FUNCS = [
     { id: "demo",        label: "Pipeline DeLM" },
     { id: "security",    label: "Seguridad" },
@@ -22,6 +22,31 @@
     { id: "multihost",   label: "Multi-host" },
     { id: "tests",       label: "Tests" },
   ];
+
+  function loadFunctions() {
+    return fetch("/api/functions")
+      .then(function (r) { return r.json(); })
+      .then(function (list) {
+        if (!Array.isArray(list) || !list.length) return;
+        var ids = list.map(function (f) { return f.id; }).join(",");
+        var cur = FUNCS.map(function (f) { return f.id; }).join(",");
+        if (ids === cur) return;
+        FUNCS = list.map(function (f) {
+          return { id: f.id, label: f.label || f.id };
+        });
+        if (scene && funcNodes.length) {
+          funcNodes.forEach(function (n) {
+            scene.remove(n.mesh);
+            scene.remove(n.halo);
+            if (n.label) scene.remove(n.label);
+          });
+          funcNodes = [];
+          hitMeshes = [];
+          buildFuncNodes();
+        }
+      })
+      .catch(function () {});
+  }
 
   var scene, camera, renderer, clock;
   var core, coreGlow, ring, ringWire;
@@ -364,6 +389,7 @@
   function start() {
     try {
       initScene();
+      loadFunctions();
       var c = document.getElementById("scene");
       c.addEventListener("mousedown", onDown);
       window.addEventListener("mousemove", onMove);

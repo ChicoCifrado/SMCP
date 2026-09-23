@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090a09" />
+  <title>Lab — SMCP</title>
+  <link rel="stylesheet" href="assets/style.css" />
+  <style>
+    .lab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    @media (max-width: 860px) { .lab-grid { grid-template-columns: 1fr; } }
+    .panel { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+    .panel > h3 {
+      margin: 0; padding: 12px 16px; font-size: 13px; font-weight: 600;
+      border-bottom: 1px solid var(--line); color: var(--text);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .panel .body { padding: 16px; }
+    .form-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; align-items: flex-end; }
+    .form-row label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); flex: 1; min-width: 100px; }
+    .form-row input, .form-row select, .form-row textarea {
+      font: inherit; font-size: 13px; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--code-bg); color: var(--text); width: 100%;
+    }
+    .form-row textarea { min-height: 120px; resize: vertical; font-size: 12.5px; line-height: 1.5; }
+    .lab-btn {
+      font: inherit; font-size: 13px; padding: 9px 16px; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+      cursor: pointer; transition: border-color .15s;
+    }
+    .lab-btn:hover { border-color: var(--accent); }
+    .lab-btn:disabled { opacity: .45; cursor: wait; }
+    .lab-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
+    .lab-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .run-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+    .run-head .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .run-head .pip.up { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .run-head .pip.down { background: #ff6b5b; }
+    .run-status { font-size: 13px; color: var(--text); }
+    .run-meta { font-size: 11.5px; color: var(--muted); width: 100%; }
+    .bar { height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; margin: 8px 0 14px; }
+    .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .metrics .m { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    .metrics .m .n { font-size: 16px; font-weight: 600; color: var(--accent); }
+    .metrics .m .l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .chip-s {
+      display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 999px;
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+      margin: 3px 4px 0 0; text-decoration: none;
+    }
+    .chip-s.done { color: var(--accent); border-color: var(--accent-soft); }
+    .chip-s.error, .chip-s.failed { color: #ff6b5b; border-color: #ff6b5b55; }
+    .chip-s.gist { color: var(--text); }
+    .chip-s.gist:hover { border-color: var(--accent); }
+    #event-feed {
+      margin-top: 10px; padding: 10px 12px; background: var(--code-bg); border: 1px solid var(--line);
+      border-radius: 8px; font-size: 11.5px; color: var(--muted); max-height: 140px; overflow: auto;
+      white-space: pre-wrap; min-height: 60px;
+    }
+    #lab-out {
+      margin-top: 14px; padding: 14px 16px; border-radius: 10px;
+      background: var(--code-bg); border: 1px solid var(--line);
+      font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+      max-height: 360px; overflow: auto; display: none;
+    }
+    #lab-out.visible { display: block; }
+    #lab-out.ok { border-color: var(--accent-soft); }
+    #lab-out.err { border-color: #ff6b5b; }
+    #probe-out {
+      display: none; margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+      background: var(--code-bg); border: 1px solid var(--line);
+      font-size: 12px; white-space: pre-wrap; max-height: 200px; overflow: auto;
+    }
+    .cfg-line { font-size: 12.5px; color: var(--muted); margin: 4px 0; }
+    .cfg-line b { color: var(--text); font-weight: 500; }
+    #outcome-actions, #worker-actions { display: none; margin-top: 8px; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="topbar">
+      <div class="brand">
+        <span class="mark">d</span>
+        <span>SMCP</span>
+      </div>
+      <nav class="topnav">
+        <a href="index.html">Inicio</a>
+        <a href="nucleo.html">Núcleo</a>
+        <a href="seguridad.html">Seguridad</a>
+        <a href="demos.html">Demos</a>
+        <a href="arquitectura.html">Arquitectura</a>
+        <a href="play.html" aria-current="page">Lab</a>
+        <a href="context.html">Contexto</a>
+        <a href="ledger.html">Ledger</a>
+        <a href="estado.html">Estado</a>
+        <a href="console.html">Consola</a>
+      </nav>
+      <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="hero">
+        <div class="wordmark">lab</div>
+        <h1>Lab — runs interactivos</h1>
+        <p class="sub">
+          Diseño production-oriented: crea un run, observa cola/contexto/métricas en vivo
+          y consulta el outcome. Backend <code>fake</code> siempre disponible; <code>real</code>
+          usa el endpoint configurado.
+        </p>
+        <div class="live-meta">
+          <span class="live-status" id="api-pip"><span class="pip"></span><span id="api-label">consultando…</span></span>
+        </div>
+      </section>
+
+      <section>
+        <div class="lab-grid">
+          <div class="panel">
+            <h3>Nuevo run</h3>
+            <div class="body">
+              <div class="form-row">
+                <label>backend
+                  <select id="in-backend">
+                    <option value="fake">fake (sin red)</option>
+                    <option value="real">real (endpoint)</option>
+                  </select>
+                </label>
+                <label>workers
+                  <input id="in-workers" type="number" min="1" max="16" value="2" />
+                </label>
+                <label>max rounds
+                  <input id="in-rounds" type="number" min="1" max="16" value="8" />
+                </label>
+              </div>
+              <div class="form-row">
+                <label>tasks (una por línea)
+                  <textarea id="in-tasks" placeholder="Inspect the load-bearing constraint in the design doc.
+Summarize admission rules for the mesh."></textarea>
+                </label>
+              </div>
+              <div class="lab-actions">
+                <button class="lab-btn primary" id="btn-start" type="button">Iniciar run</button>
+                <button class="lab-btn" id="btn-cancel" type="button" disabled>Cancelar</button>
+                <button class="lab-btn" id="btn-refresh" type="button">Refrescar</button>
+                <button class="lab-btn" id="btn-outcome" type="button">Outcome</button>
+              </div>
+              <div id="outcome-actions">
+                <a class="lab-btn" href="context.html" style="display:inline-block;text-decoration:none">→ Contexto</a>
+                <a class="lab-btn" href="ledger.html" style="display:inline-block;text-decoration:none">→ Ledger</a>
+              </div>
+              <div id="worker-actions"></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h3>Run en curso</h3>
+            <div class="body">
+              <div class="run-head">
+                <span class="pip" id="run-pip"></span>
+                <span class="run-status" id="run-status">sin run</span>
+                <span class="run-meta" id="run-meta"></span>
+              </div>
+              <div class="bar"><div id="run-bar"></div></div>
+              <div class="metrics">
+                <div class="m"><div class="n" id="m-rounds">—</div><div class="l">rounds</div></div>
+                <div class="m"><div class="n" id="m-gists">—</div><div class="l">gists</div></div>
+                <div class="m"><div class="n" id="m-pending">—</div><div class="l">pending</div></div>
+                <div class="m"><div class="n" id="m-admit">—</div><div class="l">admit</div></div>
+                <div class="m"><div class="n" id="m-lat">—</div><div class="l">p50 ms</div></div>
+                <div class="m"><div class="n" id="m-wall">—</div><div class="l">wall</div></div>
+              </div>
+              <div id="queue-chips"><span class="chip-s">—</span></div>
+              <div id="gist-chips"><span class="chip-s">—</span></div>
+              <div id="event-feed" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:18px">
+          <h3>Config / health</h3>
+          <div class="body">
+            <div class="cfg-line">model: <b id="cfg-model">—</b></div>
+            <div class="cfg-line">base_url: <b id="cfg-base">—</b></div>
+            <div class="cfg-line">api_key: <b id="cfg-key">—</b></div>
+            <div class="lab-actions">
+              <button class="lab-btn" id="btn-probe" type="button">Probe endpoint</button>
+              <button class="lab-btn" id="btn-health" type="button">Health</button>
+            </div>
+            <pre id="probe-out"></pre>
+          </div>
+        </div>
+
+        <pre id="lab-out" aria-live="polite"></pre>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="in">
+        <span class="mark">d</span>
+        <span class="txt"><b>SMCP</b> — Lab: runs reales contra la API de sesión.</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/app.js"></script>
+  <script src="assets/api.js"></script>
+  <script src="assets/play.js"></script>
+</body>
+</html>

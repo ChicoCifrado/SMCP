@@ -29,9 +29,23 @@ WEB = ROOT / "web"
 sys.path.insert(0, str(ROOT))                 # para `import delm`
 
 app = FastAPI(title="DeLM/SMCP API")
+# Localhost-only UI: do not open CORS to arbitrary origins.
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:8099",
+        "http://localhost:8099",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Interactive session API (runs, context, ledger, demos, health).
+from smcp_api import router as smcp_router  # noqa: E402
+
+app.include_router(smcp_router)
 
 # ------------------------------------------------------------------ funciones
 # Cada función: (id, etiqueta, descripción, comando)
@@ -71,7 +85,7 @@ FUNCTIONS = [
     {
         "id": "tests",
         "label": "Suite de tests",
-        "desc": "Suite por defecto (-m 'not slow', -q). 262 tests; los slow "
+        "desc": "Suite por defecto (-m 'not slow', -q). 285 tests; los slow "
                 "se corren aparte.",
         "cmd": [sys.executable, "-m", "pytest", "tests/", "-m", "not slow", "-q", "--no-header", "-p", "no:cacheprovider"],
         "slow": False,

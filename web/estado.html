@@ -4,38 +4,29 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#090a09" />
-  <title>Estado en vivo — SMCP</title>
+  <title>Estado — SMCP</title>
   <link rel="stylesheet" href="assets/style.css" />
   <style>
-    .live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin: 18px 0 8px; }
+    .live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin: 14px 0 8px; }
     .live-card {
       background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
       padding: 16px 18px;
     }
-    .live-card .num { font-size: 28px; font-weight: 600; color: var(--accent); line-height: 1.2; }
-    .live-card .lbl { font-size: 12px; color: var(--muted); margin-top: 4px; letter-spacing: .04em; text-transform: uppercase; }
-    .live-meta { font-size: 12px; color: var(--muted); margin-top: 10px; }
-    .live-meta code { font-size: 11px; }
-    .live-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .live-card .num { font-size: 26px; font-weight: 600; color: var(--accent); line-height: 1.2; }
+    .live-card .lbl { font-size: 11px; color: var(--muted); margin-top: 4px; letter-spacing: .04em; text-transform: uppercase; }
+    .live-meta { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .live-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .live-chip {
       font-size: 12px; padding: 4px 10px; border-radius: 999px;
       border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
     }
     .live-chip.ok { border-color: var(--accent-soft); color: var(--accent); }
-    .live-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
-    .live-btn {
-      font: inherit; font-size: 13px; padding: 8px 16px; border-radius: 8px;
-      border: 1px solid var(--line); background: var(--panel); color: var(--text);
-      cursor: pointer; transition: border-color .15s, background .15s;
-    }
-    .live-btn:hover { border-color: var(--accent); }
-    .live-btn:disabled { opacity: .5; cursor: wait; }
-    .live-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
+    .live-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
     #live-out {
-      margin-top: 16px; padding: 14px 16px; border-radius: 10px;
+      margin-top: 14px; padding: 14px 16px; border-radius: 10px;
       background: var(--code-bg); border: 1px solid var(--line);
       font-size: 13px; white-space: pre-wrap; word-break: break-word;
-      max-height: 360px; overflow: auto; display: none;
+      max-height: 320px; overflow: auto; display: none;
     }
     #live-out.visible { display: block; }
     #live-out.ok { border-color: var(--accent-soft); }
@@ -44,6 +35,19 @@
     .live-status .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
     .live-status.up .pip { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
     .live-status.down .pip { background: #ff6b5b; }
+    table.runs { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    table.runs th, table.runs td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    table.runs th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; font-size: 13px; }
+    .kv .k { color: var(--muted); }
+    .kv .v { word-break: break-all; }
+    .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-top: 10px; }
+    .shortcuts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .shortcuts a {
+      font-size: 13px; padding: 7px 14px; border: 1px solid var(--line);
+      border-radius: 8px; background: var(--panel); color: var(--text); text-decoration: none;
+    }
+    .shortcuts a:hover { border-color: var(--accent); color: var(--accent); }
   </style>
 </head>
 <body>
@@ -59,7 +63,11 @@
         <a href="seguridad.html">Seguridad</a>
         <a href="demos.html">Demos</a>
         <a href="arquitectura.html">Arquitectura</a>
+        <a href="play.html">Lab</a>
+        <a href="context.html">Contexto</a>
+        <a href="ledger.html">Ledger</a>
         <a href="estado.html" aria-current="page">Estado</a>
+        <a href="console.html">Consola</a>
       </nav>
       <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
@@ -70,11 +78,11 @@
   <main>
     <div class="wrap">
       <section class="hero">
-        <div class="wordmark">live</div>
-        <h1>Estado en vivo</h1>
+        <div class="wordmark">estado</div>
+        <h1>Estado del proyecto</h1>
         <p class="sub">
-          Lee el filesystem real del proyecto vía <code>/api/status</code> — no es texto
-          estático. Puedes lanzar la suite o una demo desde aquí y ver la salida.
+          Señales en vivo: API, endpoint de modelo, runs recientes y filesystem real
+          del repo (tests, módulos, demos, páginas).
         </p>
         <div class="live-meta">
           <span class="live-status" id="api-pip"><span class="pip"></span><span id="api-label">consultando…</span></span>
@@ -92,15 +100,44 @@
           <div class="live-card"><div class="num" id="s-pages">—</div><div class="lbl">páginas web</div></div>
           <div class="live-card"><div class="num" id="s-funcs">—</div><div class="lbl">funciones API</div></div>
         </div>
-        <div class="live-meta">Fuente de verdad del conteo de suite: <code>README</code> + <code>pytest --collect-only</code> (conciliados por CI).</div>
-
         <div class="live-actions">
-          <button class="live-btn primary" id="btn-status" type="button">Refrescar status</button>
-          <button class="live-btn" id="btn-tests" type="button">Correr suite (not slow)</button>
-          <button class="live-btn" id="btn-demo" type="button">Correr demo</button>
+          <button class="live-btn primary" id="btn-status" type="button">Refrescar</button>
+          <button class="live-btn" id="btn-tests" type="button">Suite (not slow)</button>
+          <button class="live-btn" id="btn-demo" type="button">Demo pipeline</button>
           <button class="live-btn" id="btn-taint" type="button">Demo taint</button>
         </div>
         <pre id="live-out" aria-live="polite"></pre>
+      </section>
+
+      <section>
+        <h2>Config de modelo</h2>
+        <div class="kv" id="cfg-kv">
+          <span class="k">model</span><span class="v" id="cfg-model">—</span>
+          <span class="k">base_url</span><span class="v" id="cfg-base">—</span>
+          <span class="k">api_key</span><span class="v" id="cfg-key">—</span>
+          <span class="k">reachable</span><span class="v" id="cfg-reach">—</span>
+        </div>
+        <div class="live-actions">
+          <button class="live-btn" id="btn-probe" type="button">Probar endpoint</button>
+        </div>
+        <div class="shortcuts">
+          <a href="play.html">→ Lab (nuevo run)</a>
+          <a href="context.html">→ Contexto</a>
+          <a href="ledger.html">→ Ledger</a>
+          <a href="console.html">→ Consola 3D</a>
+        </div>
+      </section>
+
+      <section>
+        <h2>Runs recientes</h2>
+        <div class="tbl-wrap">
+          <table class="runs" id="runs-table">
+            <thead>
+              <tr><th>id</th><th>status</th><th>backend</th><th>tasks</th><th>rounds</th><th>wall</th></tr>
+            </thead>
+            <tbody><tr><td colspan="6" style="color:var(--muted)">— sin runs —</td></tr></tbody>
+          </table>
+        </div>
       </section>
 
       <section>
@@ -115,12 +152,13 @@
     <div class="wrap">
       <div class="in">
         <span class="mark">d</span>
-        <span class="txt"><b>SMCP</b> — Shared Mesh Context Protocol · estado en vivo.</span>
+        <span class="txt"><b>SMCP</b> — estado en vivo · API + filesystem.</span>
       </div>
     </div>
   </footer>
 
   <script src="assets/app.js"></script>
+  <script src="assets/api.js"></script>
   <script src="assets/estado.js"></script>
 </body>
 </html>

@@ -181,6 +181,23 @@ footer.foot .mark { font-family: var(--font-logo); font-size: 22px; line-height:
 footer.foot .txt { font-size: 12px; color: var(--muted); }
 footer.foot .txt b { color: var(--text); }
 
+/* ---------- Lab / interactive (shared) ---------- */
+.live-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.live-status .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.live-status.up .pip { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.live-status.down .pip { background: #ff6b5b; }
+.live-btn {
+  font: inherit; font-size: 13px; padding: 8px 16px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  cursor: pointer; transition: border-color .15s;
+}
+.live-btn:hover { border-color: var(--accent); }
+.live-btn:disabled { opacity: .5; cursor: wait; }
+.live-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
+
+/* ---------- Nav: allow wrap on wide navs ---------- */
+nav.topnav { flex-wrap: wrap; row-gap: 4px; }
+
 @media (max-width: 640px) {
   nav.topnav { display: none; }
   .hero .wordmark { font-size: clamp(40px, 14vw, 80px); }

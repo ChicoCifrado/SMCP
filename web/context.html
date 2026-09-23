@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090a09" />
+  <title>Contexto — SMCP</title>
+  <link rel="stylesheet" href="assets/style.css" />
+  <style>
+    .ctx-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+    .ctx-toolbar label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+    .ctx-toolbar select {
+      font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--code-bg); color: var(--text); min-width: 180px;
+    }
+    .ctx-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .lab-btn {
+      font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+      cursor: pointer; text-decoration: none;
+    }
+    .lab-btn:hover { border-color: var(--accent); }
+    .lab-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
+    #ctx-msg { font-size: 12px; color: var(--muted); margin-left: auto; }
+    #ctx-msg.ok { color: var(--accent); }
+    #ctx-msg.err { color: #ff6b5b; }
+    .ctx-layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; min-height: 400px; }
+    @media (max-width: 800px) { .ctx-layout { grid-template-columns: 1fr; } }
+    .ctx-list {
+      border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+      overflow: auto; max-height: 560px;
+    }
+    .ctx-item {
+      display: block; width: 100%; text-align: left; font: inherit;
+      padding: 10px 12px; border: none; border-bottom: 1px solid var(--line);
+      background: transparent; color: var(--text); cursor: pointer;
+    }
+    .ctx-item:hover { background: var(--panel-2); }
+    .ctx-item.active { background: var(--accent-soft); color: var(--glyph-ink); }
+    .ctx-item .kind { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    .ctx-item .lbl { display: block; font-size: 13px; font-weight: 600; margin: 2px 0; }
+    .ctx-item .sn { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge {
+      display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--muted); margin-top: 4px;
+    }
+    .badge.clean { color: var(--accent); border-color: var(--accent-soft); }
+    .badge.susp { color: #ffc233; border-color: #ffc23355; }
+    .badge.conf { color: #ff6b5b; border-color: #ff6b5b55; }
+    .ctx-detail {
+      border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+      padding: 18px; overflow: auto; max-height: 560px;
+    }
+    .ctx-detail .empty { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
+    .kv { display: grid; grid-template-columns: 80px 1fr; gap: 4px 12px; font-size: 12.5px; margin: 10px 0; }
+    .kv .k { color: var(--muted); }
+    .kv .v { word-break: break-all; }
+    pre.block {
+      background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+      padding: 12px 14px; font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+      margin: 6px 0 12px; max-height: 240px; overflow: auto;
+    }
+    #render-block {
+      display: none; margin-top: 12px; background: var(--code-bg); border: 1px solid var(--line);
+      border-radius: 8px; padding: 12px 14px; font-size: 12px; white-space: pre-wrap;
+      max-height: 280px; overflow: auto; color: var(--muted);
+    }
+    #ctx-meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+    .ctx-cta {
+      display: inline-block; margin-top: 8px; font-size: 12px; padding: 8px 14px;
+      border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+      color: var(--text); text-decoration: none;
+    }
+    .ctx-cta:hover { border-color: var(--accent); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="topbar">
+      <div class="brand">
+        <span class="mark">d</span>
+        <span>SMCP</span>
+      </div>
+      <nav class="topnav">
+        <a href="index.html">Inicio</a>
+        <a href="nucleo.html">Núcleo</a>
+        <a href="seguridad.html">Seguridad</a>
+        <a href="demos.html">Demos</a>
+        <a href="arquitectura.html">Arquitectura</a>
+        <a href="play.html">Lab</a>
+        <a href="context.html" aria-current="page">Contexto</a>
+        <a href="ledger.html">Ledger</a>
+        <a href="estado.html">Estado</a>
+        <a href="console.html">Consola</a>
+      </nav>
+      <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="hero">
+        <div class="wordmark">context</div>
+        <h1>SharedContext</h1>
+        <p class="sub">
+          Gists admitidos, taint, digest/firma y despliegue selectivo
+          (<code>G → S → raw</code>). Los datos vienen de <code>GET /api/context</code>.
+        </p>
+      </section>
+
+      <section>
+        <div class="ctx-toolbar">
+          <label>run
+            <select id="run-sel"><option value="">(último)</option></select>
+          </label>
+          <div class="ctx-actions">
+            <button class="lab-btn" id="btn-reload" type="button">Recargar</button>
+            <button class="lab-btn primary" id="btn-render" type="button">render()</button>
+            <a class="lab-btn" href="play.html">→ Lab</a>
+            <a class="lab-btn" href="ledger.html">→ Ledger</a>
+          </div>
+          <span id="ctx-msg"></span>
+        </div>
+        <div id="ctx-meta">—</div>
+        <pre id="render-block"></pre>
+        <div class="ctx-layout">
+          <div class="ctx-list" id="gist-list"><div class="empty">—</div></div>
+          <div class="ctx-detail" id="detail">
+            <div class="empty">Sin contexto. Ejecuta un run en el Lab.</div>
+            <a class="ctx-cta" href="play.html">Abrir Lab →</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="in">
+        <span class="mark">d</span>
+        <span class="txt"><b>SMCP</b> — SharedContext en vivo · unfold bajo demanda.</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/app.js"></script>
+  <script src="assets/api.js"></script>
+  <script src="assets/context.js"></script>
+</body>
+</html>

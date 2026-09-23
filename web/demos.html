@@ -6,6 +6,27 @@
   <meta name="theme-color" content="#090a09" />
   <title>Demos — SMCP</title>
   <link rel="stylesheet" href="assets/style.css" />
+  <style>
+    .demo-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+    .demo-btn {
+      font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer;
+    }
+    .demo-btn:hover { border-color: var(--accent); }
+    .demo-btn:disabled { opacity: .45; cursor: wait; }
+    .demo-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
+    .demo-st { margin-left: auto; font-size: 11px; color: var(--muted); }
+    .demo-st.ok { color: var(--accent); }
+    .demo-st.err { color: #ff6b5b; }
+    pre.term { max-height: 260px; overflow: auto; }
+    .json-block {
+      margin: 0; padding: 12px 16px; border-top: 1px solid var(--line);
+      background: var(--code-bg); font-size: 11.5px; white-space: pre-wrap;
+      max-height: 220px; overflow: auto; display: none; color: var(--muted);
+    }
+    .json-block.visible { display: block; }
+    .note { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+  </style>
 </head>
 <body>
   <header class="top">
@@ -20,7 +41,11 @@
         <a href="seguridad.html">Seguridad</a>
         <a href="demos.html" aria-current="page">Demos</a>
         <a href="arquitectura.html">Arquitectura</a>
+        <a href="play.html">Lab</a>
+        <a href="context.html">Contexto</a>
+        <a href="ledger.html">Ledger</a>
         <a href="estado.html">Estado</a>
+        <a href="console.html">Consola</a>
       </nav>
       <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
@@ -34,58 +59,79 @@
         <div class="wordmark">demos</div>
         <h1>Demos ejecutables</h1>
         <p class="sub">
-          Las cinco demos del proyecto, con su salida real. Cada una es un guion Python
-          que corre la malla de extremo a extremo y muestra qué se admitió, qué se
-          rechazó y por qué.
+          Cada demo corre <strong>in-process</strong> en el servidor y devuelve JSON estructurado.
+          Multi-host sigue siendo subprocess (abre puertos QUIC).
         </p>
       </section>
 
       <section>
-        <h2>Salida real</h2>
-        <div class="demos">
-          <div class="demo">
-            <div class="demo-bar"><span class="dot"></span><span class="title">demo</span><span class="cmd">run_demo.py</span></div>
+        <h2>Ejecutar</h2>
+        <p class="note">Pulsa Ejecutar — la salida y el payload de <code>run()</code> aparecen bajo cada card.</p>
+        <div class="demos" id="demo-grid">
+          <div class="demo" data-demo="pipeline">
+            <div class="demo-bar"><span class="dot"></span><span class="title">pipeline</span><span class="cmd">POST /api/demo/pipeline</span></div>
 <pre class="term"><span class="dim">$ python -m delm.demo.run_demo</span>
-task: t-001 · ctx: ctx-7f3a
-admitted: <span class="ok">1</span>  rejected: 0  quarantined: 0
-trace: ed25519 ok · ledger ref 0x1f…a2
-<span class="ok">OK</span> — 1 task admitted</pre>
+<span class="dim">— sin ejecutar —</span></pre>
+            <div class="demo-actions">
+              <button class="demo-btn primary" type="button">Ejecutar</button>
+              <span class="demo-st">idle</span>
+            </div>
+            <pre class="json-block"></pre>
           </div>
 
-          <div class="demo">
-            <div class="demo-bar"><span class="dot"></span><span class="title">seguridad</span><span class="cmd">run_security_demo.py</span></div>
+          <div class="demo" data-demo="security">
+            <div class="demo-bar"><span class="dot"></span><span class="title">security</span><span class="cmd">POST /api/demo/security</span></div>
 <pre class="term"><span class="dim">$ python -m delm.demo.run_security_demo</span>
-injection: <span class="ok">detected</span> (prompt-inject)
-taint: marked · quarantined: 1
-admitted: <span class="ok">2</span>  rejected: 1
-<span class="ok">OK</span> — malicious branch isolated</pre>
+<span class="dim">— sin ejecutar —</span></pre>
+            <div class="demo-actions">
+              <button class="demo-btn primary" type="button">Ejecutar</button>
+              <span class="demo-st">idle</span>
+            </div>
+            <pre class="json-block"></pre>
           </div>
 
-          <div class="demo">
-            <div class="demo-bar"><span class="dot"></span><span class="title">taint</span><span class="cmd">run_taint_demo.py</span></div>
+          <div class="demo" data-demo="taint">
+            <div class="demo-bar"><span class="dot"></span><span class="title">taint</span><span class="cmd">POST /api/demo/taint</span></div>
 <pre class="term"><span class="dim">$ python -m delm.demo.run_taint_demo</span>
-taint propagation: 3 hops
-chain: a → b → c · <span class="ok">verified</span>
-quarantine: c isolated
-<span class="ok">OK</span> — taint contained</pre>
+<span class="dim">— sin ejecutar —</span></pre>
+            <div class="demo-actions">
+              <button class="demo-btn primary" type="button">Ejecutar</button>
+              <span class="demo-st">idle</span>
+            </div>
+            <pre class="json-block"></pre>
           </div>
 
-          <div class="demo">
-            <div class="demo-bar"><span class="dot"></span><span class="title">multihost</span><span class="cmd">run_multihost_demo.py</span></div>
+          <div class="demo" data-demo="rsi">
+            <div class="demo-bar"><span class="dot"></span><span class="title">rsi</span><span class="cmd">POST /api/demo/rsi</span></div>
+<pre class="term"><span class="dim">$ python -m delm.demo.run_rsi_demo</span>
+<span class="dim">— sin ejecutar —</span></pre>
+            <div class="demo-actions">
+              <button class="demo-btn primary" type="button">Ejecutar</button>
+              <span class="demo-st">idle</span>
+            </div>
+            <pre class="json-block"></pre>
+          </div>
+
+          <div class="demo" data-demo="real">
+            <div class="demo-bar"><span class="dot"></span><span class="title">real</span><span class="cmd">POST /api/demo/real</span></div>
+<pre class="term"><span class="dim">$ python -m delm.demo.run_real_demo</span>
+<span class="dim">— sin ejecutar · requiere endpoint —</span></pre>
+            <div class="demo-actions">
+              <button class="demo-btn primary" type="button">Ejecutar</button>
+              <span class="demo-st">idle</span>
+            </div>
+            <pre class="json-block"></pre>
+          </div>
+
+          <div class="demo" data-demo="multihost">
+            <div class="demo-bar"><span class="dot"></span><span class="title">multihost</span><span class="cmd">POST /api/run/multihost</span></div>
 <pre class="term"><span class="dim">$ python -m delm.demo.run_multihost_demo</span>
-hosts: 3 · mesh: mdns bus
-handshake: <span class="ok">ok</span> (quic)
-tasks: 4 · admitted: <span class="ok">4</span>
-<span class="ok">OK</span> — multihost coherent</pre>
-          </div>
-
-          <div class="demo">
-            <div class="demo-bar"><span class="dot"></span><span class="title">real</span><span class="cmd">run_real_demo.py</span></div>
-<pre class="term"><span class="dim">$ python -m delm.demo.run_real_demo --harness</span>
-backend: harness (unsloth 127.0.0.1:8888)
-model: Qwen3.8-27B-GGUF
-turn: 1 · <span class="ok">ok</span> · 14 events
-<span class="ok">OK</span> — real backend answered</pre>
+<span class="dim">— sin ejecutar · subprocess / puertos —</span></pre>
+            <div class="demo-actions">
+              <button class="demo-btn" type="button">Ejecutar (subprocess)</button>
+              <span class="demo-st">idle</span>
+            </div>
+            <pre class="json-block"></pre>
           </div>
         </div>
       </section>
@@ -96,11 +142,13 @@ turn: 1 · <span class="ok">ok</span> · 14 events
     <div class="wrap">
       <div class="in">
         <span class="mark">d</span>
-        <span class="txt"><b>SMCP</b> — Shared Mesh Context Protocol</span>
+        <span class="txt"><b>SMCP</b> — demos reales, sin salida hardcodeada.</span>
       </div>
     </div>
   </footer>
 
   <script src="assets/app.js"></script>
+  <script src="assets/api.js"></script>
+  <script src="assets/demos.js"></script>
 </body>
 </html>
