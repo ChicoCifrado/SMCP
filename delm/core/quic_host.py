@@ -168,14 +168,23 @@ class QuicHostNode:
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._stop = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # Nº de ``serve()`` que deben bindear antes de marcar ``_ready``
+        # (evita la race: el cliente conecta antes de que el servidor escuche).
+        self._need_bind = 0
+        self._bound = 0
         # Los servers (para cerrarlos).
         self._servers: list[Any] = []
 
     # -- API pública (sync, thread-safe) ---------------------------------
     def start(self) -> None:
         """Arranca el event loop asyncio en un hilo dedicado."""
+        self._need_bind = sum(
+            1 for role, *_ in self.peers.values() if role == "serve")
+        self._bound = 0
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        # Espera a que todos los ``serve()`` bindeen (o a que no haya ninguno).
         self._ready.wait(timeout=20)
 
     def send(self, to: str, payload: bytes) -> None:
@@ -205,26 +214,64 @@ class QuicHostNode:
         return total
 
     def close(self) -> None:
-        """Para el event loop."""
+        """Para el event loop y libera los sockets (puertos)."""
         self._stop.set()
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            try:
+                loop.call_soon_threadsafe(self._cancel_tasks)
+            except RuntimeError:
+                pass  # el loop ya cerró
         if self._thread:
             self._thread.join(timeout=5)
+            self._thread = None
+        self._loop = None
+
+    def _cancel_tasks(self) -> None:
+        """Cancela todas las tareas del loop (corre en el hilo del loop)."""
+        loop = self._loop
+        if loop is None:
+            return
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
+        for srv in self._servers:
+            try:
+                srv.close()
+            except Exception:  # noqa: BLE001 - cierre tolerante
+                pass
+        self._servers.clear()
 
     # -- Event loop asyncio (hilo dedicado) ----------------------------
     def _run(self) -> None:
         """Corre el event loop asyncio en este hilo."""
         loop = asyncio.new_event_loop()
+        self._loop = loop
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(self._serve_all())
+        except asyncio.CancelledError:
+            pass  # close() cancela las tareas: salida limpia
         finally:
+            # Drena cancelaciones pendientes y cierra el loop.
+            try:
+                pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True))
+            except Exception:  # noqa: BLE001 - cierre tolerante
+                pass
             loop.close()
 
     async def _serve_all(self) -> None:
         """Gestiona todas las conexiones del nodo (una por par).
 
         Para cada par: si es ``"connect"``, ``connect()`` al par; si es
-        ``"serve"``, ``serve()`` en el puerto del par.
+        ``"serve"``, ``serve()`` en el puerto del par. Marca ``_ready``
+        solo cuando todos los ``serve()`` han bindeado (el cliente no
+        conecta antes de que el servidor escuche) y sale en cuanto
+        ``_stop`` se marca (o las tareas terminan).
         """
         tasks: list[asyncio.Task] = []
         for par, (role, peer_host, port) in self.peers.items():
@@ -233,9 +280,35 @@ class QuicHostNode:
                     self._client(par, peer_host, port)))
             else:  # "serve"
                 tasks.append(asyncio.create_task(self._server(par, port)))
-        self._ready.set()
-        if tasks:
-            await asyncio.gather(*tasks)
+        if self._need_bind == 0:
+            # Sin servers: nada que esperar por bind.
+            self._ready.set()
+        # Si hay servers, ``_server`` marca ``_ready`` tras el bind.
+        if not tasks:
+            while not self._stop.is_set():
+                await asyncio.sleep(0.05)
+            return
+        gather = asyncio.gather(*tasks, return_exceptions=True)
+        stop_waiter = asyncio.create_task(self._wait_stop())
+        try:
+            await asyncio.wait({gather, stop_waiter},
+                               return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop_waiter.cancel()
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _on_bound(self) -> None:
+        """Un ``serve()`` bindeó: cuenta y marca ``_ready`` si es el último."""
+        self._bound += 1
+        if self._bound >= self._need_bind:
+            self._ready.set()
+
+    async def _wait_stop(self) -> None:
+        """Espera a que ``_stop`` se marque (para salir de ``gather``)."""
+        while not self._stop.is_set():
+            await asyncio.sleep(0.05)
 
     async def _client(self, par: str, peer_host: str, port: int) -> None:
         """La conexión cliente: ``connect()`` a ``peer_host:port``.
@@ -270,13 +343,24 @@ class QuicHostNode:
                 if not self._check_peer_identity(peer_cert, par):
                     writer.close()
                     return
+            write_task = asyncio.create_task(self._write(par, writer))
+            read_task = asyncio.create_task(self._read(par, reader))
+            stop_task = asyncio.create_task(self._wait_stop())
             try:
-                await asyncio.gather(
-                    self._write(par, writer),
-                    self._read(par, reader),
+                await asyncio.wait(
+                    {write_task, read_task, stop_task},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
             finally:
-                writer.close()
+                stop_task.cancel()
+                write_task.cancel()
+                read_task.cancel()
+                await asyncio.gather(
+                    write_task, read_task, stop_task, return_exceptions=True)
+                try:
+                    writer.close()
+                except Exception:  # noqa: BLE001 - cierre tolerante
+                    pass
 
     async def _wait_for_peer_cert(self, protocol, timeout: float = 5.0):
         """Espera a que el cert del par esté disponible (handshake).
@@ -328,12 +412,17 @@ class QuicHostNode:
         srv = await serve(self.host, port, configuration=cfg,
                           stream_handler=self._make_handler(par))
         self._servers.append(srv)
+        # El bind ya terminó (``serve()`` retornó): cuenta para ``_ready``.
+        await self._on_bound()
         try:
-            while not self._stop.is_set():
-                await asyncio.sleep(0.05)
+            await self._wait_stop()
         finally:
             try:
                 srv.close()
+            except Exception:  # noqa: BLE001 - cierre tolerante
+                pass
+            try:
+                await srv.wait_closed()
             except Exception:  # noqa: BLE001 - cierre tolerante
                 pass
 
@@ -350,24 +439,42 @@ class QuicHostNode:
 
     async def _stream(self, par: str, reader, writer) -> None:
         """La tarea del stream de ``par``: ``_read``/``_write``."""
+        write_task = asyncio.create_task(self._write(par, writer))
+        read_task = asyncio.create_task(self._read(par, reader))
+        stop_task = asyncio.create_task(self._wait_stop())
         try:
-            await asyncio.gather(
-                self._write(par, writer),
-                self._read(par, reader),
+            await asyncio.wait(
+                {write_task, read_task, stop_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
         finally:
-            writer.close()
+            stop_task.cancel()
+            write_task.cancel()
+            read_task.cancel()
+            await asyncio.gather(
+                write_task, read_task, stop_task, return_exceptions=True)
+            try:
+                writer.close()
+            except Exception:  # noqa: BLE001 - cierre tolerante
+                pass
 
     # -- Tareas de I/O (escribir de _out[par], leer a _in_queue) --------
     async def _write(self, par: str, writer) -> None:
         """Escribe de ``_out[par]`` al stream (con framing).
 
-        Bloquea en ``_out[par].get()`` hasta que haya un datagrama; lo
-        escribe al stream con framing length-prefix.
+        Espera con timeout en la cola (para poder salir en cuanto
+        ``_stop`` se marca); un ``get()`` bloqueante indefinido dejaría el
+        hilo del executor vivo y el proceso no saldría.
         """
         loop = asyncio.get_running_loop()
         while not self._stop.is_set():
-            payload = await loop.run_in_executor(None, self._out[par].get)
+            try:
+                payload = await loop.run_in_executor(
+                    None, lambda: self._out[par].get(timeout=0.1))
+            except queue.Empty:
+                continue
+            if self._stop.is_set():
+                break
             writer.write(_frame(payload))
 
     async def _read(self, par: str, reader) -> None:
