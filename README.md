@@ -211,7 +211,7 @@ multi-host (la malla corre sobre red, no in-proceso).
 python -m pytest
 ```
 
-El suite está repartido en doce archivos, todos deterministas:
+El suite está repartido en veinticinco archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -243,6 +243,42 @@ El suite está repartido en doce archivos, todos deterministas:
 - `test_deployment.py` — capa 4: discovery, relays, bootstrap (firma del
   owner) y control-plane (órdenes firmadas), y el transporte Nostr (in-memory
   y de red) swappable con `DiscoveryBus`.
+- `test_mdns.py` — capa 4: discovery mDNS (`MdnsDiscoveryTransport`,
+  swappable con `DiscoveryBus`).
+- `test_quic_host.py` — transporte QUIC entre hosts: framing, round-trip
+  y malla completa sobre sockets reales.
+- `test_quic_identity.py` — enlace identidad-cert del QUIC (legítimo,
+  MITM rechazado, insecure, `CN = peer_id`).
+- `test_hci.py` — métrica Headroom-Closed Index (Benchmark, BenchFamily,
+  HCIMeter, DeterministicScorer, SMCP_FAMILY).
+- `test_rsi.py` / `test_rsi_demo.py` — loop RSI L1: proponer/verificar/
+  retener/sucesor + demo que mide el avance de HCI.
+- `test_provenance_strict.py` — modo estricto del provenance (sin degradación
+  silenciosa a HMAC).
+- `test_harness_adapter.py` — adaptador DeepSeek Harness (import lazy,
+  `build_client`, `DELM_HARNESS` opt-in).
+- `test_owner_rotation.py` — rotación/revocación de la clave del owner
+  (control-plane, cadena de confianza).
+- `test_ledger_persistence.py` — persistencia append-only del
+  `AdmissionLedger` (dump/load/export, opt-in).
+- `test_meshllm_wiring.py` — wiring SMCP→MeshLLM (opt-in `slow`; se skipea
+  sin endpoint; **2 passed** vs malla pública 2026-09-23).
+
+### Web UI y API
+
+```bash
+pip install -e ".[web]"      # fastapi + uvicorn
+python api_server.py         # http://127.0.0.1:8099
+```
+
+`api_server.py` expone:
+
+- `/api/functions` — lista de funciones (demo, seguridad, taint, multi-host, tests).
+- `/api/run/<id>` — lanza la función (subprocess) y devuelve JSON.
+- `/api/status` — estado en vivo del filesystem: módulos core, archivos/`def test_`, demos, páginas web.
+- `/` — estático de `web/` (7 páginas: inicio, núcleo, seguridad, demos, arquitectura, **estado en vivo**, consola 3D).
+
+`web/estado.html` + `web/assets/estado.js` leen `/api/status` en vivo y permiten lanzar suite/demo/taint desde el navegador. `web/assets/app.js` guarda la última página en `localStorage` y la restaura al volver al home.
 
 ### Usar un modelo real
 
@@ -310,26 +346,28 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **231 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **262 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
-  16 config + 2 wiring + 55 capa 3: 13 gossip + 12 requirements + 10
+  16 config + 2 wiring + 83 capa 3: 13 gossip + 12 requirements + 10
   heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
   3 QUIC entre hosts: framing/round-trip/malla completa + 4 identidad: el
   enlace identidad-cert del QUIC (legítimo/MITM/insecure/`CN=peer_id`) +
   19 capa 3/4 Nostr: BIP340 contra los 19 vectores + relay de red +
   NostrTransport + convergencia de malla + 5 guardia de relay: rate-limit
   por `pubkey`, dedup, límite de tamaño, snapshot/restore y default efímero +
-  13 capa 4: discovery/relays/bootstrap/control-plane + transporte
+  21 capa 4: 13 discovery/relays/bootstrap/control-plane + transporte
   Nostr de red + 8 mDNS: el transporte de discovery mDNS (swappable con
   `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) + 9 modo
   estricto: el provenance no degrada silenciosamente a HMAC (lanza en estricto,
   warning en no-estricto, `allow_hmac_fallback`) + 6 adaptador DeepSeek
   Harness: import lazy del módulo, subclase `LLMClient`, `build_client`
-  por defecto / `use_harness`, `DELM_HARNESS` en env (opt-in) + 2 demo
-  multi-host: convergencia sobre QUIC (default) y Nostr (`--nostr`), y 4
-  demos que pasan.
+  por defecto / `use_harness`, `DELM_HARNESS` en env (opt-in) + 1 demo
+  multi-host: convergencia sobre QUIC (default) + 31 RSI/HCI: 9 loop L1
+  (proponer/verificar/retener/sucesor) + 3 demo RSI (HCI 10.48→21.19) +
+  19 métrica HCI (Benchmark/BenchFamily/HCIMeter/DeterministicScorer), y 4
+  demos que pasan. 5 tests `slow` se excluyen del default (`-m 'not slow'`).
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -408,6 +446,8 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 
 ```
 delm/
+  config.py           ModelConfig + load_config + build_client (config de modelo)
+  api_server.py       FastAPI :8099 — /api/status, /api/run, estático web/
   core/
     gist.py            Gist, Summary, RefTag, GistKind   (el modelo de datos)
     shared_context.py  SharedContext                     (el C verificado)
@@ -417,11 +457,11 @@ delm/
     verifier.py        RuleVerifier, LLMVerifier         (la puerta de verificación)
     unfolding.py       Unfolding                         (G -> S -> raw)
     llm.py             LLMClient, FakeLLMClient, OpenAICompatibleClient
-    config.py          ModelConfig + load_config         (config de modelo real)
     pipeline.py        Worker, DelmPipeline              (el bucle descentralizado)
     provenance.py      digest canónico + firma ed25519/HMAC
     ledger.py          AdmissionLedger + TrustGate       (auditoría + gate)
     injection.py       detector de prompt-injection
+    injection_hardened.py  detector endurecido (+ tests)
     taint.py           TaintRegistry (niveles + cierre transitivo)
     metrics.py         MetricsTracker                    (coste/latencia por tarea)
     expansion.py       ExpansionPolicy                   (paso "generate more")
@@ -435,30 +475,22 @@ delm/
     deployment.py      Owner/DiscoveryBus/DeploymentNode (capa 4: discovery, relays, bootstrap, control-plane)
     nostr.py           BIP340 + NostrEvent + NostrRelay/Server/Client (capa 4: relay de red)
     mdns.py            MdnsBus/MdnsDiscoveryTransport    (capa 4: discovery mDNS, swappable con DiscoveryBus)
+    quic_host.py       QUIC host server/client           (transporte entre hosts)
+    harness_client.py  HarnessLLMClient                  (DeepSeek Harness, opt-in)
+    hci.py             Headroom-Closed Index             (métrica de mejora)
+    rsi.py             RSILoop + Successor               (loop RSI L1)
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
     run_security_demo.py   demo Capas 1+2
     run_taint_demo.py      demo Capa 5
-  tests/
-    test_delm.py       núcleo
-    test_security.py   Capas 1+2
-    test_taint.py      Capa 5
-    test_mejoras.py    metrics + expansion cableados
-    test_config.py     loader de config (env / yaml / precedencia)
-    test_real_model_wiring.py   wiring de cliente real (mock OpenAI-compat)
-    test_gossip.py     capa 3: propagación transitoria
-    test_requirements.py capa 3: requisitos inmutables
-    test_heartbeat.py  capa 3: heartbeat
-    test_mesh.py       capa 3: transport/nodo/red/pipeline (integración)
-    test_nostr.py      capa 4: BIP340 (19 vectores) + relay de red (NostrRelayServer/Client)
-    test_deployment.py capa 4: discovery, relays, bootstrap, control-plane, transporte Nostr
-    test_mdns.py       capa 4: discovery mDNS (MdnsDiscoveryTransport, swappable con DiscoveryBus)
-    test_demo_multihost.py  demo multi-host: convergencia QUIC (default) + Nostr (slow)
-    test_ledger_persistence.py  capa 2: persistencia append-only del AdmissionLedger (dump/load/export, opt-in)
-    test_owner_rotation.py      capa 4: rotación/revocación de la clave del owner (control-plane, cadena de confianza)
-    test_quic_identity.py       capa 3: enlace identidad-cert del QUIC (CN = peer_id, MITM, insecure)
-    test_nostr_relay_guard.py  capa 4: guardia del relay Nostr (rate-limit por pubkey, dedup, límite de tamaño, snapshot/restore)
+    run_multihost_demo.py  demo multi-host (QUIC / Nostr)
+    run_rsi_demo.py        demo RSI L1 (mide HCI)
+  web/
+    index.html nucleo.html seguridad.html demos.html
+    arquitectura.html estado.html console.html
+    assets/  app.js estado.js style.css OpenCode.otf
+  tests/   (25 archivos — ver lista arriba)
 ```
 
 ---
