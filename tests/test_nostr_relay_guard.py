@@ -55,8 +55,13 @@ def test_rate_limit_rejects_excess():
     """
     server = NostrRelayServer(rate_limit=3)
     key = _make_key()
-    # 5 eventos de la misma pubkey (mismos ids distintos -> no es dedup).
-    results = [server._guard_why(_make_event(key, f"rate-{i}")) for i in range(5)]
+    # Pre-crear los 5 eventos (mismos ids distintos -> no es dedup) ANTES de
+    # medir: firmar BIP340 cuesta ~0.5s/evento, así que firmar+guardar
+    # interleaved cruzaría la ventana de 1s y resetearía el rate-limit
+    # (flaky). Con los eventos ya firmados, los 5 guards corren en la misma
+    # ventana (sub-milisegundo) y el resultado es determinista.
+    events = [_make_event(key, f"rate-{i}") for i in range(5)]
+    results = [server._guard_why(ev) for ev in events]
     accepted = sum(1 for r in results if r is None)
     rejected = sum(1 for r in results if r == "rate-limit")
     # Los primeros 3 se aceptan; los excedentes (2) se rechazan.

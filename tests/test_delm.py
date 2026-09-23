@@ -19,7 +19,7 @@ from delm.core.unfolding import Unfolding
 from delm.core.llm import FakeLLMClient
 from delm.core.pipeline import DelmPipeline
 from delm.demo.run_demo import run as demo_run
-from tests.conftest import toy_units
+from conftest import toy_units
 
 
 # ------------------------------------------------------------- task queue

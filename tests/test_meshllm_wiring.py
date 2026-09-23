@@ -55,7 +55,7 @@ def _probe(url: str) -> str | None:
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 @pytest.mark.slow
