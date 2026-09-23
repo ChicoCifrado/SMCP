@@ -71,7 +71,7 @@ FUNCTIONS = [
     {
         "id": "tests",
         "label": "Suite de tests",
-        "desc": "Suite por defecto (-m 'not slow', -q). 231 tests; los slow "
+        "desc": "Suite por defecto (-m 'not slow', -q). 262 tests; los slow "
                 "se corren aparte.",
         "cmd": [sys.executable, "-m", "pytest", "tests/", "-m", "not slow", "-q", "--no-header", "-p", "no:cacheprovider"],
         "slow": False,
@@ -117,17 +117,28 @@ def get_functions():
 
 @app.get("/api/status")
 def status():
-    """Estado resumido del proyecto."""
-    # Contar módulos y tests
+    """Estado resumido del proyecto (lectura en vivo del filesystem)."""
     core = sorted((ROOT / "delm" / "core").glob("*.py"))
     core = [p.name for p in core if not p.name.startswith("_")]
     tests = sorted((ROOT / "tests").glob("test_*.py"))
+    # Conteo de `def test_` por archivo (aprox. coleccionable; el total
+    # exacto lo da `pytest --collect-only` — el README es la fuente de verdad).
+    test_fns = 0
+    for p in tests:
+        try:
+            test_fns += p.read_text(encoding="utf-8").count("def test_")
+        except OSError:
+            pass
+    demos = sorted((ROOT / "delm" / "demo").glob("run_*.py"))
     return {
         "core_modules": len(core),
         "core": core,
         "test_files": len(tests),
+        "test_fns": test_fns,
+        "demos": [p.stem for p in demos],
         "functions": len(FUNCTIONS),
         "web_pages": len(list((WEB).glob("*.html"))),
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
 
 

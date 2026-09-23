@@ -20,6 +20,7 @@
         <a href="seguridad.html">Seguridad</a>
         <a href="demos.html">Demos</a>
         <a href="arquitectura.html" aria-current="page">Arquitectura</a>
+        <a href="estado.html">Estado</a>
       </nav>
       <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
@@ -41,10 +42,10 @@
       <section>
         <h2>Estado actual</h2>
         <div class="stats">
-          <div class="stat"><div class="num">231</div><div class="lbl">tests verdes</div></div>
+          <div class="stat"><div class="num">262</div><div class="lbl">tests verdes</div></div>
           <div class="stat"><div class="num">5</div><div class="lbl">demos</div></div>
           <div class="stat"><div class="num">3</div><div class="lbl">fases</div></div>
-          <div class="stat"><div class="num">20</div><div class="lbl">módulos</div></div>
+          <div class="stat"><div class="num">30</div><div class="lbl">módulos</div></div>
         </div>
       </section>
 
@@ -87,7 +88,7 @@
         <div class="codeblock">
           <div class="bar">verificación local — sin orquestador</div>
 <pre><span class="c"># cada nodo verifica por sí mismo</span>
-python -m pytest -m "not slow"        <span class="c"># 231 tests, ~40 s</span>
+python -m pytest -m "not slow"        <span class="c"># 262 tests, ~55 s</span>
 python -m delm.demo.run_demo          <span class="c"># 1 task admitida</span>
 python -m delm.demo.run_real_demo --harness  <span class="c"># backend real</span></pre>
         </div>
