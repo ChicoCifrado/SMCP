@@ -70,6 +70,57 @@
     });
   };
 
+  SMCP.put = function (path, body) {
+    var opts = { method: "PUT", headers: { "Content-Type": "application/json" } };
+    opts.body = JSON.stringify(body || {});
+    return fetch(path, opts).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) {
+          var msg = (j && (j.detail || j.error)) || "HTTP " + r.status;
+          var err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+          err.status = r.status;
+          err.body = j;
+          throw err;
+        }
+        return j;
+      });
+    });
+  };
+
+  /* SSE: live run events. Falls back to no-op if EventSource missing.
+     Returns a handle with close(). onEvent(ev), onEnd(status), onError(e). */
+  SMCP.streamRun = function (runId, handlers) {
+    handlers = handlers || {};
+    if (typeof EventSource === "undefined") {
+      if (handlers.onError) handlers.onError(new Error("EventSource not supported"));
+      return { close: function () {} };
+    }
+    var es = new EventSource("/api/runs/" + encodeURIComponent(runId) + "/events");
+    es.onmessage = function (msg) {
+      try {
+        var ev = JSON.parse(msg.data);
+        if (ev && ev.type === "end") {
+          es.close();
+          if (handlers.onEnd) handlers.onEnd(ev.status || "done");
+          return;
+        }
+        if (handlers.onEvent) handlers.onEvent(ev);
+      } catch (e) {
+        if (handlers.onError) handlers.onError(e);
+      }
+    };
+    es.onerror = function () {
+      // Browser auto-reconnects; only surface hard close after end.
+      if (es.readyState === EventSource.CLOSED && handlers.onError) {
+        handlers.onError(new Error("SSE closed"));
+      }
+    };
+    return {
+      close: function () { try { es.close(); } catch (e) {} },
+      es: es
+    };
+  };
+
   /* Health pip: expects elements #api-pip and #api-label (optional). */
   SMCP.setApi = function (up, label) {
     var pip = document.getElementById("api-pip");

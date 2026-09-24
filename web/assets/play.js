@@ -1,9 +1,10 @@
-/* SMCP — play.js: Lab — create run, poll state, inspect. */
+/* SMCP — play.js: Lab — create run, live SSE events, poll state, inspect. */
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   var out = $("lab-out");
   var poller = null;
+  var stream = null;
   var currentId = null;
   var lastOutcome = null;
 
@@ -11,6 +12,51 @@
     out.className = "visible " + (cls || "");
     out.textContent = msg;
     out.scrollTop = out.scrollHeight;
+  }
+
+  function stopStream() {
+    if (stream) {
+      stream.close();
+      stream = null;
+    }
+  }
+
+  function appendEvent(ev) {
+    var feed = $("event-feed");
+    if (!feed) return;
+    var line = "[" + (ev.type || "?") + "] " + (ev.label || "") +
+      (ev.error ? " " + ev.error : "") +
+      (ev.admitted != null ? " admitted=" + ev.admitted : "");
+    feed.textContent = (feed.textContent ? feed.textContent + "\n" : "") + line;
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function beginStream(id) {
+    stopStream();
+    stream = SMCP.streamRun(id, {
+      onEvent: function (ev) {
+        appendEvent(ev);
+        // Refresh state on meaningful events for snappy UI.
+        if (ev.type === "reason" || ev.type === "done" || ev.type === "started") {
+          SMCP.get("/api/runs/" + id + "/state").then(renderState).catch(function () {});
+        }
+      },
+      onEnd: function (status) {
+        stopStream();
+        SMCP.get("/api/runs/" + id + "/state").then(function (st) {
+          renderState(st);
+          finishRun(id, st);
+        }).catch(function () {
+          $("btn-start").disabled = false;
+          $("btn-cancel").disabled = true;
+        });
+        void status;
+      },
+      onError: function () {
+        // SSE failed — poll keeps the UI alive.
+        beginPoll(id);
+      }
+    });
   }
 
   function loadConfig() {
@@ -89,6 +135,7 @@
         $("worker-actions").style.display = "none";
         $("worker-actions").innerHTML = "";
         show("run " + h.id + " · status=" + h.status + "\n" + SMCP.jpretty(h), "ok");
+        beginStream(h.id);
         beginPoll(h.id);
       })
       .catch(function (e) {
@@ -97,20 +144,25 @@
       });
   }
 
+  function finishRun(id, st) {
+    stopPoll();
+    stopStream();
+    $("btn-start").disabled = false;
+    $("btn-cancel").disabled = true;
+    if (st.status === "done") {
+      show("run " + id + " DONE\n" + SMCP.jpretty(st.metrics || {}), "ok");
+      $("outcome-actions").style.display = "";
+    } else {
+      show("run " + id + " " + st.status.toUpperCase() + (st.error ? "\n" + st.error : ""), "err");
+    }
+  }
+
   function beginPoll(id) {
     stopPoll();
     poller = SMCP.poll("/api/runs/" + id + "/state", 700, function (st) {
       renderState(st);
       if (st.status === "done" || st.status === "error" || st.status === "cancelled") {
-        stopPoll();
-        $("btn-start").disabled = false;
-        $("btn-cancel").disabled = true;
-        if (st.status === "done") {
-          show("run " + id + " DONE\n" + SMCP.jpretty(st.metrics || {}), "ok");
-          $("outcome-actions").style.display = "";
-        } else {
-          show("run " + id + " " + st.status.toUpperCase() + (st.error ? "\n" + st.error : ""), "err");
-        }
+        finishRun(id, st);
       }
     });
     poller.start();
@@ -182,11 +234,14 @@
 
     var feed = $("event-feed");
     if (st.events && st.events.length) {
-      feed.textContent = st.events.map(function (e) {
-        return "[" + e.type + "] " + (e.label || "") + (e.error ? " " + e.error : "") +
-          (e.admitted != null ? " admitted=" + e.admitted : "");
-      }).join("\n");
-      feed.scrollTop = feed.scrollHeight;
+      // Prefer live SSE appends; only hydrate when feed is empty.
+      if (!feed.textContent.trim()) {
+        feed.textContent = st.events.map(function (e) {
+          return "[" + e.type + "] " + (e.label || "") + (e.error ? " " + e.error : "") +
+            (e.admitted != null ? " admitted=" + e.admitted : "");
+        }).join("\n");
+        feed.scrollTop = feed.scrollHeight;
+      }
     }
 
     if (st.status === "done" && st.workers && st.workers.length) {
@@ -205,6 +260,7 @@
       .then(function (h) {
         show("cancelado: " + h.id + " status=" + h.status, "ok");
         stopPoll();
+        stopStream();
         $("btn-start").disabled = false;
       })
       .catch(function (e) {
@@ -224,6 +280,7 @@
       return SMCP.get("/api/runs/" + id + "/state").then(function (st) {
         renderState(st);
         if (st.status === "running" || st.status === "starting" || st.status === "queued") {
+          beginStream(id);
           beginPoll(id);
           $("btn-cancel").disabled = false;
           $("btn-start").disabled = true;
@@ -252,6 +309,10 @@
     loadConfig();
     SMCP.refreshHealth().catch(function () {});
     refresh();
+    window.addEventListener("pagehide", function () {
+      stopPoll();
+      stopStream();
+    });
     $("btn-probe").addEventListener("click", probe);
     $("btn-health").addEventListener("click", function () {
       SMCP.refreshHealth().then(function (h) {

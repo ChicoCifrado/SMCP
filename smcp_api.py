@@ -8,19 +8,25 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import json
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from delm.config import build_client, load_config
+from delm.config import DEFAULT_CONFIG_PATH, build_client, load_config
 from delm.core.gist import Gist, GistKind, RefTag, Summary
+from delm.core.injection import detect_injection
+from delm.core.injection_hardened import detect_injection_hardened
 from delm.core.llm import FakeLLMClient, LLMClient
 from delm.core.metrics import TaskMetrics
 from delm.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
 from delm.core.task_queue import Task, TaskState
+from delm.core.taint import TaintLevel
 from delm.core.unfolding import Unfolding, Unfolded
 from delm.core.verifier import RuleVerifier
 
@@ -136,6 +142,29 @@ class VerifyIn(BaseModel):
 
 class ProbeIn(BaseModel):
     check_completion: bool = False
+
+
+class ScanIn(BaseModel):
+    text: str = Field(min_length=1, max_length=50000)
+    hardened: bool = True
+
+
+class TaintIn(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+    action: str = Field(pattern="^(escalate|clear)$")
+    level: int | None = Field(default=None, ge=1, le=2)
+    reason: str = Field(default="", max_length=200)
+    run: str | None = Field(default=None, max_length=64)
+
+
+class ConfigUpdate(BaseModel):
+    model: str | None = Field(default=None, max_length=200)
+    base_url: str | None = Field(default=None, max_length=500)
+    api_key: str | None = Field(default=None, max_length=500)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    timeout_s: float | None = Field(default=None, gt=0.0, le=3600.0)
+    use_harness: bool | None = None
+    clear_api_key: bool = False
 
 
 # ------------------------------------------------------------------ sessions
@@ -277,7 +306,7 @@ def _build_tasks(items: list[TaskIn]) -> list[Task]:
 def _build_llm(backend: str) -> tuple[LLMClient, dict[str, Any]]:
     if backend == "fake":
         return FakeLLMClient(), {"backend": "fake", "model": "fake"}
-    cfg = load_config()
+    cfg = _load_cfg()
     if not cfg.model or not cfg.base_url:
         raise HTTPException(
             status_code=400,
@@ -435,16 +464,129 @@ def outcome_dict(s: RunSession) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------ config
+def _load_cfg():
+    """Load config from the resolved YAML path (env still wins)."""
+    path = _config_path()
+    return load_config(path if path.exists() else None)
+
+
+def _config_path() -> Path:
+    # Resolve relative to CWD so api_server's ROOT layout is respected.
+    p = Path(DEFAULT_CONFIG_PATH)
+    if p.is_absolute():
+        return p
+    # Prefer the copy under the server package root when present.
+    root_cfg = Path(__file__).resolve().parent / p
+    if root_cfg.exists() or root_cfg.parent.exists():
+        return root_cfg
+    return p
+
+
+def _write_yaml(data: dict[str, Any]) -> None:
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Local model config (this file is git-ignored; never commit real keys).",
+        "# Written by PUT /api/config. Override via DELM_* env vars.",
+    ]
+    for key in ("model", "base_url", "api_key", "temperature", "timeout_s", "use_harness"):
+        if key not in data:
+            continue
+        val = data[key]
+        if isinstance(val, bool):
+            lines.append(f"{key}: {'true' if val else 'false'}")
+        elif isinstance(val, (int, float)):
+            lines.append(f"{key}: {val}")
+        else:
+            s = str(val).replace('"', '\\"')
+            lines.append(f'{key}: "{s}"')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 @router.get("/config")
 def get_config() -> dict[str, Any]:
-    cfg = load_config()
+    cfg = _load_cfg()
     d = cfg.as_dict()
     key = d.pop("api_key", "")
     d["api_key_set"] = bool(key)
     d["api_key_masked"] = _mask_key(key)
     d["has_model"] = bool(d.get("model"))
     d["has_base_url"] = bool(d.get("base_url"))
+    d["config_path"] = str(_config_path())
     return d
+
+
+@router.put("/config")
+def put_config(body: ConfigUpdate) -> dict[str, Any]:
+    """Persist model settings to the local YAML (never echoes api_key)."""
+    path = _config_path()
+    current: dict[str, Any] = {}
+    if path.exists():
+        current = _read_yaml_flat(path)
+    updates: dict[str, Any] = {}
+    if body.model is not None:
+        updates["model"] = body.model
+    if body.base_url is not None:
+        updates["base_url"] = body.base_url
+    if body.temperature is not None:
+        updates["temperature"] = body.temperature
+    if body.timeout_s is not None:
+        updates["timeout_s"] = body.timeout_s
+    if body.use_harness is not None:
+        updates["use_harness"] = body.use_harness
+    if body.clear_api_key:
+        updates["api_key"] = ""
+    elif body.api_key is not None:
+        updates["api_key"] = body.api_key
+    if not updates:
+        raise HTTPException(status_code=400, detail="no fields to update")
+    merged = {**current, **updates}
+    try:
+        _write_yaml(merged)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"cannot write config: {e}") from e
+    cfg = _load_cfg()
+    d = cfg.as_dict()
+    key = d.pop("api_key", "")
+    return {
+        "ok": True,
+        "path": str(path),
+        "updated": sorted(updates.keys()),
+        "model": d.get("model", ""),
+        "base_url": d.get("base_url", ""),
+        "temperature": d.get("temperature"),
+        "timeout_s": d.get("timeout_s"),
+        "use_harness": d.get("use_harness"),
+        "api_key_set": bool(key),
+        "api_key_masked": _mask_key(key),
+        "has_model": bool(d.get("model")),
+        "has_base_url": bool(d.get("base_url")),
+    }
+
+
+def _read_yaml_flat(path: Path) -> dict[str, Any]:
+    try:
+        import yaml  # type: ignore
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    out: dict[str, Any] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if val.lower() in ("true", "false"):
+            out[key] = val.lower() == "true"
+        else:
+            try:
+                out[key] = float(val) if "." in val else int(val)
+            except ValueError:
+                out[key] = val
+    return out
 
 
 async def _probe_endpoint(base_url: str, api_key: str,
@@ -509,7 +651,7 @@ async def _probe_endpoint(base_url: str, api_key: str,
 
 @router.post("/config/probe")
 async def post_probe(body: ProbeIn | None = None) -> dict[str, Any]:
-    cfg = load_config()
+    cfg = _load_cfg()
     body = body or ProbeIn()
     result = await _probe_endpoint(cfg.base_url, cfg.api_key, body.check_completion)
     return {
@@ -522,7 +664,7 @@ async def post_probe(body: ProbeIn | None = None) -> dict[str, Any]:
 
 @router.get("/health")
 async def get_health() -> dict[str, Any]:
-    cfg = load_config()
+    cfg = _load_cfg()
     probe = await _probe_endpoint(cfg.base_url, cfg.api_key, False)
     return {
         "api": True,
@@ -544,7 +686,7 @@ async def get_health() -> dict[str, Any]:
 @router.post("/runs")
 async def create_run(body: RunCreate) -> dict[str, Any]:
     if body.backend == "real":
-        cfg = load_config()
+        cfg = _load_cfg()
         if not cfg.model or not cfg.base_url:
             raise HTTPException(
                 status_code=400,
@@ -714,7 +856,7 @@ async def post_demo(name: str) -> dict[str, Any]:
                     "demo": name, "data": data}
         if name == "real":
             from delm.demo.run_real_demo import run as real_run
-            cfg = load_config()
+            cfg = _load_cfg()
             if not cfg.model or not cfg.base_url:
                 raise HTTPException(status_code=400,
                                     detail="real demo needs DELM_MODEL + DELM_BASE_URL")
@@ -748,3 +890,174 @@ async def post_demo(name: str) -> dict[str, Any]:
         raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}") from e
+
+
+# ------------------------------------------------------------------ actions
+def _require_pipeline(run: str | None) -> RunSession:
+    s = MANAGER.resolve(run)
+    if s.pipeline is None:
+        raise HTTPException(status_code=409, detail=f"run {s.id} has no pipeline yet")
+    return s
+
+
+@router.post("/scan")
+def post_scan(body: ScanIn) -> dict[str, Any]:
+    """Deterministic prompt-injection scan (baseline + hardened A/B)."""
+    baseline = detect_injection(body.text)
+    out: dict[str, Any] = {
+        "ok": True,
+        "baseline": {
+            "clean": baseline.clean,
+            "matched": list(baseline.matched),
+            "snippets": list(baseline.snippets),
+            "reasons": baseline.reasons,
+        },
+    }
+    if body.hardened:
+        h = detect_injection_hardened(body.text)
+        out["hardened"] = {
+            "clean": h.clean,
+            "matched": list(h.matched),
+            "snippets": list(h.snippets),
+            "reasons": h.reasons,
+            "evasion_detected": h.evasion_detected,
+            "baseline_clean": h.baseline_clean,
+            "region_hits": list(h.region_hits),
+            "normalized_text": h.normalized_text[:4000],
+        }
+        out["clean"] = h.clean
+    else:
+        out["clean"] = baseline.clean
+    return out
+
+
+@router.get("/taint")
+def get_taint(run: str | None = None) -> dict[str, Any]:
+    s = _require_pipeline(run)
+    ctx = s.pipeline.ctx
+    if not hasattr(ctx, "taint"):
+        raise HTTPException(status_code=409, detail="context has no taint registry")
+    reg = ctx.taint
+    report = ctx.taint_report() if hasattr(ctx, "taint_report") else {}
+    sources = [
+        {
+            "label": src.label,
+            "level": int(src.level),
+            "level_name": TaintLevel(src.level).name,
+            "reason": src.reason,
+            "derived_from": src.derived_from,
+        }
+        for src in reg.sources()
+    ]
+    return {
+        "run": s.header(),
+        "report": report,
+        "sources": sources,
+        "quarantined": sorted(reg.quarantined()),
+        "blocked": sorted(reg.blocked()),
+        "labels": list(ctx.labels()),
+    }
+
+
+@router.post("/taint")
+def post_taint(body: TaintIn) -> dict[str, Any]:
+    """Operator action: escalate or clear taint on a label in the run."""
+    s = _require_pipeline(body.run)
+    ctx = s.pipeline.ctx
+    if not hasattr(ctx, "taint"):
+        raise HTTPException(status_code=409, detail="context has no taint registry")
+    reg = ctx.taint
+    label = body.label
+    if body.action == "clear":
+        reg.clear(label)
+        action_note = "cleared"
+    else:
+        level = body.level if body.level is not None else int(TaintLevel.SUSPICIOUS)
+        try:
+            lvl = TaintLevel(level)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"bad taint level: {level}") from e
+        if lvl < TaintLevel.SUSPICIOUS:
+            raise HTTPException(status_code=422, detail="escalate requires level 1 or 2")
+        reg.escalate(label, lvl, reason=body.reason or "manual:operator")
+        action_note = f"escalated to {lvl.name}"
+    report = ctx.taint_report() if hasattr(ctx, "taint_report") else {}
+    _push(s, "taint", label=label, action=body.action, note=action_note)
+    return {
+        "ok": True,
+        "run": s.id,
+        "label": label,
+        "action": body.action,
+        "note": action_note,
+        "level": report.get(label, 0),
+        "report": report,
+    }
+
+
+@router.get("/ledger/export")
+def export_ledger(run: str | None = None) -> dict[str, Any]:
+    """Idempotent audit dump of the run's AdmissionLedger."""
+    s = MANAGER.resolve(run)
+    if s.pipeline is None:
+        raise HTTPException(status_code=409, detail="no pipeline")
+    ledger = getattr(s.pipeline.ctx, "ledger", None)
+    if ledger is None:
+        raise HTTPException(status_code=409, detail="context has no ledger")
+    chain = []
+    for e in ledger.entries():
+        d = e.to_dict()
+        d["entry_hash"] = getattr(e, "entry_hash", "")
+        chain.append(d)
+    return {
+        "format": 1,
+        "run": s.header(),
+        "count": len(chain),
+        "chain_ok": ledger.verify_chain(),
+        "chain": chain,
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+
+
+@router.get("/runs/{run_id}/events")
+async def stream_run_events(run_id: str, after: int = 0) -> StreamingResponse:
+    """SSE: live event feed for a run (replays from ``after``)."""
+    session = MANAGER.get(run_id)
+    cursor = max(0, after)
+
+    async def gen():
+        nonlocal cursor
+        # Replay backlog first.
+        while cursor < len(session.events):
+            ev = session.events[cursor]
+            cursor += 1
+            yield f"data: {json.dumps(ev, default=str)}\n\n"
+        # Follow until terminal status and no more events.
+        while True:
+            if cursor < len(session.events):
+                ev = session.events[cursor]
+                cursor += 1
+                yield f"data: {json.dumps(ev, default=str)}\n\n"
+                continue
+            if session.status in ("done", "error", "cancelled"):
+                final = {"type": "end", "ts": time.time(),
+                         "status": session.status, "cursor": cursor}
+                yield f"data: {json.dumps(final)}\n\n"
+                break
+            await asyncio.sleep(0.12)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/meshllm")
+async def get_meshllm() -> dict[str, Any]:
+    """Probe the local MeshLLM OpenAI-compatible endpoint (:9337)."""
+    result = await _probe_endpoint("http://127.0.0.1:9337/v1", "", False)
+    return {"endpoint": "http://127.0.0.1:9337/v1", **result}

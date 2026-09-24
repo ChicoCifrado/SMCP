@@ -134,6 +134,26 @@
     el.textContent = text;
   }
 
+  function exportLedger() {
+    var q = runSel ? "?run=" + encodeURIComponent(runSel) : "";
+    msg("exportando…");
+    SMCP.get("/api/ledger/export" + q).then(function (j) {
+      var blob = new Blob([JSON.stringify(j, null, 2)], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "ledger-" + (j.run && j.run.id ? j.run.id : "export") + ".json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      msg("export ok · " + j.count + " entradas · chain " + (j.chain_ok ? "OK" : "FAIL"),
+          j.chain_ok ? "ok" : "err");
+    }).catch(function (e) {
+      msg("export error: " + e.message, "err");
+    });
+  }
+
   function init() {
     var kind = $("v-kind");
     if (kind) {
@@ -149,6 +169,8 @@
         loadLedger();
       });
     }
+    var exp = $("btn-export");
+    if (exp) exp.addEventListener("click", exportLedger);
     var rs = $("run-sel");
     if (rs) {
       rs.addEventListener("change", function () {

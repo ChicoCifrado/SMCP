@@ -14,13 +14,6 @@
       border: 1px solid var(--line); background: var(--code-bg); color: var(--text); min-width: 180px;
     }
     .ctx-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .lab-btn {
-      font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 8px;
-      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
-      cursor: pointer; text-decoration: none;
-    }
-    .lab-btn:hover { border-color: var(--accent); }
-    .lab-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
     #ctx-msg { font-size: 12px; color: var(--muted); margin-left: auto; }
     #ctx-msg.ok { color: var(--accent); }
     #ctx-msg.err { color: #ff6b5b; }
@@ -78,8 +71,7 @@
   <header class="top">
     <div class="topbar">
       <div class="brand">
-        <span class="mark">d</span>
-        <span>SMCP</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
       </div>
       <nav class="topnav">
         <a href="index.html">Inicio</a>
@@ -139,7 +131,7 @@
   <footer class="foot">
     <div class="wrap">
       <div class="in">
-        <span class="mark">d</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
         <span class="txt"><b>SMCP</b> — SharedContext en vivo · unfold bajo demanda.</span>
       </div>
     </div>

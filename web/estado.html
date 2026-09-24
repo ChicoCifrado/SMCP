@@ -31,10 +31,8 @@
     #live-out.visible { display: block; }
     #live-out.ok { border-color: var(--accent-soft); }
     #live-out.err { border-color: #ff6b5b; }
-    .live-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
-    .live-status .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-    .live-status.up .pip { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-    .live-status.down .pip { background: #ff6b5b; }
+    #live-out .sum-ok { color: var(--accent); font-weight: 600; }
+    #live-out .sum-err { color: #ff6b5b; font-weight: 600; }
     table.runs { width: 100%; border-collapse: collapse; font-size: 12.5px; }
     table.runs th, table.runs td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
     table.runs th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
@@ -54,8 +52,7 @@
   <header class="top">
     <div class="topbar">
       <div class="brand">
-        <span class="mark">d</span>
-        <span>SMCP</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
       </div>
       <nav class="topnav">
         <a href="index.html">Inicio</a>
@@ -117,8 +114,25 @@
           <span class="k">api_key</span><span class="v" id="cfg-key">—</span>
           <span class="k">reachable</span><span class="v" id="cfg-reach">—</span>
         </div>
+        <div class="cfg-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px">
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)">
+            model
+            <input id="cfg-in-model" type="text" style="font:inherit;font-size:13px;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--code-bg);color:var(--text)" />
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)">
+            base_url
+            <input id="cfg-in-base" type="text" style="font:inherit;font-size:13px;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--code-bg);color:var(--text)" />
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)">
+            api_key (opcional)
+            <input id="cfg-in-key" type="password" placeholder="dejar vacío para no cambiar" style="font:inherit;font-size:13px;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--code-bg);color:var(--text)" />
+          </label>
+        </div>
         <div class="live-actions">
+          <button class="live-btn primary" id="btn-cfg-save" type="button">Guardar config (YAML)</button>
           <button class="live-btn" id="btn-probe" type="button">Probar endpoint</button>
+          <button class="live-btn" id="btn-meshllm" type="button">Probe MeshLLM :9337</button>
+          <span class="live-status" id="live-poll-lbl" style="font-size:12px;color:var(--muted)"></span>
         </div>
         <div class="shortcuts">
           <a href="play.html">→ Lab (nuevo run)</a>
@@ -151,7 +165,7 @@
   <footer class="foot">
     <div class="wrap">
       <div class="in">
-        <span class="mark">d</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
         <span class="txt"><b>SMCP</b> — estado en vivo · API + filesystem.</span>
       </div>
     </div>

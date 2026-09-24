@@ -8,13 +8,6 @@
   <link rel="stylesheet" href="assets/style.css" />
   <style>
     .demo-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
-    .demo-btn {
-      font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px;
-      border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer;
-    }
-    .demo-btn:hover { border-color: var(--accent); }
-    .demo-btn:disabled { opacity: .45; cursor: wait; }
-    .demo-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
     .demo-st { margin-left: auto; font-size: 11px; color: var(--muted); }
     .demo-st.ok { color: var(--accent); }
     .demo-st.err { color: #ff6b5b; }
@@ -32,8 +25,7 @@
   <header class="top">
     <div class="topbar">
       <div class="brand">
-        <span class="mark">d</span>
-        <span>SMCP</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
       </div>
       <nav class="topnav">
         <a href="index.html">Inicio</a>
@@ -141,7 +133,7 @@
   <footer class="foot">
     <div class="wrap">
       <div class="in">
-        <span class="mark">d</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
         <span class="txt"><b>SMCP</b> — demos reales, sin salida hardcodeada.</span>
       </div>
     </div>

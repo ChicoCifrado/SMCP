@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 600" fill="#000" fill-rule="nonzero">
+<path transform="translate(0,0)" d="M60 600L540 600L540 240L180 240L180 120L540 120L540 0L60 0L60 360L420 360L420 480L60 480Z"/>
+<path transform="translate(600,0)" d="M60 0H180V600H60ZM420 0H540V600H420ZM60 0H540V120H60ZM240 120H360V480H240Z"/>
+<path transform="translate(1200,0)" d="M540 120H180V480H540V600H60V0H540Z"/>
+<path transform="translate(1800,0)" d="M60 600V0H540V360H180V600ZM180 240H420V120H180Z"/>
+</svg>

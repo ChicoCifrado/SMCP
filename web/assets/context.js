@@ -131,7 +131,11 @@
       '<div class="lab-actions">' +
       '<button class="lab-btn" type="button" id="btn-unfold">Unfold G→S</button>' +
       '<button class="lab-btn primary" type="button" id="btn-deep">Deep unfold → raw</button>' +
+      '<button class="lab-btn" type="button" id="btn-taint-susp">Taint SUSPICIOUS</button>' +
+      '<button class="lab-btn" type="button" id="btn-taint-conf">Taint CONFIRMED</button>' +
+      '<button class="lab-btn" type="button" id="btn-taint-clear">Clear taint</button>' +
       "</div>" +
+      '<pre class="block" id="taint-out" style="display:none"></pre>' +
       '<pre class="block" id="unfold-out" style="display:none"></pre>' +
       (g.raw
         ? '<div style="font-size:12px;color:var(--muted);margin-top:6px">raw inline (' +
@@ -139,6 +143,28 @@
         : "");
     $("btn-unfold").addEventListener("click", function () { unfold(false); });
     $("btn-deep").addEventListener("click", function () { unfold(true); });
+    $("btn-taint-susp").addEventListener("click", function () { taintAction("escalate", 1); });
+    $("btn-taint-conf").addEventListener("click", function () { taintAction("escalate", 2); });
+    $("btn-taint-clear").addEventListener("click", function () { taintAction("clear", null); });
+  }
+
+  function taintAction(action, level) {
+    if (!state.selected) return;
+    var body = { label: state.selected, action: action };
+    if (level != null) body.level = level;
+    body.reason = "manual:web";
+    if (state.run) body.run = state.run;
+    var el = $("taint-out");
+    el.style.display = "block";
+    el.textContent = "POST /api/taint…";
+    SMCP.post("/api/taint", body).then(function (j) {
+      el.textContent = SMCP.jpretty(j);
+      msg("taint " + j.action + " · " + j.label + " · level=" + j.level, "ok");
+      loadContext().then(function () { select(state.selected); });
+    }).catch(function (e) {
+      el.textContent = "error: " + e.message;
+      msg("taint error: " + e.message, "err");
+    });
   }
 
   function unfold(deep) {

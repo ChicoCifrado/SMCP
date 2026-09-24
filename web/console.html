@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DeLM/SMCP — Consola 3D</title>
+<title>SMCP — Consola 3D</title>
 <link rel="stylesheet" href="/assets/style.css">
 <style>
   html, body { height: 100%; margin: 0; overflow: hidden; background: #090a09; }
@@ -16,8 +16,15 @@
     background: linear-gradient(180deg, rgba(9,10,9,.85), rgba(9,10,9,0));
     pointer-events: none;
   }
-  #hud .brand { font: 600 15px var(--font-mono); color: var(--text); letter-spacing: .02em; }
+  #hud .brand { display: flex; align-items: center; gap: 10px; font: 600 15px var(--font-mono); color: var(--text); letter-spacing: .02em; }
   #hud .brand b { color: var(--accent); }
+  #hud .brand .mark {
+    display: inline-block; width: 72px; height: 18px;
+    background-color: var(--glyph-ink);
+    -webkit-mask: url('/assets/smcp-mark.svg') no-repeat center / contain;
+    mask: url('/assets/smcp-mark.svg') no-repeat center / contain;
+  }
+  #hud .brand .sep { color: var(--muted); font-weight: 400; }
   #hud .hint { font: 12px var(--font-mono); color: var(--muted); margin-left: auto; }
   /* Panel de salida */
   #panel {
@@ -44,9 +51,9 @@
     padding: 12px 14px; overflow: auto; flex: 1;
     font: 12.5px/1.55 var(--font-mono); color: var(--text); white-space: pre-wrap;
   }
-  #out .ok { color: var(--accent); }
+  #out .ok { color: var(--accent); font-weight: 600; }
   #out .dim { color: var(--muted); }
-  #out .err { color: #ff6b5b; }
+  #out .err { color: #ff6b5b; font-weight: 600; }
   /* Leyenda inferior-izq */
   #legend {
     position: fixed; left: 18px; bottom: 18px; z-index: 5;
@@ -68,7 +75,7 @@
   <canvas id="scene"></canvas>
 
   <div id="hud">
-    <div class="brand"><b>delm</b> · Consola de control 3D</div>
+    <div class="brand"><span class="mark" role="img" aria-label="SMCP"></span><span>SMCP</span><span class="sep">·</span><span>Consola de control 3D</span></div>
     <nav class="topnav" style="display:flex;gap:14px;flex-wrap:wrap;margin-left:8px;pointer-events:auto">
       <a href="index.html" style="color:var(--muted);border:none">Inicio</a>
       <a href="play.html" style="color:var(--muted);border:none">Lab</a>
@@ -81,7 +88,7 @@
   </div>
 
   <div id="legend">
-    <div class="row"><span class="sw" style="background:#8fbf3f"></span> Núcleo DeLM (contexto verificado)</div>
+    <div class="row"><span class="sw" style="background:#8fbf3f"></span> Núcleo SMCP (contexto verificado)</div>
     <div class="row"><span class="sw" style="background:#58624b"></span> Función ejecutable (botón 3D)</div>
     <div class="row"><span class="sw" style="background:#285b22"></span> Worker / agente (orbita)</div>
   </div>

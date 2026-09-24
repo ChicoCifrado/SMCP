@@ -332,12 +332,29 @@
     dot.classList.remove("on");
     if (res.ok) { st.textContent = "OK · " + (res.secs != null ? res.secs + "s" : ""); st.className = "st ok"; }
     else { st.textContent = "error (código " + (res.code != null ? res.code : "?") + ")"; st.className = "st err"; }
-    var body = res.stdout || res.stderr || "(sin salida)";
-    out.innerHTML = fmt(body) + (res.secs != null ? '\n<span class="dim">— ' + res.secs + 's</span>' : "");
+    out.innerHTML = renderBody(id, res);
     // volver al color base tras 1.2s
     setTimeout(function () {
       if (node) { node.mat.color.setHex(COL.node); node.mat.emissive.setHex(COL.node); node.mat.emissiveIntensity = 0.5; }
     }, 1200);
+  }
+
+  /** Resumen pytest (headline verde) + cuerpo limpio; warnings al final. */
+  function renderBody(id, res) {
+    var secs = res.secs != null ? '\n<span class="dim">— ' + res.secs + 's</span>' : "";
+    var sum = res.summary;
+    if (id === "tests" && sum && sum.parsed) {
+      var head = '<span class="' + (res.ok ? "ok" : "err") + '">' + fmt(sum.headline) + "</span>";
+      var body = sum.body ? "\n" + fmt(sum.body) : "";
+      var warn = "";
+      if (sum.warnings_text) {
+        warn = '\n\n<span class="dim">warnings (' + sum.warnings + ')</span>\n'
+          + '<span class="dim">' + fmt(sum.warnings_text) + "</span>";
+      }
+      return head + body + warn + secs;
+    }
+    var raw = res.stdout || res.stderr || "(sin salida)";
+    return fmt(raw) + secs;
   }
 
   function fmt(s) {

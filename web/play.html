@@ -23,14 +23,6 @@
       border: 1px solid var(--line); background: var(--code-bg); color: var(--text); width: 100%;
     }
     .form-row textarea { min-height: 120px; resize: vertical; font-size: 12.5px; line-height: 1.5; }
-    .lab-btn {
-      font: inherit; font-size: 13px; padding: 9px 16px; border-radius: 8px;
-      border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
-      cursor: pointer; transition: border-color .15s;
-    }
-    .lab-btn:hover { border-color: var(--accent); }
-    .lab-btn:disabled { opacity: .45; cursor: wait; }
-    .lab-btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--glyph-ink); }
     .lab-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .run-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
     .run-head .pip { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -82,8 +74,7 @@
   <header class="top">
     <div class="topbar">
       <div class="brand">
-        <span class="mark">d</span>
-        <span>SMCP</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
       </div>
       <nav class="topnav">
         <a href="index.html">Inicio</a>
@@ -203,7 +194,7 @@ Summarize admission rules for the mesh."></textarea>
   <footer class="foot">
     <div class="wrap">
       <div class="in">
-        <span class="mark">d</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
         <span class="txt"><b>SMCP</b> — Lab: runs reales contra la API de sesión.</span>
       </div>
     </div>

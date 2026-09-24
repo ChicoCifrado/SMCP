@@ -11,8 +11,7 @@
   <header class="top">
     <div class="topbar">
       <div class="brand">
-        <span class="mark">d</span>
-        <span>SMCP</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
       </div>
       <nav class="topnav">
         <a href="index.html">Inicio</a>
@@ -46,7 +45,7 @@
       <section>
         <h2>Estado actual</h2>
         <div class="stats">
-          <div class="stat"><div class="num">285</div><div class="lbl">tests verdes</div></div>
+          <div class="stat"><div class="num">297</div><div class="lbl">tests verdes</div></div>
           <div class="stat"><div class="num">5</div><div class="lbl">demos</div></div>
           <div class="stat"><div class="num">3</div><div class="lbl">fases</div></div>
           <div class="stat"><div class="num">30</div><div class="lbl">módulos</div></div>
@@ -88,11 +87,34 @@
       </section>
 
       <section>
+        <h2>Malla MeshLLM (capa de inferencia)</h2>
+        <p>
+          SMCP orquesta; MeshLLM sirve el modelo. Punto de unión: API
+          OpenAI-compatible (no código Rust). Fase 2 local (2026-09-23):
+          malla <strong>privada</strong> de 2 nodos en este host.
+        </p>
+        <table class="arch">
+          <thead>
+            <tr><th>Nodo</th><th>Rol</th><th>Puertos</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>smcp-seed</td><td>Host / serve + invite</td><td><code>:9337</code> OpenAI · <code>:3131</code> consola</td></tr>
+            <tr><td>smcp-client</td><td>Client <code>--join</code> (proxy)</td><td><code>:9338</code> OpenAI · <code>:3132</code> consola</td></tr>
+          </tbody>
+        </table>
+        <ul>
+          <li><code>publication_state: private</code> — solo con invite token (sin <code>--publish</code>).</li>
+          <li>Wiring SMCP: <code>OpenAICompatibleClient</code> → <code>base_url=http://127.0.0.1:9337/v1</code> — <strong>2 passed</strong> (seed y client).</li>
+          <li>Config: <code>delm/config/model_config.yaml</code> (git-ignored).</li>
+        </ul>
+      </section>
+
+      <section>
         <h2>Ruta de verificación</h2>
         <div class="codeblock">
           <div class="bar">verificación local — sin orquestador</div>
 <pre><span class="c"># cada nodo verifica por sí mismo</span>
-python -m pytest -m "not slow"        <span class="c"># 285 tests, ~55 s</span>
+python -m pytest -m "not slow"        <span class="c"># 297 tests, ~55 s</span>
 python -m delm.demo.run_demo          <span class="c"># 1 task admitida</span>
 python -m delm.demo.run_real_demo --harness  <span class="c"># backend real</span></pre>
         </div>
@@ -103,7 +125,7 @@ python -m delm.demo.run_real_demo --harness  <span class="c"># backend real</spa
   <footer class="foot">
     <div class="wrap">
       <div class="in">
-        <span class="mark">d</span>
+        <span class="mark" role="img" aria-label="SMCP"></span>
         <span class="txt"><b>SMCP</b> — Shared Mesh Context Protocol</span>
       </div>
     </div>
