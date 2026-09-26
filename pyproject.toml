@@ -41,18 +41,21 @@ delm-real-demo = "delm.demo.run_real_demo:main"
 #   delm[quic]   -> aioquic (QUIC entre hosts, capa 3)
 #   delm[mdns]   -> aiozeroconf (mDNS discovery, capa 4)
 #   delm[web]    -> fastapi + uvicorn (api_server.py :8099)
-#   delm[all]    -> los cuatro anteriores
+#   delm[docs]   -> pdoc (doc generable de la API; opt-in, no obligatoria)
+#   delm[all]    -> los anteriores
 [project.optional-dependencies]
 nostr = ["websockets>=12.0"]
 quic = ["aioquic>=1.0"]
 mdns = ["aiozeroconf>=0.1.8"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
+docs = ["pdoc>=14.0"]
 all = [
     "websockets>=12.0",
     "aioquic>=1.0",
     "aiozeroconf>=0.1.8",
     "fastapi>=0.110",
     "uvicorn>=0.27",
+    "pdoc>=14.0",
 ]
 
 [tool.setuptools.packages.find]

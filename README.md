@@ -33,6 +33,12 @@ agentes — con una capa de seguridad que el paper no trae.
 
 ## Qué incluye
 
+> **Doc de referencia:** [`docs/architecture.md`](docs/architecture.md) — la
+> arquitectura por capa (piezas, interfaces, flujos) y
+> [`docs/threat-model.md`](docs/threat-model.md) — quién es el adversario, qué
+> garantiza cada capa de seguridad y **qué no**. Este README es el "qué es";
+> los dos docs son el "cómo está montado" y el "qué está garantizado".
+
 ### Núcleo DeLM (los mecanismos de carga)
 
 - **Contexto compartido (`SharedContext`)** — el estado verificado `C`. Solo
@@ -65,6 +71,10 @@ agentes — con una capa de seguridad que el paper no trae.
   ese es el punto.
 
 ### Capa de seguridad (lo que el paper no trae)
+
+> El detalle por capa, con adversario / garantías / **no-garantías**, está en
+> [`docs/threat-model.md`](docs/threat-model.md). Léelo antes de describir esta
+> capa como "segura": la lista de lo que **no** cubre es parte de la propuesta.
 
 - **Proveniencia e integridad (Capas 1+2)** — cada gist lleva el *author* que lo
   admitió y una **firma ed25519** sobre su **digest canónico** (SHA-256 del
@@ -203,7 +213,9 @@ Las capas de red tienen dependencias opcionales declaradas como **extras** en
 pip install delm[nostr]   # websockets  -> relay Nostr de red (capa 4)
 pip install delm[quic]    # aioquic     -> QUIC entre hosts (capa 3)
 pip install delm[mdns]    # aiozeroconf -> mDNS discovery (capa 4)
-pip install delm[all]     # los tres anteriores
+pip install delm[web]     # fastapi + uvicorn -> la API y la web (:8099)
+pip install delm[docs]    # pdoc        -> doc generable de la API (opt-in)
+pip install delm[all]     # todos los anteriores
 ```
 
 El núcleo (capas 1-5, firma, integridad, inmutabilidad, taint) **no necesita
@@ -552,6 +564,9 @@ delm/
     arquitectura.html estado.html console.html
     assets/  app.js estado.js style.css OpenCode.otf
   tests/   (31 archivos — ver lista arriba)
+docs/
+  architecture.md     arquitectura por capa (piezas, interfaces, flujos)
+  threat-model.md     adversario / garantías / NO-garantías por capa
 ```
 
 ---
