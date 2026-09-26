@@ -27,7 +27,8 @@
 
 ## 4. Vías de integración (ordenadas por ajuste)
 
-- **A — Adaptador ACP (canónica, el ajuste limpio).**
+- **Vía A (canónica, el ajuste limpio).** ✅ **Implementada** — `smcp-serve`
+  (CLI, ACP/stdio) en `delm/serve.py` + el extra `delm[acp]`. Ver abajo.
   - SMCP expone un CLI `smcp-serve` que habla **ACP por stdio** (el loop de agente: model calls, tools, context, permissions, resume, cancel).
   - OpenDesign añade `apps/daemon/src/runtimes/defs/smcp.ts` (`bin: 'smcp-serve'`, `streamFormat: 'acp-json-rpc'`) + lo registra en `registry.ts`.
   - **Cambio en SMCP:** envolver el loop existente (FastAPI ya lo tiene; falta el bind ACP/stdio). **Cambio en OpenDesign:** 1 archivo + registro.
@@ -45,7 +46,13 @@
 
 ## 5. Riesgos / bloqueantes
 
-- **A (ACP):** SMCP debe implementar el **bind ACP/stdio** sobre su loop. Es el único cambio no-trivial; todo el resto ya existe en FastAPI.
+- **A (ACP):** ~~SMCP debe implementar el bind ACP/stdio~~ — **hecho**
+  (`delm/serve.py`). Lo que queda es el lado de OpenDesign: añadir
+  `defs/smcp.ts` + el registro, y decidir si SMCP expone `modes`/`models` en la
+  sesión (hoy los declara `None` a propósito: el modelo se resuelve
+  server-side). Verificado end-to-end: un cliente ACP real hace handshake,
+  `session/new`, `session/prompt` y recibe `session/update` con el run del
+  pipeline (`tests/test_serve.py`).
 - **B (BYOK):** el endpoint `/v1/chat/completions` debe **serializar el loop** (admission + unfolding) en una sola llamada. La latencia del thinking (17 tok/s en el 27B local) puede hacer el stream lento; usar un modelo pequeño para el provider.
 - **Licencia:** OpenDesign **Apache-2.0** × SMCP **GPL-3.0** — compatibles en el sentido de que ambos son OSI y permiten enlazar; no hay conflicto, pero el artefacto de integración (el `smcp.ts` o el CLI `smcp-serve`) debe declarar la licencia resultante si se publica.
 - **Runtime:** Node ~24 (OpenDesign) × Python 3.11+ (SMCP) — **no comparten proceso**. La integración es por **protocolo (stdio/HTTP)**, no por import. Nunca asumir un shared runtime.

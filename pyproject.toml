@@ -35,12 +35,17 @@ dependencies = [
 delm = "delm.cli:main"
 delm-demo = "delm.demo.run_demo:main"
 delm-real-demo = "delm.demo.run_real_demo:main"
+# SMCP como agente ACP por stdio (la via A de DESIGNCOMPAT.md): esto es lo
+# que hace de SMCP un *agente* para un cliente ACP (OpenDesign, Zed, VS Code)
+# en vez de solo un endpoint HTTP. Requiere el extra `delm[acp]`.
+smcp-serve = "delm.serve:main"
 
 # Extras: dependencias opcionales por transporte/capa.
 #   delm[nostr]  -> websockets (relay Nostr de red, capa 4)
 #   delm[quic]   -> aioquic (QUIC entre hosts, capa 3)
 #   delm[mdns]   -> aiozeroconf (mDNS discovery, capa 4)
 #   delm[web]    -> fastapi + uvicorn (api_server.py :8099)
+#   delm[acp]    -> agent-client-protocol (smcp-serve: SMCP como agente ACP)
 #   delm[docs]   -> pdoc (doc generable de la API; opt-in, no obligatoria)
 #   delm[all]    -> los anteriores
 [project.optional-dependencies]
@@ -48,6 +53,7 @@ nostr = ["websockets>=12.0"]
 quic = ["aioquic>=1.0"]
 mdns = ["aiozeroconf>=0.1.8"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
+acp = ["agent-client-protocol>=0.9.0"]
 docs = ["pdoc>=14.0"]
 all = [
     "websockets>=12.0",
@@ -55,6 +61,7 @@ all = [
     "aiozeroconf>=0.1.8",
     "fastapi>=0.110",
     "uvicorn>=0.27",
+    "agent-client-protocol>=0.9.0",
     "pdoc>=14.0",
 ]
 

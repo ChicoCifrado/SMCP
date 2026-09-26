@@ -204,6 +204,42 @@ pip install -e .
 
 Requiere Python 3.11+.
 
+### SMCP como agente ACP (`smcp-serve`)
+
+La integración canónica ([`DESIGNCOMPAT.md`](DESIGNCOMPAT.md), vía A): en vez de
+que un tercero reimplemente el loop, SMCP **habla el protocolo** y se registra
+como un agente más de su catálogo.
+
+```bash
+pip install "delm[acp]"      # agent-client-protocol
+smcp-serve                    # backend determinista (FakeLLMClient), sin key
+smcp-serve --backend real     # endpoint real (DELM_MODEL / DELM_BASE_URL)
+smcp-serve --check            # verifica el extra y sale
+```
+
+`smcp-serve` habla **ACP (Agent Client Protocol) por stdio** — JSON-RPC 2.0, el
+mismo protocolo y el mismo `streamFormat` (`acp-json-rpc`) que ya usa Hermes.
+Con OpenDesign es **un archivo**: `defs/smcp.ts` con `bin: 'smcp-serve'` + el
+registro en `registry.ts`.
+
+Cómo mapea:
+
+- **una sesión ACP = un run de SMCP**: el prompt del editor se divide en tareas
+  (una por línea), pasan por el `DelmPipeline` real (comprimir → verificar →
+  admitir en el contexto firmado) y el resultado vuelve como `session/update`;
+- `prompt` responde `end_turn` de inmediato y el run ocurre en background
+  (es el contrato ACP: la salida llega como notificaciones);
+- **`session/cancel`** aborta el run en vuelo (igual que `RunManager.cancel`
+  de la API HTTP);
+- lo que se reporta es lo que **se admitió** al contexto compartido, no lo que
+  se intentó — que es justo la tesis del protocolo.
+
+No reimplementa nada: es el mismo `DelmPipeline` que usa `/api/runs`, así que
+un run ACP y un run HTTP son el mismo pipeline sobre la misma puerta de
+admisión. `list_sessions` devuelve vacío a propósito (los runs son efímeros; lo
+que persiste es el contexto compartido, no el historial), y `authenticate` es
+no-op: el *trust anchor* de SMCP es la clave del owner, no un login.
+
 ### Extras (dependencias por transporte)
 
 Las capas de red tienen dependencias opcionales declaradas como **extras** en
@@ -214,6 +250,7 @@ pip install delm[nostr]   # websockets  -> relay Nostr de red (capa 4)
 pip install delm[quic]    # aioquic     -> QUIC entre hosts (capa 3)
 pip install delm[mdns]    # aiozeroconf -> mDNS discovery (capa 4)
 pip install delm[web]     # fastapi + uvicorn -> la API y la web (:8099)
+pip install delm[acp]     # agent-client-protocol -> smcp-serve (agente ACP)
 pip install delm[docs]    # pdoc        -> doc generable de la API (opt-in)
 pip install delm[all]     # todos los anteriores
 ```
@@ -268,7 +305,7 @@ Equivale a `python -m pytest` (los `addopts` por defecto son `-m 'not slow'`).
 `delm test --slow` añade `-m slow`, que **pisa** el `-m 'not slow'` de los
 addopts (pytest aplica el último `-m`).
 
-El suite está repartido en treinta y un archivos, todos deterministas:
+El suite está repartido en treinta y dos archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -330,6 +367,12 @@ El suite está repartido en treinta y un archivos, todos deterministas:
   `api_server.py` + `smcp_api.py`: las acciones de sesión (scan, taint, config,
   export del ledger, SSE, meshllm), las demos in-proceso, la inspección del
   contexto y el gestor de runs (35 tests en total).
+- `test_serve.py` — `smcp-serve` (SMCP como agente ACP): los helpers de prompt
+  y tareas, que el módulo importe **sin** el SDK (el extra es opcional), el
+  ciclo de vida ACP (initialize/new_session/prompt/cancel/close), que un prompt
+  corre el `DelmPipeline` real y emite `session/update` al cliente, que
+  `list_sessions`/`authenticate` son no-ops honestos, y un smoke **slow** que
+  habla JSON-RPC real por stdio con `python -m delm.serve`.
 
 ### Web UI y API
 
@@ -413,7 +456,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **316 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **336 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -437,8 +480,10 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   CLI: los subcomandos de `delm` (demo/test/config-check/version), el despacho
   de demos, `--slow` y el enmascarado de la key + 35 API: las acciones de
   sesión (scan, taint, config, export del ledger, SSE, meshllm) y las demos
-  in-proceso, y 4
-  demos que pasan. 5 tests `slow` se excluyen del default (`-m 'not slow'`).
+  in-proceso + 20 `smcp-serve` (SMCP como agente ACP: el handshake, el
+  ciclo de vida de sesión, el prompt corriendo el pipeline real, cancelación,
+  y un smoke JSON-RPC por stdio) + 4
+  demos que pasan. 6 tests `slow` se excluyen del default (`-m 'not slow'`).
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
@@ -520,6 +565,7 @@ delm/
   config.py           ModelConfig + load_config + build_client (config de modelo)
   cli.py              la CLI unificada (demo/test/config-check/version)
   __main__.py         `python -m delm` == `delm` (mismo parser)
+  serve.py            smcp-serve: SMCP como agente ACP por stdio (vía A)
   api_server.py       FastAPI :8099 — /api/status, /api/run, estático web/
   core/
     gist.py            Gist, Summary, RefTag, GistKind   (el modelo de datos)
@@ -563,7 +609,7 @@ delm/
     index.html nucleo.html seguridad.html demos.html
     arquitectura.html estado.html console.html
     assets/  app.js estado.js style.css OpenCode.otf
-  tests/   (31 archivos — ver lista arriba)
+  tests/   (32 archivos — ver lista arriba)
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa
