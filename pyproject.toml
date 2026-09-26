@@ -28,6 +28,11 @@ dependencies = [
 ]
 
 [project.scripts]
+# CLI unificada (issue #9): un solo binario `delm`. Los dos scripts
+# anteriores se conservan como alias deprecados (mismo comportamiento) para
+# no romper instalaciones existentes; `delm demo` y `delm demo real` los
+# reemplazan.
+delm = "delm.cli:main"
 delm-demo = "delm.demo.run_demo:main"
 delm-real-demo = "delm.demo.run_real_demo:main"
 

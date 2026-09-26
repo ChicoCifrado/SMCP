@@ -145,6 +145,46 @@ Los tres módulos están cableados en el pipeline real y cubiertos por
 
 ## Cómo usarlo
 
+### La CLI `delm`
+
+Un solo binario, una sola puerta de entrada. `delm` y `python -m delm` son **el
+mismo parser** (`delm/cli.py`), así que no pueden divergir.
+
+```bash
+delm --help                     # o: python -m delm --help
+delm version                    # versión + Python
+delm config-check               # resuelve la config de modelo (key oculta)
+delm test                       # la suite; --slow para los tests lentos
+delm demo                       # demo principal (pipeline, sin API key)
+delm demo --list                # lista las demos
+```
+
+Los cuatro subcomandos son `demo`, `test`, `config-check` y `version`.
+
+`config-check` resuelve la config con la **misma** precedencia que
+`run_real_demo --dry-run` (entorno > YAML > default) y muestra la API key
+**enmascarada** (`sk-s***7890`); sale con `0` si modelo y `base_url` resuelven, y
+con `2` si no (para que un script pueda bifurcar sin parsear la salida).
+
+`delm demo <nombre>` despacha la demo **como subprocess** a su propio módulo
+(`python -m delm.demo.<módulo>`) y devuelve su código de salida. Motivo: cada
+demo ya tiene su contrato (`main()`/`run()`, su propio reporte por stdout, y en
+el caso multi-host sus propios procesos hijos), así que la CLI es un envoltorio
+fino y honesto en vez de un segundo sitio donde haya que mantener la lógica. Los
+flags de cada demo se pasan tal cual (`--nostr`, `--dry-run`, `--tasks`, …).
+
+Equivalentes por demo (siguen siendo válidos y son los que usa la web/API):
+
+| CLI                     | Equivalente directo                   |
+| ----------------------- | ------------------------------------- |
+| `delm demo`             | `python -m delm.demo.run_demo`        |
+| `delm demo security`    | `python -m delm.demo.run_security_demo` |
+| `delm demo taint`       | `python -m delm.demo.run_taint_demo`  |
+| `delm demo multihost`   | `python -m delm.demo.run_multihost_demo` |
+| `delm demo rsi`         | `python -m delm.demo.run_rsi_demo`    |
+| `delm demo real`        | `python -m delm.demo.run_real_demo`   |
+| `delm test`             | `python -m pytest`                    |
+
 ### Instalar
 
 ```bash
@@ -175,7 +215,7 @@ pipeline real no lo use sin que nadie lo note — ver
 ### Demo sin API key
 
 ```bash
-python -m delm.demo.run_demo
+delm demo                    # == python -m delm.demo.run_demo
 ```
 
 Muestra el pipeline de punta a punta: un corpus semilla entra a la cola, 4
@@ -186,15 +226,15 @@ respuesta solo a partir del contexto compartido.
 ### Demos de seguridad
 
 ```bash
-python -m delm.demo.run_security_demo   # Capas 1+2: firma, integridad, inmutabilidad, ledger
-python -m delm.demo.run_taint_demo      # Capa 5: cuarentena de prompt-injection
+delm demo security           # Capas 1+2: firma, integridad, inmutabilidad, ledger
+delm demo taint              # Capa 5: cuarentena de prompt-injection
 ```
 
 ### Demo multi-host (capa 3 sobre red)
 
 ```bash
-python -m delm.demo.run_multihost_demo          # QUIC (default): 2 nodos, procesos distintos
-python -m delm.demo.run_multihost_demo --nostr  # relay Nostr: 1 relay + 2 nodos
+delm demo multihost                 # QUIC (default): 2 nodos, procesos distintos
+delm demo multihost --nostr         # relay Nostr: 1 relay + 2 nodos
 ```
 
 El **default** corre sobre **QUIC** (el despliegue real): 2 nodos en
@@ -208,10 +248,15 @@ multi-host (la malla corre sobre red, no in-proceso).
 ### Probar
 
 ```bash
-python -m pytest
+delm test                  # == python -m pytest
+delm test --slow           # solo los tests marcados `slow` (handshake QUIC, subprocess)
 ```
 
-El suite está repartido en veinticinco archivos, todos deterministas:
+Equivale a `python -m pytest` (los `addopts` por defecto son `-m 'not slow'`).
+`delm test --slow` añade `-m slow`, que **pisa** el `-m 'not slow'` de los
+addopts (pytest aplica el último `-m`).
+
+El suite está repartido en treinta y un archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -263,6 +308,16 @@ El suite está repartido en veinticinco archivos, todos deterministas:
   `AdmissionLedger` (dump/load/export, opt-in).
 - `test_meshllm_wiring.py` — wiring SMCP→MeshLLM (opt-in `slow`; se skipea
   sin endpoint; **2 passed** vs malla pública 2026-09-23).
+- `test_cli.py` — la CLI unificada (issue #9): los subcomandos
+  (`demo`/`test`/`config-check`/`version`), el despacho de cada demo a su módulo,
+  el passthrough de flags, `--slow` pisando el `-m 'not slow'` de los addopts,
+  el enmascarado de la key en `config-check`, y que `python -m delm` funciona
+  como subprocess (el contrato público).
+- `test_api_actions.py` / `test_api_config.py` / `test_api_demo.py` /
+  `test_api_inspect.py` / `test_api_runs.py` — la API interactiva de
+  `api_server.py` + `smcp_api.py`: las acciones de sesión (scan, taint, config,
+  export del ledger, SSE, meshllm), las demos in-proceso, la inspección del
+  contexto y el gestor de runs (35 tests en total).
 
 ### Web UI y API
 
@@ -346,7 +401,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **297 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **316 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -366,7 +421,11 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   por defecto / `use_harness`, `DELM_HARNESS` en env (opt-in) + 1 demo
   multi-host: convergencia sobre QUIC (default) + 31 RSI/HCI: 9 loop L1
   (proponer/verificar/retener/sucesor) + 3 demo RSI (HCI 10.48→21.19) +
-  19 métrica HCI (Benchmark/BenchFamily/HCIMeter/DeterministicScorer), y 4
+  19 métrica HCI (Benchmark/BenchFamily/HCIMeter/DeterministicScorer) + 19
+  CLI: los subcomandos de `delm` (demo/test/config-check/version), el despacho
+  de demos, `--slow` y el enmascarado de la key + 35 API: las acciones de
+  sesión (scan, taint, config, export del ledger, SSE, meshllm) y las demos
+  in-proceso, y 4
   demos que pasan. 5 tests `slow` se excluyen del default (`-m 'not slow'`).
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
@@ -447,6 +506,8 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 ```
 delm/
   config.py           ModelConfig + load_config + build_client (config de modelo)
+  cli.py              la CLI unificada (demo/test/config-check/version)
+  __main__.py         `python -m delm` == `delm` (mismo parser)
   api_server.py       FastAPI :8099 — /api/status, /api/run, estático web/
   core/
     gist.py            Gist, Summary, RefTag, GistKind   (el modelo de datos)
@@ -490,7 +551,7 @@ delm/
     index.html nucleo.html seguridad.html demos.html
     arquitectura.html estado.html console.html
     assets/  app.js estado.js style.css OpenCode.otf
-  tests/   (25 archivos — ver lista arriba)
+  tests/   (31 archivos — ver lista arriba)
 ```
 
 ---
