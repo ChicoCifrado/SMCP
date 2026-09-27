@@ -129,6 +129,81 @@ pares (`peer_id` ↔ cert); (iv) la **disponibilidad** del canal de gossip.
   - **El heartbeat detecta caída, no compromiso**: un par vivo y malicioso
     sigue dando beats; el heartbeat no es un detector de intrusión.
 
+### El intercambio de la malla (`contrib.py`, `placement.py`) — fuera de capa
+
+Esta es la superficie que convierte la malla en un **intercambio**: los nodos
+aportan VRAM y reciben crédito de inferencia. Es la única parte del proyecto con
+un *adversario económico* (mentir sale rentable), así que su no-garantía central
+—que la capacidad declarada sea cierta— es la primera línea del documento.
+
+- **Adversario**: A6 (**nodo que miente sobre su capacidad**), A1 (par que
+  quiere crédito sin aportar), A7 (replay de una afirmación antigua).
+- **Supuestos**: el reloj del observador es aproximadamente honesto; la clave
+  ed25519 de un nodo no se la roban (si se la roban, roban su identidad); el
+  estado de la malla (`config/mesh_exchange.json`) es local y por tanto está en
+  manos del operador, no de la red.
+- **Garantías**:
+  - **La afirmación viene firmada por una identidad concreta**: la firma cubre
+    el digest canónico de *todos* los campos (VRAM, RAM, núcleos, backend, reto,
+    caducidades), así que nadie puede subirse la VRAM después de firmar
+    (`test_contrib.py::test_signature_stands_behind_the_numbers`).
+  - **No es replayable**: la malla emite un reto de un solo uso
+    (`Challenge.nonce`) y admitir un informe **quema** el nonce; además reto e
+    informe caducan. Reenviar el "tengo 64G" de ayer no vale.
+  - **`peer_id` es su clave, no una etiqueta**: la primera clave vista para un
+    `peer_id` queda ligada a él para siempre; otro informe del mismo nombre
+    firmado por otra clave se rechaza (`peer_key_changed`) y no se roba el
+    crédito ya acumulado. Sin esta regla, editar el fichero de identidad local
+    sería robar el saldo de otro.
+  - **La contabilidad es auditable y los rechazos también**: cada admisión —
+    incluida cada **rechazo**, con su motivo— entra en una cadena de hashes
+    (`verify_chain`) que sobrevive a un save/load; alterar una entrada previa
+    rompe la cadena. Un rechazo que no se registrara sería indistinguible de un
+    intento que nunca ocurrió.
+  - **El crédito se gana con *uptime observado*, no con declaraciones**: el
+    único camino al crédito es `observe`, y el saldo no se acredita mientras el
+    nodo no está vivo (`require_alive_to_spend`). Un nodo que desaparece
+    forfeita el crédito y la inferencia en el acto.
+  - **La inferencia se paga, no se regala**: `MeteredLLMClient` niego el
+    servicio con `PermissionError` cuando el saldo no cubre, y nunca deja la
+    cuenta en negativo.
+  - **El reparto solo usa capacidad admitida**: `plan_placement` lee los números
+    ya admitidos, nunca un announce, y rechaza con un motivo accionable
+    (`insufficient_mesh_vram` dice *cuánta* VRAM falta). El plan es
+    determinista y tiene round-trip, así que se puede loguear y comparar entre
+    observadores.
+- **NO-garantías (explícitas)**:
+  - **La capacidad declarada NO es una atestación de hardware.** Un nodo puede
+    firmar "tengo 4096 GB" y la malla lo admite: lo que se verifica es *quién lo
+    afirmó*, no que exista. No hay TPM, ni SGX, ni measured boot, ni challenge
+    de hardware sobre la GPU. Esto es la misma frontera que la atestación de
+    build de la Capa 3, pero aquí **con Incentivo económico para mentir**.
+    Lo que se consigue es honestidad *acotada*: la mentira queda **atribuida y
+    auditable**, no puede disfrazarse de otro `peer_id`, no se replaya, y lo forfeita
+    en cuanto el nodo deja de estar observado.
+  - **No hay stake, ni slashing, ni sanción.** El detection de un mentiro es
+    trivial (basta comparar la afirmación con lo observado), pero **castigarlo es
+    una decisión de política económica que este proyecto no toma**: no hay
+    depósito que confiscar ni reputación que perder. Es la pieza
+    siguiente, no una forgetting.
+  - **La observación es del entorno, no delClaim**: `observe` acredita lo que el
+    *observador* vio. Un clockskew, un reloj que salta o un heartbeat
+    falsificado (por un par que ya controla la máquina) inflan o vacían el
+    saldo. El heartbeat de la Capa 3 sigue siendo detección de caída, no de
+    compromiso.
+  - **El intercambio no se propaga por la red todavía**: la cadena de
+    contribuciones es local al estado de cada vista. Dos vistas de la misma red
+    pueden llevar contabilidad distinta hasta que exista el datagrama que la
+    replica y su reconciliación.
+  - **El plan no promete que se ejecute**: un plan admisible no garantiza que
+    los pesos se bajen, que el mapeo capa→stage sea eficiente, ni que la red
+    aguante el tráfico. El executor es MeshLLM y SMCP no lo verifica.
+  - **La clave de identidad es un secreto en disco**: `KeyPair.save` la escribe
+    con `chmod 600` y **rechaza persistir una clave HMAC** (su mitad privada es
+    el secreto compartido, o sea, el trust anchor del verificador). Si alguien
+    lee ese fichero, puede firmar como ese nodo — la misma confianza que en
+    cualquier esquema de identidad por clave.
+
 ### Capa 4 — Despliegue multi-proceso
 
 - **Adversario**: A1 (suplantar al owner en el bootstrap/control-plane), A5
@@ -254,6 +329,11 @@ Estas aplican a *todas* las capas y conviene tenerlas presentes:
    cuarentena es de render, no de intérprete** (ver Capa 5). El modelo de
    amenazas no promete "infalible"; promete **"verificable, trazable y
    acotado en su radio de explosión"**.
+6. **La capacidad de un nodo es una afirmación firmada, no una medición**: el
+   intercambio garantiza *quién*ospelto y *cuándo*, no que la VRAM exista
+   (ver §2, "El intercambio de la malla"). El día que la atestación sea real,
+   esta línea se reescribe; hasta entonces, el radio de la mentira es
+   "acotado y auditable", no "cero".
 
 ## 4. De dónde a dónde (mapa de responsabilidades)
 
@@ -313,3 +393,10 @@ Para tenerla a mano — el threat model en una línea por punto:
 - La **puerta ACP** (`smcp-serve`) no autentica in-band: su confianza es el
   límite de proceso (quien lo arranca); la config/key nunca viajan al cliente y
   las sesiones son efímeras.
+- La **capacidad de un nodo es una afirmación firmada, no una medición**: no hay
+  atestación de hardware, así que un nodo puede mentir sobre su VRAM. Lo que se
+  garantiza es que la mentira queda atribuida, encadenada y sin poder
+  disfrazarse de otro `peer_id` ni sobrevivir a la desconexión. **No hay
+  slashing**: detectarla es fácil, sancionarla no está implementado.
+- La **observación del uptime es del entorno**: un reloj desincronizado o un
+  heartbeat falsificado mueven el saldo de crédito.

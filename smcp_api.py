@@ -19,11 +19,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from delm.config import DEFAULT_CONFIG_PATH, build_client, load_config
+from delm.core.contrib import (
+    ExchangePolicy,
+    default_identity_path,
+    default_state_path,
+)
 from delm.core.gist import Gist, GistKind, RefTag, Summary
 from delm.core.injection import detect_injection
 from delm.core.injection_hardened import detect_injection_hardened
 from delm.core.llm import FakeLLMClient, LLMClient
 from delm.core.metrics import TaskMetrics
+from delm.core.placement import DEFAULT_MESH_ENDPOINT
 from delm.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
 from delm.core.task_queue import Task, TaskState
 from delm.core.taint import TaintLevel
@@ -1185,6 +1191,7 @@ class FitApply(BaseModel):
     api_key: str | None = Field(default=None, max_length=500)
 
 
+
 @router.post("/fit/apply")
 def post_fit_apply(body: FitApply) -> dict[str, Any]:
     """Adopt a model from the fit table as the pipeline's model.
@@ -1193,7 +1200,7 @@ def post_fit_apply(body: FitApply) -> dict[str, Any]:
     button, and the llmfit verdict that justified the pick (quant, sizes, tok/s)
     travels into the YAML as comments instead of being lost.
     """
-    from delm.core.llmfit import FitRow, LlmfitError, LlmfitRunner
+    from delm.core.llmfit import LlmfitError, LlmfitRunner
 
     notes: list[str] = []
     row_name = body.model
@@ -1224,3 +1231,218 @@ def post_fit_apply(body: FitApply) -> dict[str, Any]:
         updates["api_key"] = body.api_key
     return _persist_config(updates, notes)
 
+
+# ------------------------------------------------------------- la malla
+# Superficie web de `delm mesh` (delm/core/contrib.py + delm/core/placement.py).
+# Mismo contrato que la CLI, action por action, y **el mismo fichero de estado**:
+# `delm.core.contrib.default_state_path()` lo resuelve para las dos, porque una
+# malla cuya CLI y su UI vieran estados distintos serían dos mallas.
+#: Re-exported from the core so both surfaces resolve the same files.
+_mesh_state_path = default_state_path
+_mesh_identity_path = default_identity_path
+DEFAULT_MESH_ID = "smcp-local"
+
+
+def _load_mesh(mesh_id: str) -> Any:
+    """Load the exchange state (empty ledger when absent)."""
+    from delm.core.contrib import ContributionLedger
+
+    path = _mesh_state_path()
+    if path.exists():
+        try:
+            led = ContributionLedger.load(str(path))
+            return led if led.mesh_id == mesh_id else ContributionLedger(mesh_id)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            pass
+    return ContributionLedger(mesh_id=mesh_id)
+
+
+def _save_mesh(led: Any) -> str:
+    path = _mesh_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return led.save(str(path))
+
+
+def _mesh_view(led: Any, mesh_id: str, endpoint: str) -> dict[str, Any]:
+    """The exchange as the UI wants it: peers, totals, chain, endpoint."""
+    policy = ExchangePolicy()
+    peers = led.admitted_peers(observed_only=False)
+    return {
+        "mesh_id": mesh_id,
+        "state_path": str(_mesh_state_path()),
+        "identity_path": str(_mesh_identity_path()),
+        "endpoint": endpoint,
+        "chain_entries": len(led),
+        "chain_ok": led.verify_chain(),
+        "state_digest": led.state_digest(),
+        "vram_verified_gb": led.total_vram_gb(observed_only=True),
+        "vram_declared_gb": led.total_vram_gb(observed_only=False),
+        "rejections": sum(1 for r in led.records if not r.accepted),
+        "peers": [
+            {"peer_id": p.peer_id, "vram_gb": p.vram_gb, "ram_gb": p.ram_gb,
+             "cpu_cores": p.cpu_cores, "backend": p.backend,
+             "alive": p.alive, "seconds_observed": p.seconds_observed,
+             "credits": p.credits, "credits_spent": p.credits_spent,
+             "credits_available": p.credits_available,
+             "entitlement": policy.entitlement(p),
+             "rejections": p.rejections}
+            for p in peers],
+    }
+
+
+@router.get("/mesh")
+def get_mesh(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
+             endpoint: str = Query(default=DEFAULT_MESH_ENDPOINT, max_length=200),
+             ) -> dict[str, Any]:
+    """Exchange state: who contributes verified VRAM, and what they are owed."""
+    return _mesh_view(_load_mesh(mesh_id), mesh_id, endpoint)
+
+
+class MeshContribute(BaseModel):
+    peer_id: str = Field(default="local", min_length=1, max_length=80)
+    vram_gb: float = Field(ge=0.0, le=100_000.0)
+    ram_gb: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    cpu_cores: int = Field(default=0, ge=0, le=1024)
+    backend: str = Field(default="cuda", max_length=32)
+    ttl_s: float = Field(default=86400.0, gt=0.0, le=30 * 86400.0)
+
+
+@router.post("/mesh/contribute")
+def post_mesh_contribute(body: MeshContribute,
+                         mesh_id: str = Query(default=DEFAULT_MESH_ID,
+                                              max_length=80)) -> dict[str, Any]:
+    """Sign this node's capacity and admit it (the web form of `delm mesh contribute`).
+
+    Uses the same identity file as the CLI, so contributing from the browser
+    and from the shell are the *same* identity, not two.
+    """
+    import time as _time
+
+    from delm.core.contrib import CapacityReport
+    from delm.core.provenance import KeyPair
+
+    led = _load_mesh(mesh_id)
+    path = _mesh_identity_path()
+    if path.exists():
+        key = KeyPair.load(str(path))
+    else:
+        key = KeyPair.new(body.peer_id, "ed25519")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key.save(str(path))
+    now = _time.time()
+    challenge = led.issue_challenge(body.peer_id, now=now)
+    report = CapacityReport(
+        mesh_id=mesh_id, peer_id=body.peer_id, vram_gb=body.vram_gb,
+        ram_gb=body.ram_gb, cpu_cores=body.cpu_cores, backend=body.backend,
+        nonce=challenge.nonce, issued_at=now, expires_at=now + body.ttl_s,
+    ).sign(key)
+    ok, reason = led.admit(report, now=now)
+    # El rechazo se persiste antes de responder 400: si no, el intento
+    # desaparecería del audit trail y `check` no podría listarlo.
+    _save_mesh(led)
+    if not ok:
+        raise HTTPException(status_code=400,
+                            detail=f"la malla rechazó la contribución: {reason}")
+    return {"ok": True, "reason": reason, "digest": report.digest,
+            "sig_kind": report.sig_kind, "identity_path": str(path),
+            ** _mesh_view(led, mesh_id, DEFAULT_MESH_ENDPOINT)}
+
+
+class MeshObserve(BaseModel):
+    peer_id: str = Field(default="local", min_length=1, max_length=80)
+    seconds: float = Field(gt=0.0, le=365 * 86400.0)
+
+
+@router.post("/mesh/observe")
+def post_mesh_observe(body: MeshObserve,
+                      mesh_id: str = Query(default=DEFAULT_MESH_ID,
+                                           max_length=80)) -> dict[str, Any]:
+    """Accrue credit for observed uptime — the only path to credit."""
+    import time as _time
+
+    led = _load_mesh(mesh_id)
+    peer = led.observe(body.peer_id, _time.time(), dt_s=body.seconds,
+                       policy=ExchangePolicy())
+    if peer is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{body.peer_id} no está admitido: usa /api/mesh/contribute antes")
+    _save_mesh(led)
+    return {"ok": True, "peer_id": peer.peer_id,
+            "seconds_observed": peer.seconds_observed,
+            "credits": peer.credits, "credits_available": peer.credits_available,
+            **_mesh_view(led, mesh_id, DEFAULT_MESH_ENDPOINT)}
+
+
+@router.get("/mesh/plan")
+def get_mesh_plan(
+    model: str = Query(min_length=1, max_length=200),
+    memory_gb: float | None = Query(default=None, ge=0.0, le=10_000_000.0),
+    layers: int = Query(default=0, ge=0, le=100_000),
+    quant: str = Query(default="", max_length=32),
+    reserve_gb: float = Query(default=0.0, ge=0.0, le=100_000.0),
+    require_credit: bool = Query(default=True),
+    observed_only: bool = Query(default=True),
+    mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
+    endpoint: str = Query(default=DEFAULT_MESH_ENDPOINT, max_length=200),
+    llmfit_bin: str | None = Query(default=None, max_length=400),
+    timeout_s: float = Query(default=120.0, gt=0.0, le=600.0),
+) -> dict[str, Any]:
+    """Plan a model across the mesh (the web form of `delm mesh plan`).
+
+    With ``memory_gb`` the plan needs nothing external; without it, llmfit sizes
+    the model — and its absence is reported in the body, not as an HTTP error,
+    so the page can still show the mesh and explain the missing piece.
+    """
+    from delm.core.contrib import ExchangePolicy
+    from delm.core.placement import ModelSpec, plan_placement
+
+    led = _load_mesh(mesh_id)
+    spec: ModelSpec | None = None
+    llmfit_note = ""
+    if memory_gb:
+        spec = ModelSpec(name=model, memory_required_gb=memory_gb,
+                         n_layers=layers, quant=quant)
+    else:
+        from delm.core.llmfit import LlmfitError, LlmfitRunner
+        try:
+            raw = LlmfitRunner(llmfit_bin, timeout_s=timeout_s).catalog(limit=None)
+        except LlmfitError as e:
+            return {"available": False, "hint": str(e), "mesh_id": mesh_id,
+                    **_mesh_view(led, mesh_id, endpoint)}
+        row = raw.by_name(model)
+        if row is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"{model!r} no está en el catálogo de llmfit; usa "
+                        f"memory_gb para planear sin él"))
+        spec = ModelSpec.from_fit_row(row, name=row.name)
+        llmfit_note = f"dimensionado por llmfit: {row.memory_required_gb:.1f}G " \
+                      f"({row.best_quant or 'sin quant'})"
+
+    plan = plan_placement(spec, led, policy=ExchangePolicy(),
+                          reserve_gb=reserve_gb, require_credit=require_credit,
+                          observed_only=observed_only, endpoint=endpoint)
+    payload = {"available": True, "llmfit": llmfit_note,
+               **_mesh_view(led, mesh_id, endpoint), **plan.to_dict()}
+    payload.pop("mesh_id", None)
+    payload["mesh_id"] = mesh_id
+    return payload
+
+
+@router.get("/mesh/check")
+def get_mesh_check(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
+                   ) -> dict[str, Any]:
+    """Audit the exchange: chain, rejections, balances, and what it cannot prove."""
+    led = _load_mesh(mesh_id)
+    view = _mesh_view(led, mesh_id, DEFAULT_MESH_ENDPOINT)
+    negative = [p.peer_id for p in led.peers.values() if p.credits_available < -1e-9]
+    view.update({
+        "ok": bool(view["chain_ok"]) and not negative,
+        "negative_balances": negative,
+        "refusals": [{"seq": r.seq, "peer_id": r.peer_id, "reason": r.reason}
+                     for r in led.records if not r.accepted][-20:],
+        "not_proven": ("que la VRAM declarada exista: no hay atestación de "
+                       "hardware; es una afirmación firmada y auditable"),
+    })
+    return view

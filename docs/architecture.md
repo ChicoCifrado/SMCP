@@ -286,10 +286,53 @@ fuente envenenada puede orientar a todos los que la lean.
   necesita modelo ni red; las sesiones son efímeras (`list_sessions` → vacío) y
   `authenticate` es un no-op (la raíz de confianza es la clave del owner, no un
   login).
-- **`web/`** — la UI (7 páginas). Es una vista sobre el mismo estado que la
+- **`web/`** — la UI (11 páginas). Es una vista sobre el mismo estado que la
   API expone; no añade lógica de dominio.
 - **`demo/`** — las 6 demos. Cubren: pipeline end-to-end (sin API key),
   Capas 1+2, Capa 5, multi-host sobre QUIC/Nostr, el loop RSI y el modelo real.
+
+### Las tres piezas y dónde se juntan
+
+SMCP no implementa DeLM, ni MeshLLM, ni llmfit: los **coordina**. El diagrama de
+dependencias es la parte del diseño que conviene tener en la cabeza:
+
+```
+   DeLM (este repo)              llmfit (externo)         MeshLLM (externo)
+   ─────────────────              ────────────────         ──────────────────
+   Gist, SharedContext,           SystemProfile,           runtime pipeline-
+   SecureSharedContext,           FitRow, FitReport,       parallel: agrupa
+   TaskQueue, AdmissionPipeline   ModelSpec sizing         GPU/RAM entre
+   MeshNetwork, MeshNode     ──▶  (delm/core/llmfit.py)    hosts y expone
+                                          │               /v1 OpenAI-compat
+                                          │                     │
+                        contrib.py ◀────────┘                     │
+                   (capacidad firmada,                            │
+                    créditos, cadena) ──▶ placement.py ───────────┘
+                                          (plan de reparto)
+                                                │
+                                                ▼
+                                    LLMClient / MeteredLLMClient
+```
+
+- **`llmfit` → `placement`**: `ModelSpec.from_fit_row` reutiliza la memoria que
+  llmfit calculó **para una sola caja** como el requisito que la malla tiene que
+  cubrir entre todos. Es el punto exacto donde "no cabe aquí" se convierte en
+  "cabe en la malla".
+- **`contrib` → `placement`**: el plan solo lee cifras **admitidas** (firmadas,
+  ligadas a un reto, encadenadas) y solo reparte a pares **observados vivos** con
+  crédito. La admisión va antes que la topología: no hay nada que repartir si
+  no hay nada admitido.
+- **`placement` → `LLMClient`**: el plan termina en un endpoint
+  OpenAI-compatible (el de MeshLLM por defecto) y, si el pipeline debe medir ese
+  consumo, en un `MeteredLLMClient` que lo paga con crédito del par.
+- **`C` sigue siendo de DeLM**: la malla cambia *dónde* se ejecuta el modelo,
+  no *qué* se comparte entre agentes. Un `MeshPipeline` publica por la malla el
+  mismo gist verificado que un `DelmPipeline` publicaría en local.
+
+Límite explícito: **SMCP planifica y admite, MeshLLM ejecuta.** El runtime
+pipeline-parallel entre hosts (transporte de tensores, particionado de KV) es de
+MeshLLM/vLLM; reimplementarlo aquí sería duplicar (y perder contra) lo que ya
+existe, y además no sería testeable sin GPUs.
 
 ## 8. Interfaces transversales (el contrato del repo)
 

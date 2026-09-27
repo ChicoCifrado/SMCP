@@ -191,6 +191,56 @@ class KeyPair:
     def verify(self, digest: str, signature: bytes) -> bool:
         return verify_public(self.kind, self.public_key, digest, signature)
 
+    # -- persistence -------------------------------------------------------
+    def save(self, path: str) -> str:
+        """Persist this key to *path* so the identity survives a restart.
+
+        Needed as soon as an identity has to be *re-attested* later: a mesh node
+        that regenerated its key on every invocation would present a new public
+        key each time, and nothing downstream could attribute anything to a
+        stable peer.
+
+        ed25519 only, and on purpose: an HMAC key's "private" half **is** the
+        shared secret, so persisting one would write the trust anchor to disk
+        and hand the verifier's own secret to whoever reads the file. Refusing
+        here is the honest behaviour; a zero-dep deployment can still run the
+        in-memory gists, it just cannot hold a persistent mesh identity.
+        """
+        if self.kind != "ed25519":
+            raise ValueError(
+                f"refusing to persist a {self.kind!r} key: its private half is "
+                f"the shared secret (the verifier's trust anchor). Install "
+                f"'cryptography' for an ed25519 identity."
+            )
+        priv_bytes = self._priv.private_bytes_raw()
+        blob = {
+            "author_id": self.author_id,
+            "kind": self.kind,
+            "private_key": priv_bytes.hex(),
+            "public_key": self.public_key.hex(),
+        }
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(blob, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        try:
+            os.chmod(path, 0o600)   # best effort: a signing key is a secret
+        except OSError:  # pragma: no cover - platform-dependent
+            pass
+        return path
+
+    @classmethod
+    def load(cls, path: str) -> "KeyPair":
+        """Load a key written by :meth:`save` (ed25519)."""
+        with open(path, encoding="utf-8") as fh:
+            blob = json.load(fh)
+        if blob.get("kind") != "ed25519":
+            raise ValueError(f"unsupported persisted key kind: {blob.get('kind')!r}")
+        priv = _ed25519.Ed25519PrivateKey.from_private_bytes(
+            bytes.fromhex(blob["private_key"]))
+        pub = priv.public_key().public_bytes(_Encoding.Raw, _PublicFormat.Raw)
+        return cls(str(blob.get("author_id", "")), "ed25519", priv, pub)
+
+
 
 def verify_public(kind: str, public_key: bytes, digest: str, signature: bytes) -> bool:
     """Verify ``signature`` over ``digest`` using a peer's ``public_key``.

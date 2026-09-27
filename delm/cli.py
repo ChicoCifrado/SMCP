@@ -41,13 +41,25 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
 __all__ = ["main", "build_parser", "DEMOS", "EXIT_LLMFIT"]
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from delm.core.contrib import ContributionLedger
     from delm.core.llmfit import ModelFitVerdict
+    from delm.core.provenance import KeyPair
+
+# ``placement`` is stdlib-only (it imports contrib, which imports provenance),
+# so importing the endpoint constant here costs nothing and keeps
+# ``build_parser`` free of import-order surprises.
+from delm.core.placement import DEFAULT_MESH_ENDPOINT  # noqa: E402
+
+#: Default mesh id for the local exchange. A mesh is a *view with its own
+#: state file*; two meshes never share nonces, chain or balances.
+DEFAULT_MESH_ID = "smcp-local"
 
 #: Exit code for "llmfit is not usable here" (absent tool, failed run, bad
 #: JSON). Distinct from ``2`` (config does not resolve / model does not fit) so
@@ -324,6 +336,235 @@ def _fit_followup(args: argparse.Namespace, view, raw) -> int:
     return rc
 
 
+# ------------------------------------------------------------------- mesh
+def _mesh_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    """``(exchange state, node identity)`` paths, resolved like the model config.
+
+    Both live next to ``config/`` so the CLI and the web API share one file, and
+    the identity is per-node while the exchange state is per-mesh-view. Only
+    ``contribute`` needs the identity, so ``--identity`` is only defined on that
+    subcommand — hence the ``getattr``.
+    """
+    from delm.core.contrib import default_identity_path, default_state_path
+
+    state = Path(args.state) if args.state else default_state_path()
+    identity = getattr(args, "identity", None)
+    ident = Path(identity) if identity else default_identity_path()
+    return state, ident
+
+
+def _load_exchange(path: Path, mesh_id: str) -> "ContributionLedger":
+    from delm.core.contrib import ContributionLedger
+
+    if path.exists():
+        try:
+            led = ContributionLedger.load(str(path))
+            if led.mesh_id != mesh_id:
+                # Un estado de otra malla no se reusa: mezclarlos sería
+                # contabilidad falsa (los nonces y la cadena son por malla).
+                led = ContributionLedger(mesh_id=mesh_id)
+            return led
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            # Estado corrupto: se empieza de cero en vez de dies — pero nunca
+            # se reescribe en silencio sin que el operador lo vea (`check`).
+            print(f"aviso: {path} ilegible o corrupto; se empieza de cero",
+                  file=sys.stderr)
+    return ContributionLedger(mesh_id=mesh_id)
+
+
+def _node_identity(path: Path, peer_id: str) -> "KeyPair":
+    """Load this node's signing key, creating it on first use."""
+    from delm.core.provenance import KeyPair
+
+    if path.exists():
+        return KeyPair.load(str(path))
+    key = KeyPair.new(peer_id, "ed25519")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key.save(str(path))
+    print(f"identidad creada: {path} (ed25519, chmod 600) — "
+          f"guárdala: es lo que ata tus contribuciones a esta identidad",
+          file=sys.stderr)
+    return key
+
+
+def _cmd_mesh(args: argparse.Namespace) -> int:
+    """The exchange: verified VRAM in, free inference out (see contrib.py)."""
+    action = args.mesh_command or "status"
+    if action == "status":
+        return _mesh_status(args)
+    if action == "contribute":
+        return _mesh_contribute(args)
+    if action == "observe":
+        return _mesh_observe(args)
+    if action == "plan":
+        return _mesh_plan(args)
+    if action == "check":
+        return _mesh_check(args)
+    return 2
+
+
+def _mesh_status(args: argparse.Namespace) -> int:
+    from delm.core.contrib import ExchangePolicy
+
+    state, _ = _mesh_paths(args)
+    led = _load_exchange(state, args.mesh_id)
+    policy = ExchangePolicy()
+    peers = led.admitted_peers(observed_only=False)
+    print(f"=== smcp mesh ({args.mesh_id}) ===")
+    print(f"estado     : {state}{'' if state.exists() else ' (aún no existe)'}")
+    print(f"cadena     : {len(led)} entradas · "
+          f"{'íntegra' if led.verify_chain() else 'ALTERADA'}")
+    print(f"vram       : {led.total_vram_gb():.1f}G verificados "
+          f"({led.total_vram_gb(observed_only=False):.1f}G declarados)")
+    print(f"endpoint   : {args.endpoint}")
+    print("")
+    if not peers:
+        print("— ningún nodo ha aportado capacidad todavía —")
+        print("  delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12")
+        return 0
+    print("  nodo                 vram    observado  créditos  disposición")
+    for p in peers:
+        print(f"  {p.peer_id[:20]:<20} {p.vram_gb:>5.1f}G "
+              f"{('sí' if p.alive else 'NO'):>9} "
+              f"{p.credits_available:>9.2f} "
+              f"{policy.entitlement(p):>10.2f}")
+    print("")
+    print("nota: la capacidad es una afirmación *firmada* de la identidad, no "
+          "una atestación de hardware (ver docs/threat-model.md).")
+    return 0
+
+
+def _mesh_contribute(args: argparse.Namespace) -> int:
+    from delm.core.contrib import CapacityReport
+
+    state, ident = _mesh_paths(args)
+    led = _load_exchange(state, args.mesh_id)
+    key = _node_identity(ident, args.peer_id)
+    now = time.time()
+    challenge = led.issue_challenge(args.peer_id, now=now, ttl_s=args.challenge_ttl)
+    report = CapacityReport(
+        mesh_id=args.mesh_id, peer_id=args.peer_id,
+        vram_gb=args.vram_gb, ram_gb=args.ram_gb, cpu_cores=args.cpu_cores,
+        backend=args.backend, nonce=challenge.nonce, issued_at=now,
+        expires_at=now + args.ttl,
+    ).sign(key)
+    ok, reason = led.admit(report, now=now)
+    # Un rechazo se guarda ANTES de salir: un rechazo que no se registra es un
+    # rechazo que nadie puede auditar (y `delm mesh check` lo listaría vacío).
+    state.parent.mkdir(parents=True, exist_ok=True)
+    led.save(str(state))
+    if not ok:
+        print(f"error: la malla rechazó la contribución ({reason})",
+              file=sys.stderr)
+        return 2
+    print(f"=== smcp mesh: contribución admitida ===")
+    print(f"nodo       : {args.peer_id}")
+    print(f"firma      : {report.sig_kind} · digest {report.digest[:16]}…")
+    print(f"capacidad  : {report.vram_gb:.1f}G VRAM · {report.ram_gb:.0f}G RAM · "
+          f"{report.cpu_cores} núcleos · {report.backend}")
+    print(f"cadena     : {len(led)} entradas")
+    print(f"estado     : {state}")
+    print("siguiente  : `delm mesh observe` (la malla te ve vivo) y luego "
+          "`delm mesh plan <modelo>`")
+    return 0
+
+
+def _mesh_observe(args: argparse.Namespace) -> int:
+    from delm.core.contrib import ExchangePolicy
+
+    state, _ = _mesh_paths(args)
+    led = _load_exchange(state, args.mesh_id)
+    policy = ExchangePolicy()
+    now = time.time()
+    peer = led.observe(args.peer_id, now, dt_s=args.seconds, policy=policy)
+    if peer is None:
+        print(f"error: {args.peer_id} no está admitido; usa "
+              f"`delm mesh contribute` primero.", file=sys.stderr)
+        return 2
+    led.save(str(state))
+    print(f"{args.peer_id}: +{args.seconds:.0f}s observado · "
+          f"créditos {peer.credits:.3f} · disponibles {peer.credits_available:.3f}")
+    return 0
+
+
+def _mesh_plan(args: argparse.Namespace) -> int:
+    """Size a model with llmfit, then decide who hosts it across the mesh."""
+    from delm.core.contrib import ExchangePolicy
+    from delm.core.llmfit import LlmfitError, LlmfitRunner
+    from delm.core.placement import ModelSpec, plan_placement
+
+    state, _ = _mesh_paths(args)
+    led = _load_exchange(state, args.mesh_id)
+    spec = _spec_from_args(args)
+    if spec is None:
+        # Sin spec explícita, la dimensiona llmfit (misma fuente que `delm fit`).
+        runner = LlmfitRunner(args.llmfit_bin, timeout_s=args.timeout)
+        try:
+            raw = runner.catalog(limit=None, memory=args.memory, ram=args.ram,
+                                 cpu_cores=args.cpu_cores)
+        except LlmfitError as exc:
+            print(f"error: {exc}\n"
+                  f"(usa --memory-gb para planear sin llmfit)", file=sys.stderr)
+            return EXIT_LLMFIT
+        row = raw.by_name(args.model)
+        if row is None:
+            print(f"error: {args.model!r} no está en el catálogo de llmfit. "
+                  f"Usa --memory-gb para planear a mano.", file=sys.stderr)
+            return 2
+        spec = ModelSpec.from_fit_row(row, name=row.name)
+
+    plan = plan_placement(spec, led, policy=ExchangePolicy(),
+                          reserve_gb=args.reserve_gb,
+                          require_credit=not args.no_credit,
+                          endpoint=args.endpoint)
+    if args.json:
+        print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
+    else:
+        print(plan.render())
+    return 0 if plan.ok else 2
+
+
+def _spec_from_args(args: argparse.Namespace):
+    """A hand-specified spec (`--memory-gb`) short-circuits llmfit."""
+    from delm.core.placement import ModelSpec
+
+    if not args.memory_gb:
+        return None
+    return ModelSpec(name=args.model, memory_required_gb=args.memory_gb,
+                     n_layers=args.layers, quant=args.quant or "")
+
+
+def _mesh_check(args: argparse.Namespace) -> int:
+    """Audit the exchange: chain integrity, balances, and what it does not prove."""
+    from delm.core.contrib import ExchangePolicy
+
+    state, _ = _mesh_paths(args)
+    if not state.exists():
+        print(f"no hay estado de malla en {state}", file=sys.stderr)
+        return 2
+    led = _load_exchange(state, args.mesh_id)
+    policy = ExchangePolicy()
+    chain_ok = led.verify_chain()
+    print(f"=== smcp mesh check ({args.mesh_id}) ===")
+    print(f"estado    : {state}")
+    print(f"cadena    : {len(led)} entradas · {'íntegra' if chain_ok else 'ALTERADA'}")
+    print(f"digest    : {led.state_digest()}")
+    rejected = [r for r in led.records if not r.accepted]
+    print(f"rechazos  : {len(rejected)}")
+    for r in rejected[-5:]:
+        print(f"  - seq {r.seq} {r.peer_id}: {r.reason}")
+    bad = [p.peer_id for p in led.peers.values() if p.credits_available < -1e-9]
+    print(f"saldos    : {'todos >= 0' if not bad else 'NEGATIVOS: ' + ', '.join(bad)}")
+    for p in led.admitted_peers(observed_only=False):
+        print(f"  {p.peer_id}: allocates {p.vram_gb:.1f}G · observed "
+              f"{p.seconds_observed:.0f}s · entitlement "
+              f"{policy.entitlement(p):.3f}")
+    print("")
+    print("lo que esto NO prueba: que la VRAM declarada exista. No hay "
+          "atestación de hardware; es una afirmación firmada y auditable.")
+    return 0 if chain_ok and not bad else 2
+
+
 # ----------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
@@ -335,6 +576,9 @@ def build_parser() -> argparse.ArgumentParser:
                "  delm demo security        # Capas 1+2\n"
                "  delm demo multihost       # 2 nodos sobre QUIC\n"
                "  delm demo real --dry-run  # resuelve la config, no llama al modelo\n"
+               "  delm mesh status           # quien contribuye y cuanto tiene de credito\n"
+               "  delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12\n"
+               "  delm mesh plan <modelo>    # repartir un modelo entre los nodos\n"
                "  delm fit                  # que modelos caben en esta maquina\n"
                "  delm fit --check          # el modelo de la config cabe aqui?\n"
                "  delm test                 # la suite (por defecto: -m 'not slow')\n"
@@ -444,6 +688,78 @@ def build_parser() -> argparse.ArgumentParser:
     p_fit.add_argument("--timeout", type=float, default=120.0,
                        help="segundos de espera para llmfit (default: 120)")
     p_fit.set_defaults(func=_cmd_fit)
+
+    # --- mesh (intercambio: VRAM verificada <-> inferencia)
+    p_mesh = sub.add_parser(
+        "mesh", help="la malla: capacidad verificada a cambio de inferencia")
+    msub = p_mesh.add_subparsers(dest="mesh_command", metavar="<acción>")
+
+    def _mesh_common(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("--mesh-id", default=DEFAULT_MESH_ID,
+                        help=f"id de malla (default: {DEFAULT_MESH_ID})")
+        sp.add_argument("--state", default=None,
+                        help="estado del intercambio (default: "
+                             "config/mesh_exchange.json)")
+        sp.add_argument("--endpoint", default=DEFAULT_MESH_ENDPOINT,
+                        help="endpoint OpenAI-compatible de la malla "
+                             f"(default: {DEFAULT_MESH_ENDPOINT})")
+
+    m_st = msub.add_parser("status", help="quién contribuye y cuánto tiene "
+                                          "de crédito (default)")
+    _mesh_common(m_st)
+
+    m_ct = msub.add_parser("contribute", help="firmar y admitir tu capacidad")
+    _mesh_common(m_ct)
+    m_ct.add_argument("--peer-id", default="local",
+                      help="identidad de este nodo (default: local)")
+    m_ct.add_argument("--identity", default=None,
+                      help="ruta de la clave de firma (default: "
+                           "config/mesh_identity.json)")
+    m_ct.add_argument("--vram-gb", type=float, required=True,
+                      help="VRAM que aportas")
+    m_ct.add_argument("--ram-gb", type=float, default=0.0, help="RAM del nodo")
+    m_ct.add_argument("--cpu-cores", type=int, default=0, help="núcleos")
+    m_ct.add_argument("--backend", default="cuda",
+                      help="backend (cuda, mlx, cpu, rocm, metal…)")
+    m_ct.add_argument("--ttl", type=float, default=86400.0,
+                      help="validez del informe en segundos (default: 24h)")
+    m_ct.add_argument("--challenge-ttl", type=float, default=300.0,
+                      help="validez del reto (default: 300s)")
+
+    m_ob = msub.add_parser("observe", help="acumular crédito por tiempo "
+                                           "observado vivo")
+    _mesh_common(m_ob)
+    m_ob.add_argument("--peer-id", default="local")
+    m_ob.add_argument("--seconds", type=float, required=True,
+                      help="segundos que la malla ha visto al nodo vivo")
+
+    m_pl = msub.add_parser("plan", help="repartir un modelo entre los nodos")
+    _mesh_common(m_pl)
+    m_pl.add_argument("model", help="modelo a repartir (lo dimensiona llmfit)")
+    m_pl.add_argument("--memory-gb", type=float, default=0.0,
+                      help="forzar la memoria del modelo (sin llmfit)")
+    m_pl.add_argument("--layers", type=int, default=0,
+                      help="nº de capas del modelo, si lo sabes (reparte por "
+                           "capas; si no, por cuota de VRAM)")
+    m_pl.add_argument("--quant", default="", help="quant (nota informativa)")
+    m_pl.add_argument("--reserve-gb", type=float, default=0.0,
+                      help="VRAM que se reserva por nodo (no se ofrece)")
+    m_pl.add_argument("--no-credit", action="store_true",
+                      help="ignorar el crédito (planifica aunque no haya "
+                           "pagado: solo para diagnóstico)")
+    m_pl.add_argument("--memory", default=None, help="override de VRAM a llmfit")
+    m_pl.add_argument("--ram", default=None, help="override de RAM a llmfit")
+    m_pl.add_argument("--cpu-cores", type=int, default=None,
+                      help="override de núcleos a llmfit")
+    m_pl.add_argument("--llmfit-bin", default=None, help="ruta de llmfit")
+    m_pl.add_argument("--timeout", type=float, default=120.0,
+                      help="segundos de espera para llmfit")
+    m_pl.add_argument("--json", action="store_true", help="plan en JSON")
+
+    m_ck = msub.add_parser("check", help="auditar cadena y saldos")
+    _mesh_common(m_ck)
+
+    p_mesh.set_defaults(func=_cmd_mesh)
 
     # --- version
     p_ver = sub.add_parser("version", help="muestra la version")

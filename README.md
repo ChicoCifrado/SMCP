@@ -1,17 +1,34 @@
 # SMCP — Shared Mesh Context Protocol
 
-> **SMCP** - Implementación *clean-room* del núcleo de
-> coordinación de **DeLM** (Mao & Mirhoseini, *Decentralized Multi-Agent Systems
-> with Shared Context*, arXiv:2606.10662) más una capa de seguridad propia.
+> **SMCP** (no confundir con **SMTP**). Una malla de nodos que **comparten
+> VRAM de forma verificable y reciben inferencia a cambio**, sobre un núcleo de
+> coordinación *clean-room* de **DeLM** (Mao & Mirhoseini, *Decentralized
+> Multi-Agent Systems with Shared Context*, arXiv:2606.10662) y una capa de
+> seguridad propia.
 
-No es una copia del repositorio de referencia: es una re-derivación del mismo
-núcleo, expresada como una librería pequeña y testeable, con una capa de
+SMCP junta **tres piezas** en una sola CLI y una sola Web UI:
+
+| Pieza | Qué aporta | Dónde vive |
+|---|---|---|
+| **DeLM** (clean-room) | contexto compartido verificado `C` + cola de tareas `T` entre agentes distribuidos | `delm/core/{gist,shared_context,secure_context,task_queue,admission}.py` |
+| **MeshLLM** | agrupa GPU/memoria entre máquinas y expone **una API OpenAI-compatible** en `:9337` | externo (Rust); SMCP apunta a su endpoint |
+| **llmfit** | dimensiona un modelo contra el hardware real (fit, tok/s, quant) | externo (Rust/PyPI); adaptador en `delm/core/llmfit.py` |
+
+La idea, en una frase: **los nodos de distintos usuarios se unen a una malla,
+contribuyen con su VRAM y, a cambio, obtienen acceso a la inferencia de la malla
+— y si esa VRAM se reparte bien, entre todos pueden correr modelos que no caben
+en ninguna máquina sola.**
+
+No es una copia del repositorio de referencia de DeLM: es una re-derivación del
+mismo núcleo, expresada como una librería pequeña y testeable, con una capa de
 seguridad (proveniencia, integridad y anti prompt-injection) que el paper no
 incluye.
 
 ---
 
 ## Para qué sirve
+
+### 1. Contexto compartido entre agentes (`C`)
 
 DeLM sustituye al orquestador central por dos estructuras globales:
 
@@ -23,11 +40,41 @@ DeLM sustituye al orquestador central por dos estructuras globales:
 Un agente reclama una tarea, lee un *snapshot* de `C`, razona en local y escribe
 un gist que se **comprime, verifica contra su evidencia y admite** en `C` solo
 si pasa. El progreso intermedio deja de ser un mensaje efímero y se convierte
-en **estado reutilizable**.
+en **estado reutilizable**. Eso es lo que los agentes repartidos por la malla
+comparten: no un result chunk, sino estado verificado.
 
-SMCP captura esos mecanismos de carga (los que de verdad hacen el trabajo) y,
-encima, **endurece el contexto compartido** — que es la memoria de todos los
-agentes — con una capa de seguridad que el paper no trae.
+### 2. VRAM compartida, verificada y*a cambio* de inferencia
+
+Cada nodo declara su capacidad; la malla **no se la cree**: la exige firmada,
+ligada a un reto de un solo uso, con caducidad, y encadenada en un log de
+admisiones. El crédito se gana **solo mientras la malla ve al nodo vivo**, y la
+inferencia se paga con ese crédito (`MeteredLLMClient`). Un nodo que no aporta
+no recibe inferencia gratis; uno que desaparece, la pierde al instante.
+
+### 3. Reparto de las capas de un modelo entre varios nodos
+
+Un 27B Q4 no cabe en una tarjeta de 16 GB. Repartido, sí. `delm mesh plan`
+**dimensiona el modelo con llmfit, decide qué nodos lo alojan y en qué
+proporción, lo admite o lo rechaza con un motivo, y produce un plan
+determinista** que se puede loguear y comparar entre observadores.
+
+> **SMCP planifica y admite; MeshLLM ejecuta.** El runtime de inferencia
+> pipeline-parallel entre hosts es trabajo de MeshLLM/vLLM, no de aquí: SMCP no
+> reimplementa el transporte de tensores, decide *quién hospeda qué* y entrega
+> un plan auditable. La ejecución es la API OpenAI-compatible de la malla.
+
+### Lo que este proyecto **no** es
+
+- **No hay mejora recursiva (RSI).** Hay código de exploración en
+  `delm/core/{rsi,hci}.py` y su demo, con sus tests, pero **no forma parte de la
+  tesis** ni de la hoja de ruta: está pendiente de decidir *dónde* y *cómo*
+  encaja (ver `TODO.md`).
+- **No hay atestación de hardware.** Una capacidad declarada es una afirmación
+  firmada por una identidad, no una prueba de que esa VRAM existe. Lo que se
+  garantiza está escrito en [`docs/threat-model.md`](docs/threat-model.md) y lo
+  repite cada salida de `delm mesh check`.
+- **No hay modelo de negocio, ni stake, ni slashing.** La honestidad aquí es
+  *acotada y auditable*, no absoluta.
 
 ---
 
@@ -171,7 +218,7 @@ delm demo                       # demo principal (pipeline, sin API key)
 delm demo --list                # lista las demos
 ```
 
-Los cinco subcomandos son `demo`, `test`, `config-check`, `fit` y `version`.
+Los seis subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh` y `version`.
 
 `config-check` resuelve la config con la **misma** precedencia que
 `run_real_demo --dry-run` (entorno > YAML > default) y muestra la API key
@@ -272,6 +319,77 @@ opt-in marcado `slow` que se salta si no está instalado. El payload falso habla
 el vocabulario real de llmfit 1.1.16 a propósito (`"Too Tight"`, `"CPU+GPU"`,
 `"llama.cpp"`), porque reconciliar las dos variantes de su JSON es justo lo que
 se rompe si solo se prueba contra códigos limpios.
+
+### La malla: `delm mesh` (VRAM verificada ⇄ inferencia)
+
+Aquí es donde las tres piezas se juntan. llmfit dice cuánta memoria pide un
+modelo; la malla dice quién tiene VRAM *verificada*; DeLM comparte el `C` entre
+los agentes que razonan sobre lo que la malla ejecuta.
+
+```bash
+delm mesh                                     # = status: quién aporta, cuánto debe
+delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12
+delm mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva"
+delm mesh plan "Qwen/Qwen3-32B"              # lo dimensiona llmfit y lo reparte
+delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64   # sin llmfit
+delm mesh plan "Qwen/Qwen3-32B" --memory-gb 400; echo $?     # 2 = no cabe
+delm mesh check                               # audita cadena y saldos
+delm mesh --help
+```
+
+El ciclo completo, en la misma máquina, es este:
+
+```console
+$ delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12
+=== smcp mesh: contribución admitida ===
+nodo       : local
+firma      : ed25519 · digest 520427c288fce0fa…
+capacidad  : 16.0G VRAM · 64G RAM · 12 núcleos · cuda
+$ delm mesh observe --peer-id local --seconds 3600
+local: +3600s observado · créditos 16.000 · disponibles 16.000
+$ delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64
+=== smcp placement ===
+modelo   : Qwen/Qwen3-32B
+memoria  : 40.0G requeridos · 48.0G verificados en la malla
+veredicto : ok · 3 nodo(s)
+
+  nodo                 memoria   vram    uso    layers   credits
+  nodo-b                 20.4G   24.0G   85%     0-31    0.256
+  nodo-a                 13.3G   16.0G   83%    32-52    0.167
+  nodo-c                  6.2G    8.0G   78%    53-63    0.078
+```
+
+Cuatro propiedades que hacen que esto no sea un registro de promesas:
+
+- **La capacidad se firma, no se cree.** La malla emite un reto de un solo uso
+  (`Challenge`), el nodo responde con un `CapacityReport` firmado por su clave y
+  ligado a ese reto, con caducidad. Repetir un "tengo 64G" de ayer no vale: el
+  nonce se quemó. Y un `peer_id` queda **atado a su clave** para siempre
+  (`peer_key_changed`), así que un nombre no se puede re-apuntar a otra clave
+  para heredar el crédito de otro.
+- **El crédito se gana estando vivo.** `observe` es el *único* camino al crédito
+  y lo que lo mueve es el tiempo que la malla ha visto al nodo. Un nodo que
+  desaparece no puede ni seguir ganando ni seguir gastando
+  (`require_alive_to_spend`).
+- **La inferencia se paga.** `MeteredLLMClient` envuelve cualquier
+  `LLMClient` (el de la malla, un llama.cpp local, lo que sea): sirve si hay
+  crédito y lanza `PermissionError` si no. El pipeline no cambia; la contabilidad
+  sí.
+- **Nada de lo que esto afirma es invisible.** Cada admisión —y cada
+  **rechazo**— entra en una cadena de hashes (`verify_chain`) que sobrevive a un
+  save/load, y `delm mesh check` la verifica y dice, en mayúsculas, lo que no
+  prueba.
+
+`delm mesh` y la web (página **Malla**, `web/malla.html`) comparten el fichero de
+estado vía `delm.core.contrib.default_state_path()`: aportar desde el navegador
+se ve en `delm mesh status` y al revés. Eso está fijado en un test que lanza la
+CLI como subprocess.
+
+Cubierto por `tests/test_contrib.py` (32), `tests/test_placement.py` (22),
+`tests/test_mesh_cli.py` (25) y `tests/test_api_mesh.py` (20) — 99 tests, ninguno
+necesita GPU, ni MeshLLM, ni llmfit instalado, y **ninguno escribe el estado real
+de la malla** (todo va a `tmp_path`).
+
 
 ### Instalar
 
@@ -383,7 +501,7 @@ Equivale a `python -m pytest` (los `addopts` por defecto son `-m 'not slow'`).
 `delm test --slow` añade `-m slow`, que **pisa** el `-m 'not slow'` de los
 addopts (pytest aplica el último `-m`).
 
-El suite está repartido en treinta y cuatro archivos, todos deterministas:
+El suite está repartido en treinta y ocho archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -443,6 +561,28 @@ El suite está repartido en treinta y cuatro archivos, todos deterministas:
   el passthrough de flags, `--slow` pisando el `-m 'not slow'` de los addopts,
   el enmascarado de la key en `config-check`, y que `python -m delm` funciona
   como subprocess (el contrato público).
+- `test_contrib.py` — el intercambio: reto de un solo uso y caducidad (replay,
+  reto/informe vencidos, reto ligado al par, malla equivocada), firma que ata
+  los números (inflar la VRAM tras firmar invalida el digest), el `peer_id`
+  atado a su clave, la cadena que detecta manipulación y persiste los rechazos,
+  el crédito que solo se gana `observe`dolo y es proporcional a la VRAM
+  aportada, el gasto que se niega sin crédito, y `MeteredLLMClient` sirviendo
+  con `FakeLLMClient` y negándose al agotarse. Incluye el test que **fija la
+  limitación**: una afirmación firmada pero falsa se admite (no hay atestación
+  de hardware), y por eso es auditable.
+- `test_placement.py` — el reparto: rechazo con motivo y *cuánta* VRAM falta,
+  que no se use capacidad no admitida ni sin crédito, la exclusividad del
+  orden greedy (más VRAM primero), la suma exacta de stages, los rangos de capas
+  que teselan `[0, n-1]`, el plan por memoria cuando no se conocen las capas,
+  determinismo byte a byte y round-trip para replay de auditoría.
+- `test_mesh_cli.py` — `delm mesh`: la identidad se crea una vez y se reutiliza
+  (si no, ninguna contribución sería atribuible), dos "nodos" contra el mismo
+  estado (que es una malla), `plan` dimensiona con llmfit o se la salta con
+  `--memory-gb`, `check` detecta la cadena alterada, y un estado de otra malla no
+  se mezcla. Ningún camino imprime la clave privada.
+- `test_api_mesh.py` — la misma superficie en la web, con el test de que **CLI y
+  web ven la misma malla** (la API escribe y un subprocess de `delm mesh status`
+  lo lee).
 - `test_llmfit.py` — la integración con llmfit: el parseo de sus filas y su
   hardware, los filtros/orden/veredicto, el descubrimiento del binario
   (`$DELM_LLMFIT_BIN` → `PATH` → `python -m llmfit`) y sus fallos (no instalado,
@@ -487,8 +627,18 @@ python api_server.py         # http://127.0.0.1:8099
   la instalación.
 - `/api/fit/apply` — adopta un modelo de la tabla como config (el mismo
   escritor que `PUT /api/config`, con el veredicto de llmfit en comentarios).
-- `/` — estático de `web/` (10 páginas: inicio, núcleo, seguridad, demos,
-  arquitectura, lab, contexto, ledger, **estado en vivo**, consola 3D).
+- `/api/mesh` — el intercambio: quién aporta VRAM verificada, su crédito y la
+  integridad de la cadena.
+- `/api/mesh/contribute` — firma la capacidad de este nodo y la admite (crea la
+  identidad si no existe). Rechazos → `400` con el motivo, y **quedan
+  registrados** en la cadena.
+- `/api/mesh/observe` — acredita crédito por tiempo observado vivo.
+- `/api/mesh/plan?model=…` — plan de reparto (dimensiona con llmfit salvo que se
+  pase `memory_gb`). `llmfit` ausente no es un error HTTP: `available: false` +
+  `hint`.
+- `/api/mesh/check` — auditoría: cadena, rechazos, saldos, y lo que no prueba.
+- `/` — estático de `web/` (11 páginas: inicio, núcleo, seguridad, demos,
+  arquitectura, lab, contexto, ledger, **estado en vivo**, **malla**, consola 3D).
 
 `web/estado.html` + `web/assets/estado.js` leen `/api/status` en vivo y permiten
 lanzar suite/demo/taint desde el navegador. `web/assets/fit.js` añade la
@@ -496,8 +646,11 @@ sección **Modelo local (llmfit)**: los filtros de `delm fit`, la tabla, el
 veredicto en rojo/verde/neutro y un botón *usar* por fila que llama a
 `/api/fit/apply` y refresca la config mediante el evento
 `smcp:config-changed` (los dos módulos de la página no se conocen entre sí).
-`web/assets/app.js` guarda la última página en `localStorage` y la restaura al
-volver al home.
+`web/malla.html` + `web/assets/malla.js` son la página **Malla**: el intercambio
+y el reparto de modelos (contribuir, observar, planear, auditar). Comparte
+fichero de estado con la CLI, así que lo que se aporta en el navegador se ve en
+`delm mesh status`. `web/assets/app.js` guarda la última página en `localStorage`
+y la restaura al volver al home.
 
 ### Usar un modelo real
 
@@ -565,7 +718,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **409 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **508 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -593,7 +746,14 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   `--write-config` sin pisar, y la ausencia de llmfit como exit `3`) + 19
   `delm fit` en la API (contrato de `/api/fit` y `/api/fit/apply`: validación
   de filtros, veredicto sobre el catálogo entero, cero secretos, llmfit
-  ausente como estado normal y el escritor de config compartido) + 35 API: las
+  ausente como estado normal y el escritor de config compartido) + 99 la malla
+  (32 del intercambio: reto de un solo uso, firma que ata los números, `peer_id`
+  ligado a su clave, cadena y rechazos persistentes, crédito por uptime, gasto
+  que se niega; 22 del reparto: rechazo accionable, exclusividad del greedy,
+  suma exacta y capas que teselan, determinismo y replay; 25 de `delm mesh`
+  (identidad persistente, dos nodos sobre un estado, `plan` con y sin llmfit,
+  `check` que detecta la cadena alterada); 20 de `/api/mesh/*` incluido el que
+  comprueba que CLI y web ven la misma malla) + 35 API: las
   acciones de
   sesión (scan, taint, config, export del ledger, SSE, meshllm) y las demos
   in-proceso + 20 `smcp-serve` (SMCP como agente ACP: el handshake, el
@@ -613,8 +773,51 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   `run_real_demo` corre el pipeline contra un endpoint real; la wiring está
   probada de punta a punta por `test_real_model_wiring.py`.
 
+**Hecho y verificado (la malla como intercambio):**
+
+- **La malla tiene modelo de recurso y economía** — `delm/core/contrib.py`:
+  `Challenge` (reto de un solo uso) + `CapacityReport` (capacidad firmada,
+  ligada al reto, con caducidad) + `ContributionLedger` (admisión con motivo,
+  cadena de hashes que sobrevive a save/load, y saldo por par) +
+  `ExchangePolicy` (tarifa y medidor) + `MeteredLLMClient` (la inferencia se
+  paga con crédito, sobre cualquier `LLMClient`). 32 tests.
+- **El reparto de un modelo entre nodos** — `delm/core/placement.py`:
+  `ModelSpec` (se construye desde una fila de llmfit) + `plan_placement` (greedy
+  por VRAM verificada,Admission con `PlanReject` accionable, rangos de capas que
+  teselan `[0, n-1]`, determinista y con round-trip para replay) +
+  `MeteredLLMClient` como consumidor. 22 tests.
+- **Las tres piezas en una sola superficie** — `delm mesh
+  {status,contribute,observe,plan,check}`, `/api/mesh*` y la página **Malla**
+  (`web/malla.html`), las tres sobre el **mismo fichero de estado** (lo resuelve
+  `delm.core.contrib.default_state_path()`; hay un test que aporta por HTTP y lo
+  lee con la CLI en subprocess). 45 tests.
+- **Identidad persistente** — `KeyPair.save`/`load` (ed25519, `chmod 600`): sin
+  esto, cada `contribute` regeneraría la clave y ninguna contribución sería
+  atribuible a un nodo. **Rechaza persistir una clave HMAC**: su mitad privada
+  *es* el secreto compartido, o sea, el trust anchor del verificador.
+
 **En construcción / pendiente:**
 
+- **Dónde y cómo entra el RSI** — el código de exploración (`rsi.py`, `hci.py`,
+  `run_rsi_demo.py`, sus tests) sigue en el repo y en verde, pero **no es parte
+  de la tesis** ni de la hoja de ruta. Está por decidir si el bucle de mejora
+  recursiva se aplica (a) a la política de la malla —reparto, tarifas, admisión—
+  que es donde ya hay un bucle `observar → decidir → verificar → retener` con
+  ledger, o (b) a los agentes que razonan sobre `C`. Ver `TODO.md`.
+- **La ejecución del reparto es de MeshLLM** — SMCP produce el plan y el
+  endpoint; el runtime pipeline-parallel entre hosts es de MeshLLM/vLLM. La
+  integración pendiente no es de código aquí sino de contrato: publicar el plan
+  en el formato que el executor consuma y poder auditar después qué se ejecutó
+  frente a lo que se planificó.
+- **Atestación de capacidad** — hoy una capacidad es una afirmación firmada
+  (ver `docs/threat-model.md`). Subirla a atestación real (TPM/SGX, o
+  challenge de *hardware* sobre la GPU) es el salto que convierte "honesto" en
+  "verificable"; también el sitio natural donde encajaría slashing.
+- **El intercambio no viaja por la malla todavía** — la cadena de contribuciones
+  es local al estado de cada vista; falta el datagrama que la propaga y el
+  gossip de capacidades (el hueco natural: `PeerAnnouncement.capabilities`, hoy
+  una tupla de strings sin esquema, y `AdmissionEvaluator`, que existe y nunca
+  se invoca en runtime).
 - **Capa 3 integrada en el pipeline** — el transporte de malla está cableado:
   `transport.py` (`InMemoryTransport` in-proceso + `QuicTransport` aioquic),
   `mesh_node.py` (un par: firma/publica gists, heartbeat, ciclo de vida),
@@ -685,7 +888,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 ```
 delm/
   config.py           ModelConfig + load_config + build_client (config de modelo)
-  cli.py              la CLI unificada (demo/test/config-check/fit/version)
+  cli.py              la CLI unificada (demo/test/config-check/fit/mesh/version)
   __main__.py         `python -m delm` == `delm` (mismo parser)
   serve.py            smcp-serve: SMCP como agente ACP por stdio (vía A)
   api_server.py       FastAPI :8099 — /api/status, /api/run, estático web/
@@ -721,6 +924,8 @@ delm/
     hci.py             Headroom-Closed Index             (métrica de mejora)
     rsi.py             RSILoop + Successor               (loop RSI L1)
     llmfit.py          LlmfitRunner + FitReport/veredicto (dimensionar el modelo local)
+    contrib.py         Challenge/CapacityReport + ContributionLedger + créditos
+    placement.py       ModelSpec/Stage/PlacementPlan (reparto entre nodos)
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
@@ -728,17 +933,18 @@ delm/
     run_taint_demo.py      demo Capa 5
     run_multihost_demo.py  demo multi-host (QUIC / Nostr)
     run_rsi_demo.py        demo RSI L1 (mide HCI)
-  web/                    10 páginas (nav común en todas)
+  web/                    11 páginas (nav común en todas)
     index.html nucleo.html seguridad.html demos.html arquitectura.html
-    play.html context.html ledger.html estado.html console.html
+    play.html context.html ledger.html estado.html malla.html console.html
     assets/
       app.js               tema dark/light + recordar última página
       api.js               fetch/JSON/SSE + pip de salud (compartido)
       estado.js            estado en vivo: señales, config, runs, acciones
       fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
+      malla.js             la malla: intercambio, reparto y auditoría
       context.js ledger.js play.js demos.js seguridad.js   una por página
       style.css            design system · OpenCode.otf
-  tests/   (34 archivos — ver lista arriba)
+  tests/   (38 archivos — ver lista arriba)
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa

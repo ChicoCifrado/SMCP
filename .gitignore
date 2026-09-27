@@ -20,3 +20,8 @@ env/
 # Local model config (never commit real keys)
 config/model_config.yaml
 .env
+
+# Mesh exchange state + this node's signing key (per-deployment, and the key
+# is a secret: ed25519 private material with chmod 600).
+config/mesh_exchange.json
+config/mesh_identity.json

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#090a09" />
+  <title>Malla — SMCP</title>
+  <link rel="stylesheet" href="assets/style.css" />
+  <style>
+    .mesh-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin: 14px 0 8px; }
+    .mesh-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+    .mesh-card .num { font-size: 24px; font-weight: 600; color: var(--accent); line-height: 1.2; }
+    .mesh-card .num.bad { color: #ff6b5b; }
+    .mesh-card .lbl { font-size: 11px; color: var(--muted); margin-top: 4px; letter-spacing: .04em; text-transform: uppercase; }
+    .mesh-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+    .mesh-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+    .mesh-form input, .mesh-form select {
+      font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--code-bg); color: var(--text);
+    }
+    .live-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; align-items: center; }
+    .live-meta { font-size: 12px; color: var(--muted); }
+    .note {
+      margin-top: 12px; padding: 12px 14px; border-radius: 10px;
+      border: 1px solid var(--line); background: var(--code-bg);
+      font-size: 12.5px; color: var(--muted);
+    }
+    .note b { color: var(--text); }
+    table.peers { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    table.peers th, table.peers td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    table.peers th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+    table.peers td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-top: 10px; }
+    .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+    .pill.ok { border-color: var(--accent-soft); color: var(--accent); }
+    .pill.bad { border-color: #ff6b5b; color: #ff6b5b; }
+    #plan-out { margin-top: 12px; }
+    .stage { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+    .stage .bar { flex: 1; height: 8px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+    .stage .bar i { display: block; height: 100%; background: var(--accent); }
+    .stage .nm { font-size: 12.5px; width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stage .mt { font-size: 12px; color: var(--muted); width: 150px; text-align: right; }
+    .shortcuts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .shortcuts a { font-size: 13px; padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); text-decoration: none; }
+    .shortcuts a:hover { border-color: var(--accent); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="topbar">
+      <div class="brand">
+        <span class="mark" role="img" aria-label="SMCP"></span>
+      </div>
+      <nav class="topnav">
+        <a href="index.html">Inicio</a>
+        <a href="nucleo.html">Núcleo</a>
+        <a href="seguridad.html">Seguridad</a>
+        <a href="demos.html">Demos</a>
+        <a href="arquitectura.html">Arquitectura</a>
+        <a href="play.html">Lab</a>
+        <a href="context.html">Contexto</a>
+        <a href="ledger.html">Ledger</a>
+        <a href="estado.html">Estado</a>
+        <a href="malla.html" aria-current="page">Malla</a>
+        <a href="console.html">Consola</a>
+      </nav>
+      <button class="theme-btn" data-theme-toggle title="Cambiar tema" aria-label="Cambiar tema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="hero">
+        <div class="wordmark">malla</div>
+        <h1>La malla: VRAM verificada a cambio de inferencia</h1>
+        <p class="sub">
+          Los nodos aportan capacidad, la malla la verifica y la reparte; a cambio,
+          cada nodo recibe crédito para inferencia. Esta página es la versión web
+          de <code>delm mesh</code>: mismas reglas, mismo fichero de estado.
+        </p>
+        <div class="live-meta">
+          <span class="live-status" id="api-pip"><span class="pip"></span><span id="api-label">consultando…</span></span>
+          · <span id="mesh-id-label">—</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Estado del intercambio</h2>
+        <div class="mesh-grid">
+          <div class="mesh-card"><div class="num" id="m-vram">—</div><div class="lbl">VRAM verificada</div></div>
+          <div class="mesh-card"><div class="num" id="m-nodes">—</div><div class="lbl">nodos admitidos</div></div>
+          <div class="mesh-card"><div class="num" id="m-chain">—</div><div class="lbl">cadena</div></div>
+          <div class="mesh-card"><div class="num" id="m-rej">—</div><div class="lbl">rechazos</div></div>
+        </div>
+        <div class="live-actions">
+          <button class="live-btn primary" id="btn-mesh" type="button">Refrescar</button>
+          <button class="live-btn" id="btn-mesh-check" type="button">Auditar (check)</button>
+          <span class="live-meta" id="m-endpoint"></span>
+        </div>
+        <div class="tbl-wrap">
+          <table class="peers" id="m-peers">
+            <thead>
+              <tr><th>nodo</th><th>backend</th><th>vram</th><th>vivo</th><th>observado</th><th>créditos</th><th>disposición</th></tr>
+            </thead>
+            <tbody><tr><td colspan="7" style="color:var(--muted)">— sin datos —</td></tr></tbody>
+          </table>
+        </div>
+        <div class="note">
+          <b>Lo que esto no prueba:</b> que la VRAM declarada exista. No hay
+          atestación de hardware (TPM/SGX): una capacidad es una afirmación
+          <b>firmada, de un solo uso y expirable</b> por una identidad concreta, y
+          el crédito solo se acumula mientras la malla ve al nodo vivo. Ver
+          <code>docs/threat-model.md</code>.
+        </div>
+      </section>
+
+      <section>
+        <h2>Aportar capacidad</h2>
+        <p class="sub" style="margin:6px 0 0;font-size:13px">
+          Firma tu capacidad contra un reto de un solo uso y la admites en la malla.
+          La primera vez se crea <code>config/mesh_identity.json</code> (ed25519,
+          chmod 600): es lo que ata tus futuras contribuciones a esta identidad.
+        </p>
+        <div class="mesh-form">
+          <label>peer_id <input id="c-peer" type="text" value="local" /></label>
+          <label>vram_gb <input id="c-vram" type="number" min="0" step="0.5" value="16" /></label>
+          <label>ram_gb <input id="c-ram" type="number" min="0" step="1" value="64" /></label>
+          <label>cpu_cores <input id="c-cores" type="number" min="0" step="1" value="12" /></label>
+          <label>backend
+            <select id="c-backend">
+              <option value="cuda">cuda</option>
+              <option value="rocm">rocm</option>
+              <option value="metal">metal</option>
+              <option value="mlx">mlx</option>
+              <option value="cpu">cpu</option>
+            </select>
+          </label>
+          <label>observar (s)
+            <input id="c-seconds" type="number" min="0" step="60" value="3600" />
+          </label>
+        </div>
+        <div class="live-actions">
+          <button class="live-btn primary" id="btn-contrib" type="button">Firmar y admitir</button>
+          <button class="live-btn" id="btn-observe" type="button">Acumular crédito observado</button>
+          <span class="live-meta" id="c-meta"></span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Repartir un modelo</h2>
+        <p class="sub" style="margin:6px 0 0;font-size:13px">
+          SMCP <b>planea y admite</b>; MeshLLM ejecuta. La memoria la dimensiona
+          llmfit (o la declaras tú), y el reparto sale de la VRAM <i>verificada</i>
+          de cada nodo, no de lo que dice su announce.
+        </p>
+        <div class="mesh-form">
+          <label style="grid-column:span 2">modelo
+            <input id="p-model" type="text" placeholder="Qwen/Qwen3-32B" />
+          </label>
+          <label>memory_gb <input id="p-mem" type="number" min="0" step="0.5" placeholder="(llmfit)" /></label>
+          <label>layers <input id="p-layers" type="number" min="0" step="1" placeholder="(desconocido)" /></label>
+          <label>reserve_gb <input id="p-reserve" type="number" min="0" step="0.5" value="0" /></label>
+          <label>use case
+            <select id="p-usecase">
+              <option value="">(sin filtro)</option>
+              <option value="coding">coding</option>
+              <option value="reasoning">reasoning</option>
+              <option value="chat">chat</option>
+              <option value="general">general</option>
+            </select>
+          </label>
+        </div>
+        <div class="live-actions">
+          <button class="live-btn primary" id="btn-plan" type="button">Planear reparto</button>
+          <span class="live-meta" id="p-meta"></span>
+        </div>
+        <div id="plan-out"></div>
+        <div class="note">
+          El plan es un <b>registro de decisión</b>: determinista y reproducible
+          para el mismo estado de malla. No garantiza que los pesos se puedan
+          bajar ni que el mapeo capa→stage sea el más eficiente — eso lo resuelve
+          el executor.
+        </div>
+        <div class="shortcuts">
+          <a href="estado.html">→ Estado (dimensionar con llmfit)</a>
+          <a href="play.html">→ Lab (correr el pipeline)</a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <div class="in">
+        <span class="mark" role="img" aria-label="SMCP"></span>
+        <span class="txt"><b>SMCP</b> — la malla · capacidad verificada ⇄ inferencia.</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/app.js"></script>
+  <script src="assets/api.js"></script>
+  <script src="assets/malla.js"></script>
+</body>
+</html>

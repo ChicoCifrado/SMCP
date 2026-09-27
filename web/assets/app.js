@@ -49,7 +49,7 @@
     // Comprobación barata: mismos dominios de nombre que las del nav.
     var known = ["nucleo.html", "seguridad.html", "demos.html",
                  "arquitectura.html", "estado.html", "console.html",
-                 "play.html", "context.html", "ledger.html"];
+                 "play.html", "context.html", "ledger.html", "malla.html"];
     if (known.indexOf(dest) !== -1) {
       location.replace(dest);
     }
