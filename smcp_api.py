@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -482,13 +482,15 @@ def _config_path() -> Path:
     return p
 
 
-def _write_yaml(data: dict[str, Any]) -> None:
+def _write_yaml(data: dict[str, Any], notes: list[str] | None = None) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Local model config (this file is git-ignored; never commit real keys).",
         "# Written by PUT /api/config. Override via DELM_* env vars.",
     ]
+    for note in notes or []:
+        lines.append(f"# {note}")
     for key in ("model", "base_url", "api_key", "temperature", "timeout_s", "use_harness"):
         if key not in data:
             continue
@@ -516,33 +518,21 @@ def get_config() -> dict[str, Any]:
     return d
 
 
-@router.put("/config")
-def put_config(body: ConfigUpdate) -> dict[str, Any]:
-    """Persist model settings to the local YAML (never echoes api_key)."""
+def _persist_config(updates: dict[str, Any],
+                    notes: list[str] | None = None) -> dict[str, Any]:
+    """Merge *updates* into the local YAML and return the resulting view.
+
+    Single writer for the model config: both ``PUT /api/config`` and
+    ``POST /api/fit/apply`` go through here, so there is exactly one place that
+    knows the file layout and one place that masks the key on the way out.
+    """
     path = _config_path()
     current: dict[str, Any] = {}
     if path.exists():
         current = _read_yaml_flat(path)
-    updates: dict[str, Any] = {}
-    if body.model is not None:
-        updates["model"] = body.model
-    if body.base_url is not None:
-        updates["base_url"] = body.base_url
-    if body.temperature is not None:
-        updates["temperature"] = body.temperature
-    if body.timeout_s is not None:
-        updates["timeout_s"] = body.timeout_s
-    if body.use_harness is not None:
-        updates["use_harness"] = body.use_harness
-    if body.clear_api_key:
-        updates["api_key"] = ""
-    elif body.api_key is not None:
-        updates["api_key"] = body.api_key
-    if not updates:
-        raise HTTPException(status_code=400, detail="no fields to update")
     merged = {**current, **updates}
     try:
-        _write_yaml(merged)
+        _write_yaml(merged, notes)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"cannot write config: {e}") from e
     cfg = _load_cfg()
@@ -562,6 +552,30 @@ def put_config(body: ConfigUpdate) -> dict[str, Any]:
         "has_model": bool(d.get("model")),
         "has_base_url": bool(d.get("base_url")),
     }
+
+
+@router.put("/config")
+def put_config(body: ConfigUpdate) -> dict[str, Any]:
+    """Persist model settings to the local YAML (never echoes api_key)."""
+    updates: dict[str, Any] = {}
+    if body.model is not None:
+        updates["model"] = body.model
+    if body.base_url is not None:
+        updates["base_url"] = body.base_url
+    if body.temperature is not None:
+        updates["temperature"] = body.temperature
+    if body.timeout_s is not None:
+        updates["timeout_s"] = body.timeout_s
+    if body.use_harness is not None:
+        updates["use_harness"] = body.use_harness
+    if body.clear_api_key:
+        updates["api_key"] = ""
+    elif body.api_key is not None:
+        updates["api_key"] = body.api_key
+    if not updates:
+        raise HTTPException(status_code=400, detail="no fields to update")
+    return _persist_config(updates)
+
 
 
 def _read_yaml_flat(path: Path) -> dict[str, Any]:
@@ -1061,3 +1075,152 @@ async def get_meshllm() -> dict[str, Any]:
     """Probe the local MeshLLM OpenAI-compatible endpoint (:9337)."""
     result = await _probe_endpoint("http://127.0.0.1:9337/v1", "", False)
     return {"endpoint": "http://127.0.0.1:9337/v1", **result}
+
+
+# ------------------------------------------------------------------- llmfit
+# Web surface of `delm fit` (delm/core/llmfit.py). Same three views as the
+# CLI — table, verdict, persist — so the browser and the shell answer the same
+# question with the same rules.
+_FIT_LEVELS = ("perfect", "good", "marginal", "too_tight")
+_FIT_RUNTIMES = ("mlx", "llamacpp", "vllm", "bitnetcpp")
+_FIT_SORTS = ("score", "tps", "params", "mem", "ctx", "name")
+_FIT_USE_CASES = ("general", "coding", "reasoning", "chat", "multimodal",
+                  "embedding")
+
+
+def _verdict_dict(v) -> dict[str, Any]:
+    """Serializable view of a :class:`~delm.core.llmfit.ModelFitVerdict`."""
+    return {
+        "model": v.model,
+        "matched": v.matched,
+        "runnable": v.runnable,
+        "fit_level": v.fit_level,
+        "fit_label": v.fit_label,
+        "best_quant": v.best_quant,
+        "memory_required_gb": v.memory_required_gb,
+        "estimated_tps": v.estimated_tps,
+        "runtime": v.runtime,
+        "row_name": v.row_name,
+        "exit_code": v.exit_code(),
+        "suggestions": list(v.suggestions),
+    }
+
+
+@router.get("/fit")
+def get_fit(
+    limit: int = Query(default=10, ge=1, le=50),
+    use_case: str | None = Query(default=None),
+    min_fit: str | None = Query(default=None),
+    runtime: str | None = Query(default=None),
+    search: str = Query(default="", max_length=120),
+    sort: str | None = Query(default=None),
+    include_too_tight: bool = Query(default=False),
+    memory: str | None = Query(default=None, max_length=16),
+    ram: str | None = Query(default=None, max_length=16),
+    cpu_cores: int | None = Query(default=None, ge=1, le=1024),
+    max_context: int | None = Query(default=None, ge=256, le=1048576),
+    llmfit_bin: str | None = Query(default=None, max_length=400),
+    timeout_s: float = Query(default=120.0, gt=0.0, le=600.0),
+) -> dict[str, Any]:
+    """What fits *this* host (llmfit) + the verdict on the configured model.
+
+    A missing or broken llmfit is **not** an HTTP error: the UI has to be able
+    to render the install hint, so the failure is reported in the body
+    (``available: false`` + ``hint``) and the verdict comes back *unknown*
+    rather than blocking the page.
+    """
+    from delm.core.llmfit import (
+        FitReport, LlmfitError, LlmfitRunner, verdict_for,
+    )
+
+    bad = []
+    if min_fit and min_fit not in _FIT_LEVELS:
+        bad.append(f"min_fit: usa {'|'.join(_FIT_LEVELS)}")
+    if runtime and runtime not in _FIT_RUNTIMES:
+        bad.append(f"runtime: usa {'|'.join(_FIT_RUNTIMES)}")
+    if sort and sort not in _FIT_SORTS:
+        bad.append(f"sort: usa {'|'.join(_FIT_SORTS)}")
+    if use_case and use_case not in _FIT_USE_CASES:
+        bad.append(f"use_case: usa {'|'.join(_FIT_USE_CASES)}")
+    if bad:
+        raise HTTPException(status_code=400, detail="; ".join(bad))
+
+    runner = LlmfitRunner(llmfit_bin, timeout_s=timeout_s)
+    t0 = time.time()
+    try:
+        # Unnarrowed fetch: the verdict must see the rows the table hides (a
+        # model that does not fit is exactly the one `--all` would show).
+        raw = runner.catalog(limit=None, memory=memory, ram=ram,
+                             cpu_cores=cpu_cores, max_context=max_context)
+        view = raw.filtered(min_fit=min_fit, runtime=runtime,
+                            use_case=use_case or None,
+                            search=search or None, sort_by=sort,
+                            include_too_tight=include_too_tight).top(limit)
+    except LlmfitError as e:
+        # Sin llmfit no hay veredicto posible, pero tampoco es un error HTTP:
+        # la UI tiene que poder pintar el hint de instalación.
+        return {
+            "available": False,
+            "hint": str(e),
+            "secs": round(time.time() - t0, 2),
+            "system": {},
+            "total_models": 0,
+            "models": [],
+            "check": _verdict_dict(verdict_for(_load_cfg().model, FitReport())),
+        }
+
+    verdict = verdict_for(_load_cfg().model, raw)
+    return {
+        "available": True,
+        "secs": round(time.time() - t0, 2),
+        **view.to_payload(),
+        "check": _verdict_dict(verdict),
+    }
+
+
+class FitApply(BaseModel):
+    model: str = Field(min_length=1, max_length=200)
+    base_url: str | None = Field(default=None, max_length=500)
+    timeout_s: float | None = Field(default=None, gt=0.0, le=3600.0)
+    api_key: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/fit/apply")
+def post_fit_apply(body: FitApply) -> dict[str, Any]:
+    """Adopt a model from the fit table as the pipeline's model.
+
+    Same commit rule as ``delm fit --write-config``: the operator presses the
+    button, and the llmfit verdict that justified the pick (quant, sizes, tok/s)
+    travels into the YAML as comments instead of being lost.
+    """
+    from delm.core.llmfit import FitRow, LlmfitError, LlmfitRunner
+
+    notes: list[str] = []
+    row_name = body.model
+    try:
+        raw = LlmfitRunner().catalog(limit=None)
+    except LlmfitError:
+        raw = None            # sin llmfit no hay notas, pero el apply sigue
+    if raw is not None:
+        row = raw.by_name(body.model)
+        if row is not None:
+            row_name = row.name
+            if row.best_quant:
+                notes.append(f"quant elegido por llmfit: {row.best_quant}")
+            if row.disk_size_gb is not None:
+                notes.append(f"tamaño en disco: {row.disk_size_gb:.1f}G")
+            if row.estimated_tps:
+                notes.append(
+                    f"velocidad estimada: {row.estimated_tps:.1f} tok/s "
+                    f"({row.estimate_confidence or 'sin estimar'})")
+            notes.append("elegido con delm fit / POST /api/fit/apply")
+
+    updates: dict[str, Any] = {"model": row_name}
+    if body.base_url:
+        updates["base_url"] = body.base_url
+    if body.timeout_s is not None:
+        updates["timeout_s"] = body.timeout_s
+    if body.api_key is not None:
+        updates["api_key"] = body.api_key
+    return _persist_config(updates, notes)
+

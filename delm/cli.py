@@ -42,9 +42,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 __all__ = ["main", "build_parser", "DEMOS", "EXIT_LLMFIT"]
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from delm.core.llmfit import ModelFitVerdict
 
 #: Exit code for "llmfit is not usable here" (absent tool, failed run, bad
 #: JSON). Distinct from ``2`` (config does not resolve / model does not fit) so
@@ -212,35 +215,40 @@ def _cmd_fit(args: argparse.Namespace) -> int:
     llmfit is an optional external tool, never a dependency: when it is absent
     the command explains how to install it and exits ``EXIT_LLMFIT``.
     """
-    from delm.core.llmfit import LlmfitError, LlmfitRunner
+    from delm.core.llmfit import LlmfitError, LlmfitRunner, verdict_for
 
     runner = LlmfitRunner(args.llmfit_bin, timeout_s=args.timeout)
+    hardware = dict(profile=args.profile, memory=args.memory, ram=args.ram,
+                    cpu_cores=args.cpu_cores, max_context=args.max_context)
+    narrow = dict(use_case=args.use_case, min_fit=args.min_fit,
+                  runtime=args.runtime, search=args.search, sort_by=args.sort,
+                  perfect=args.perfect, include_too_tight=args.all)
     try:
-        raw = runner.report(
-            use_case=args.use_case, perfect=args.perfect,
-            profile=args.profile, memory=args.memory, ram=args.ram,
-            cpu_cores=args.cpu_cores, max_context=args.max_context,
-            force_runtime=args.force_runtime,
-        )
+        if args.check:
+            # The verdict must see the *whole* catalog: a model that does not
+            # fit this host is exactly the row the view hides, and no filter
+            # the user typed for choosing a new model may erase it. So the
+            # fetch is unnarrowed and the table is cut here, after.
+            raw = runner.catalog(limit=None, **hardware)
+            view = raw.filtered(**narrow).top(args.limit)
+        else:
+            view = runner.report(limit=args.limit, **hardware, **narrow)
+            raw = view
     except LlmfitError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_LLMFIT
 
-    # The view is narrowed here, not in the runner: `--check` must still see
-    # the rows the view hides — a model too tight to run is exactly the one it
-    # needs to report.
-    view = raw.filtered(min_fit=args.min_fit, runtime=args.runtime,
-                        search=args.search, sort_by=args.sort,
-                        include_too_tight=args.all).top(args.limit)
-
-
     if args.json:
         payload = view.to_payload()
+        rc = 0
         if args.check:
-            payload["check"] = _check_payload(verdict_for(
-                _configured_model(args), raw))
+            verdict = verdict_for(_configured_model(args), raw)
+            payload["check"] = _check_payload(verdict)
+            # Mismo contrato de salida que en modo tabla: un script no tiene que
+            # cambiar de logica por pedir JSON.
+            rc = verdict.exit_code()
         print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
+        return rc
 
     print(view.render(title="=== delm fit ==="))
     return _fit_followup(args, view, raw)
@@ -253,7 +261,7 @@ def _configured_model(args: argparse.Namespace) -> str:
     return load_config(args.config or _default_config_path()).model
 
 
-def _check_payload(verdict) -> dict:
+def _check_payload(verdict: "ModelFitVerdict") -> dict:
     """``--check --json`` view of a :class:`ModelFitVerdict` (no secrets)."""
     return {
         "model": verdict.model,
@@ -271,7 +279,12 @@ def _check_payload(verdict) -> dict:
 
 
 def _fit_followup(args: argparse.Namespace, view, raw) -> int:
-    """`--check` and `--write-config`: the two committing steps."""
+    """`--check` and `--write-config`: the two committing steps.
+
+    Split out of :func:`_cmd_fit` so the JSON path can skip it entirely: in
+    ``--json`` mode the check is *data* in the payload, not prose after the
+    table.
+    """
     from delm.core.llmfit import local_config_yaml, verdict_for
 
     rc = 0
@@ -302,10 +315,11 @@ def _fit_followup(args: argparse.Namespace, view, raw) -> int:
             return 2
         top = view.models[0]
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            local_config_yaml(top, base_url=args.base_url,
-                              timeout_s=args.timeout),
-            encoding="utf-8")
+        # No se reusa `args.timeout` (que espera a llmfit) como timeout del
+        # cliente: son dos cosas distintas y el default del runtime local es
+        # mucho mayor — cargar un GGUF de 27B lleva minutos.
+        path.write_text(local_config_yaml(top, base_url=args.base_url),
+                        encoding="utf-8")
         print(f"escrito   : {path}  (model={top.name}, quant={top.quant_text()})")
     return rc
 
@@ -382,7 +396,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_fit.add_argument("-n", "--limit", type=int, default=10,
                        help="cuantas filas mostrar (default: 10)")
     p_fit.add_argument("--use-case", default=None,
-                       help="filtra por caso de uso (coding, reasoning, chat…)")
+                       choices=["general", "coding", "reasoning", "chat",
+                                "multimodal", "embedding"],
+                       help="filtra por caso de uso (categoría de llmfit)")
     p_fit.add_argument("--perfect", action="store_true",
                        help="solo los que caben perfecto")
     p_fit.add_argument("--min-fit", default=None,
@@ -393,11 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="incluye los modelos que NO caben (too_tight)")
     p_fit.add_argument("--runtime", default=None,
                        choices=["mlx", "llamacpp", "vllm", "bitnetcpp"],
-                       help="filtra la tabla por runtime")
-    p_fit.add_argument("--force-runtime", default=None,
-                       choices=["mlx", "llamacpp", "vllm", "bitnetcpp"],
-                       help="fuerza el runtime del ANALISIS (p.ej. pedirle "
-                            "llama.cpp en Apple Silicon en vez de MLX)")
+                       help="filtra la tabla por runtime (llama.cpp, vLLM…)")
     p_fit.add_argument("--search", default=None,
                        help="filtra por nombre o proveedor")
     p_fit.add_argument("--sort", default=None,

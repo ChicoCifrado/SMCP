@@ -46,6 +46,40 @@
       border-radius: 8px; background: var(--panel); color: var(--text); text-decoration: none;
     }
     .shortcuts a:hover { border-color: var(--accent); color: var(--accent); }
+    /* --- Modelo local (llmfit) --- */
+    .fit-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .fit-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+    .fit-controls select, .fit-controls input {
+      font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px;
+      border: 1px solid var(--line); background: var(--code-bg); color: var(--text);
+    }
+    .fit-verdict {
+      margin-top: 12px; padding: 12px 14px; border-radius: 10px;
+      border: 1px solid var(--line); background: var(--panel); font-size: 13px;
+    }
+    .fit-verdict.ok { border-color: var(--accent-soft); }
+    .fit-verdict.bad { border-color: #ff6b5b; }
+    .fit-verdict .vh { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .fit-verdict .vm { margin-top: 4px; font-size: 14px; }
+    .fit-verdict .vm.bad { color: #ff6b5b; }
+    .fit-verdict .vm.ok { color: var(--accent); }
+    .fit-verdict .vd { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
+    .fit-verdict .vs { margin-top: 6px; font-size: 12.5px; }
+    .fit-verdict .vs b { color: var(--accent); font-weight: 600; }
+    .fit-unavailable {
+      margin-top: 12px; padding: 12px 14px; border-radius: 10px;
+      border: 1px solid var(--line); background: var(--code-bg);
+      font-size: 12.5px; color: var(--muted); white-space: pre-wrap;
+    }
+    table.runs td.pick { text-align: right; white-space: nowrap; }
+    .pick-btn {
+      font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 7px;
+      border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer;
+    }
+    .pick-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .fit-level { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+    .fit-level.perfect, .fit-level.good { border-color: var(--accent-soft); color: var(--accent); }
+    .fit-level.too_tight { border-color: #ff6b5b; color: #ff6b5b; }
   </style>
 </head>
 <body>
@@ -143,6 +177,95 @@
       </section>
 
       <section>
+        <h2>Modelo local (llmfit)</h2>
+        <p class="sub" style="margin:6px 0 0;font-size:13px">
+          Qué modelos caben en <b>esta</b> máquina y si el que la config ya
+          apunta sirve aquí. Es la versión web de <code>delm fit</code> /
+          <code>delm fit --check</code>: mismo adaptador, mismos filtros.
+        </p>
+        <div class="live-grid">
+          <div class="live-card"><div class="num" id="fit-gpu" style="font-size:17px">—</div><div class="lbl">gpu</div></div>
+          <div class="live-card"><div class="num" id="fit-ram" style="font-size:17px">—</div><div class="lbl">ram</div></div>
+          <div class="live-card"><div class="num" id="fit-cpu" style="font-size:17px">—</div><div class="lbl">cpu</div></div>
+          <div class="live-card"><div class="num" id="fit-count" style="font-size:17px">—</div><div class="lbl">en catálogo</div></div>
+        </div>
+        <div class="fit-controls">
+          <label>caso de uso
+            <select id="fit-use-case">
+              <option value="">—</option>
+              <option value="coding">coding</option>
+              <option value="reasoning">reasoning</option>
+              <option value="chat">chat</option>
+              <option value="general">general</option>
+              <option value="multimodal">multimodal</option>
+              <option value="embedding">embedding</option>
+            </select>
+          </label>
+          <label>fit mínimo
+            <select id="fit-min-fit">
+              <option value="">oculta los que no caben</option>
+              <option value="perfect">perfect</option>
+              <option value="good">good</option>
+              <option value="marginal">marginal</option>
+              <option value="too_tight">too_tight</option>
+            </select>
+          </label>
+          <label>runtime
+            <select id="fit-runtime">
+              <option value="">—</option>
+              <option value="llamacpp">llama.cpp</option>
+              <option value="vllm">vLLM</option>
+              <option value="mlx">MLX</option>
+              <option value="bitnetcpp">bitnet.cpp</option>
+            </select>
+          </label>
+          <label>ordenar
+            <select id="fit-sort">
+              <option value="">score (llmfit)</option>
+              <option value="tps">tok/s</option>
+              <option value="params">params</option>
+              <option value="mem">memoria</option>
+              <option value="ctx">contexto</option>
+              <option value="name">nombre</option>
+            </select>
+          </label>
+          <label>filas
+            <input id="fit-limit" type="number" min="1" max="50" value="10" style="width:80px" />
+          </label>
+          <label>buscar
+            <input id="fit-search" type="text" placeholder="qwen, unsloth…" style="width:150px" />
+          </label>
+        </div>
+        <div class="live-actions">
+          <button class="live-btn primary" id="btn-fit" type="button">Calcular fit</button>
+          <button class="live-btn" id="btn-fit-check" type="button">Solo veredicto</button>
+          <span class="live-meta" id="fit-meta"></span>
+        </div>
+        <div class="fit-unavailable" id="fit-unavail" style="display:none"></div>
+        <div class="fit-verdict" id="fit-verdict" style="display:none" aria-live="polite">
+          <div class="vh">veredicto del modelo configurado</div>
+          <div class="vm" id="fit-verdict-model">—</div>
+          <div class="vd" id="fit-verdict-detail"></div>
+          <div class="vs" id="fit-verdict-suggest"></div>
+        </div>
+        <div class="tbl-wrap" id="fit-wrap" style="display:none">
+          <table class="runs" id="fit-table">
+            <thead>
+              <tr>
+                <th>modelo</th><th>params</th><th>quant</th><th>fit</th>
+                <th>mem</th><th>tok/s</th><th></th>
+              </tr>
+            </thead>
+            <tbody><tr><td colspan="7" style="color:var(--muted)">— sin datos —</td></tr></tbody>
+          </table>
+        </div>
+        <div class="shortcuts">
+          <a href="play.html">→ Lab (nuevo run)</a>
+          <a href="console.html">→ Consola 3D</a>
+        </div>
+      </section>
+
+      <section>
         <h2>Runs recientes</h2>
         <div class="tbl-wrap">
           <table class="runs" id="runs-table">
@@ -173,6 +296,7 @@
 
   <script src="assets/app.js"></script>
   <script src="assets/api.js"></script>
+  <script src="assets/fit.js"></script>
   <script src="assets/estado.js"></script>
 </body>
 </html>

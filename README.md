@@ -164,12 +164,14 @@ mismo parser** (`delm/cli.py`), así que no pueden divergir.
 delm --help                     # o: python -m delm --help
 delm version                    # versión + Python
 delm config-check               # resuelve la config de modelo (key oculta)
+delm fit                        # qué modelos caben en ESTA máquina (llmfit)
+delm fit --check                # ¿el modelo de la config cabe aquí? (2 si no)
 delm test                       # la suite; --slow para los tests lentos
 delm demo                       # demo principal (pipeline, sin API key)
 delm demo --list                # lista las demos
 ```
 
-Los cuatro subcomandos son `demo`, `test`, `config-check` y `version`.
+Los cinco subcomandos son `demo`, `test`, `config-check`, `fit` y `version`.
 
 `config-check` resuelve la config con la **misma** precedencia que
 `run_real_demo --dry-run` (entorno > YAML > default) y muestra la API key
@@ -194,6 +196,82 @@ Equivalentes por demo (siguen siendo válidos y son los que usa la web/API):
 | `delm demo rsi`         | `python -m delm.demo.run_rsi_demo`    |
 | `delm demo real`        | `python -m delm.demo.run_real_demo`   |
 | `delm test`             | `python -m pytest`                    |
+
+### Dimensionar el modelo local: `delm fit` ([llmfit](https://github.com/AlexsJones/llmfit))
+
+Ser **agnóstico al modelo** no es lo mismo que estar **dimensionado**. Antes de
+levantar un runtime local (MeshLLM, llama.cpp, vLLM, Ollama) hay que responder
+una pregunta que nada en el repo respondía: *¿qué modelo cabe en esta máquina y
+a qué velocidad?* Un Q2 de 27B va bien en una RTX 4060 Ti de 16 GB; un Q5 del
+mismo modelo, no. [`llmfit`](https://github.com/AlexsJones/llmfit) lee el host
+(RAM, núcleos, GPU/VRAM, backend) y ordena el catálogo por fit, velocidad,
+calidad y contexto. `delm fit` es la costura: `delm/core/llmfit.py` lo invoca y
+parsea su JSON, y la CLI lo convierte en tres vistas del mismo catálogo, de
+menor a mayor compromiso.
+
+```bash
+delm fit                                  # tabla: qué corre aquí (y a qué tok/s)
+delm fit -n 20 --use-case coding          # más filas, filtradas por caso de uso
+delm fit --all                            # incluye los que NO caben (too_tight)
+delm fit --sort tps --search qwen         # ordena y busca (en el lado de SMCP)
+delm fit --memory 24G --ram 64G           # simula otra máquina
+delm fit --profile ryzen-ai-max-plus-395  # un perfil de hardware de llmfit
+delm fit --json                           # para scripts y la API web
+
+delm fit --check                          # ¿cabe el modelo de la config? (2 si no)
+delm fit --check --json                   # el veredicto como dato, mismo exit code
+
+delm fit --write-config config/model_config.yaml            # persiste el top-1
+delm fit --write-config cfg.yaml --base-url http://127.0.0.1:9337/v1
+```
+
+Tres propiedades que hacen que esto sea integración y no un *wrapper*:
+
+- **llmfit es una herramienta externa opcional, nunca una dependencia.** Se
+  busca en `$DELM_LLMFIT_BIN`, en el `PATH` y, como último recurso, como
+  `python -m llmfit` (el `pip`/`uv` del mismo proyecto). Si no está, la CLI
+  explica cómo instalarlo y sale con `3` — nunca un traceback. Un
+  `$DELM_LLMFIT_BIN` explícito que no funciona es un error de configuración y
+  **no** cae al `PATH` en silencio.
+- **`--check` cierra el círculo con `delm/config.py`.** No pregunta "qué modelo
+  es bueno" sino "**el modelo que el pipeline ya tiene configurado, ¿cabe aquí?**".
+  Resuelve la config con la precedencia de siempre (entorno > YAML > default),
+  busca ese id en el catálogo y sale con `2` si no cabe, proponiendo los que sí.
+  Un id servido por un runtime local (`unsloth/Qwen3.8-27B-GGUF:UD-Q2_K_XL`)
+  se normaliza a su fila del catálogo; un id que no está en el catálogo se
+  informa como *desconocido* y **no** es un fallo — la config manda, llmfit
+  asesora. El veredicto se calcula sobre el catálogo **completo**, nunca sobre
+  la tabla filtrada: un modelo que no cabe es justo la fila que la vista
+  esconde, y ningún filtro pedido para elegir otro modelo puede borrarlo.
+- **`--write-config` es el paso que convierte el consejo en endpoint.** Escribe
+  el top-1 como `model_config.yaml` para un runtime local, con el `quant` que
+  eligió llmfit, el tamaño en disco frente al residente y la velocidad estimada
+  en comentarios. Es lo único que toca el disco, y **nunca** pisa un archivo
+  existente sin `--force`.
+
+**Por qué el binario solo recibe flags globales.** En llmfit 1.1.16 el
+vocabulario de filtros vive en `recommend` (`--use-case`, `--min-fit`,
+`--runtime`, `--force-runtime`) y **no** en `fit`: `llmfit fit --use-case coding`
+sale con `2` (*unexpected argument*). Pero `recommend` nunca devuelve filas
+`too_tight`, así que un modelo que no cabe volvería "desconocido" en vez de "no
+cabe" — y el veredicto es justo lo que `delm fit` viene a dar. El reparto es por
+eso **el binario trae, SMCP estrecha**: se llama a `fit` (catálogo completo) y
+los filtros se aplican sobre las filas ya parseadas. Además, llmfit tiene *dos*
+vocabularios para el mismo JSON — su CLI dice `fit_level: "Too Tight"` y su API
+REST `fit_level: "too_tight"`, igual con `llama.cpp`/`LlamaCpp` — y el adaptador
+los reconcilia en un solo sitio para que el resto del módulo solo vea códigos.
+
+Lo que **no** hace: no modifica la config por su cuenta, no descarga modelos, no
+sirve nada y no decide la arquitectura del mesh. `delm fit` es un asesor
+determinista con salida parseable; cambiar la config es una decisión explícita
+del operador.
+
+Cubierto por `tests/test_llmfit.py` (74 tests) con un ejecutable falso: la suite
+no necesita el binario, ni red, ni GPU. Contra el llmfit de verdad hay un test
+opt-in marcado `slow` que se salta si no está instalado. El payload falso habla
+el vocabulario real de llmfit 1.1.16 a propósito (`"Too Tight"`, `"CPU+GPU"`,
+`"llama.cpp"`), porque reconciliar las dos variantes de su JSON es justo lo que
+se rompe si solo se prueba contra códigos limpios.
 
 ### Instalar
 
@@ -305,7 +383,7 @@ Equivale a `python -m pytest` (los `addopts` por defecto son `-m 'not slow'`).
 `delm test --slow` añade `-m slow`, que **pisa** el `-m 'not slow'` de los
 addopts (pytest aplica el último `-m`).
 
-El suite está repartido en treinta y dos archivos, todos deterministas:
+El suite está repartido en treinta y cuatro archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -365,6 +443,18 @@ El suite está repartido en treinta y dos archivos, todos deterministas:
   el passthrough de flags, `--slow` pisando el `-m 'not slow'` de los addopts,
   el enmascarado de la key en `config-check`, y que `python -m delm` funciona
   como subprocess (el contrato público).
+- `test_llmfit.py` — la integración con llmfit: el parseo de sus filas y su
+  hardware, los filtros/orden/veredicto, el descubrimiento del binario
+  (`$DELM_LLMFIT_BIN` → `PATH` → `python -m llmfit`) y sus fallos (no instalado,
+  sale con error, no-JSON, timeout), y el subcomando `delm fit`: la tabla,
+  `--check` (incluido el caso en que el modelo no cabe y la tabla lo oculta),
+  `--write-config` sin pisar un archivo existente, y que la API key nunca se
+  imprime. Con un ejecutable falso, así que no necesita el binario ni GPU.
+- `test_api_fit.py` — la superficie web de `delm fit`: `/api/fit` (filtros
+  validados, tabla, hardware, y el veredicto juzgando el catálogo entero —la
+  fila `too_tight` que la tabla esconde—) y `/api/fit/apply` (escribe la config
+  con las notas de llmfit, conserva el `base_url` existente, nunca ecoa la key,
+  y funciona aunque llmfit no esté). El config se redirige a `tmp_path`.
 - `test_api_actions.py` / `test_api_config.py` / `test_api_demo.py` /
   `test_api_inspect.py` / `test_api_runs.py` — la API interactiva de
   `api_server.py` + `smcp_api.py`: las acciones de sesión (scan, taint, config,
@@ -389,9 +479,25 @@ python api_server.py         # http://127.0.0.1:8099
 - `/api/functions` — lista de funciones (demo, seguridad, taint, multi-host, tests).
 - `/api/run/<id>` — lanza la función (subprocess) y devuelve JSON.
 - `/api/status` — estado en vivo del filesystem: módulos core, archivos/`def test_`, demos, páginas web.
-- `/` — estático de `web/` (7 páginas: inicio, núcleo, seguridad, demos, arquitectura, **estado en vivo**, consola 3D).
+- `/api/fit` — qué modelos caben en **este** host (llmfit) + el veredicto
+  sobre el modelo de la config. Filtros: `limit`, `use_case`, `min_fit`,
+  `runtime`, `sort`, `search`, `include_too_tight`, y overrides de hardware
+  (`memory`, `ram`, `cpu_cores`, `max_context`). llmfit ausente **no** es un
+  error HTTP: responde `available: false` + `hint` para que la UI pueda pintar
+  la instalación.
+- `/api/fit/apply` — adopta un modelo de la tabla como config (el mismo
+  escritor que `PUT /api/config`, con el veredicto de llmfit en comentarios).
+- `/` — estático de `web/` (10 páginas: inicio, núcleo, seguridad, demos,
+  arquitectura, lab, contexto, ledger, **estado en vivo**, consola 3D).
 
-`web/estado.html` + `web/assets/estado.js` leen `/api/status` en vivo y permiten lanzar suite/demo/taint desde el navegador. `web/assets/app.js` guarda la última página en `localStorage` y la restaura al volver al home.
+`web/estado.html` + `web/assets/estado.js` leen `/api/status` en vivo y permiten
+lanzar suite/demo/taint desde el navegador. `web/assets/fit.js` añade la
+sección **Modelo local (llmfit)**: los filtros de `delm fit`, la tabla, el
+veredicto en rojo/verde/neutro y un botón *usar* por fila que llama a
+`/api/fit/apply` y refresca la config mediante el evento
+`smcp:config-changed` (los dos módulos de la página no se conocen entre sí).
+`web/assets/app.js` guarda la última página en `localStorage` y la restaura al
+volver al home.
 
 ### Usar un modelo real
 
@@ -459,7 +565,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **336 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **409 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -481,14 +587,27 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   (proponer/verificar/retener/sucesor) + 3 demo RSI (HCI 10.48→21.19) +
   19 métrica HCI (Benchmark/BenchFamily/HCIMeter/DeterministicScorer) + 19
   CLI: los subcomandos de `delm` (demo/test/config-check/version), el despacho
-  de demos, `--slow` y el enmascarado de la key + 35 API: las acciones de
+  de demos, `--slow` y el enmascarado de la key + 48 llmfit: el adaptador
+  (parseo de filas, filtros, orden, veredicto, runner con descubrimiento y
+  errores) y el subcomando `delm fit` (tabla, `--check` con su exit code,
+  `--write-config` sin pisar, y la ausencia de llmfit como exit `3`) + 19
+  `delm fit` en la API (contrato de `/api/fit` y `/api/fit/apply`: validación
+  de filtros, veredicto sobre el catálogo entero, cero secretos, llmfit
+  ausente como estado normal y el escritor de config compartido) + 35 API: las
+  acciones de
   sesión (scan, taint, config, export del ledger, SSE, meshllm) y las demos
   in-proceso + 20 `smcp-serve` (SMCP como agente ACP: el handshake, el
   ciclo de vida de sesión, el prompt corriendo el pipeline real, cancelación,
   y un smoke JSON-RPC por stdio) + 4
-  demos que pasan. 6 tests `slow` se excluyen del default (`-m 'not slow'`).
+  demos que pasan. 7 tests `slow` se excluyen del default (`-m 'not slow'`).
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
+- **Modelo local dimensionado por hardware** — `delm fit` (`delm/core/llmfit.py`)
+  responde qué modelos caben en el host, verifica contra la config que el
+  pipeline realmente usa (`--check`, sale `2` si no cabe) y puede persistir el
+  top-1 como `model_config.yaml`. llmfit es una dependencia **externa
+  opcional**: el install base no cambia.
+
 - **Config de modelo real de serie** — `delm/config.py` resuelve la config
   (entorno > YAML > default), la API key solo por entorno, y
   `run_real_demo` corre el pipeline contra un endpoint real; la wiring está
@@ -566,7 +685,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 ```
 delm/
   config.py           ModelConfig + load_config + build_client (config de modelo)
-  cli.py              la CLI unificada (demo/test/config-check/version)
+  cli.py              la CLI unificada (demo/test/config-check/fit/version)
   __main__.py         `python -m delm` == `delm` (mismo parser)
   serve.py            smcp-serve: SMCP como agente ACP por stdio (vía A)
   api_server.py       FastAPI :8099 — /api/status, /api/run, estático web/
@@ -601,6 +720,7 @@ delm/
     harness_client.py  HarnessLLMClient                  (DeepSeek Harness, opt-in)
     hci.py             Headroom-Closed Index             (métrica de mejora)
     rsi.py             RSILoop + Successor               (loop RSI L1)
+    llmfit.py          LlmfitRunner + FitReport/veredicto (dimensionar el modelo local)
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
@@ -608,11 +728,17 @@ delm/
     run_taint_demo.py      demo Capa 5
     run_multihost_demo.py  demo multi-host (QUIC / Nostr)
     run_rsi_demo.py        demo RSI L1 (mide HCI)
-  web/
-    index.html nucleo.html seguridad.html demos.html
-    arquitectura.html estado.html console.html
-    assets/  app.js estado.js style.css OpenCode.otf
-  tests/   (32 archivos — ver lista arriba)
+  web/                    10 páginas (nav común en todas)
+    index.html nucleo.html seguridad.html demos.html arquitectura.html
+    play.html context.html ledger.html estado.html console.html
+    assets/
+      app.js               tema dark/light + recordar última página
+      api.js               fetch/JSON/SSE + pip de salud (compartido)
+      estado.js            estado en vivo: señales, config, runs, acciones
+      fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
+      context.js ledger.js play.js demos.js seguridad.js   una por página
+      style.css            design system · OpenCode.otf
+  tests/   (34 archivos — ver lista arriba)
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa

@@ -59,25 +59,33 @@ SYSTEM = {
     "backend": "CUDA",
 }
 
+#: The fake payload speaks the *real* llmfit 1.1.16 CLI vocabulary on purpose:
+#: human strings under `fit_level`/`run_mode`/`runtime` ("Too Tight" with a
+#: space, "CPU+GPU", "llama.cpp", "vLLM") and the use case under `category`.
+#: Parsing those is exactly what breaks if the adapter is only ever tested
+#: against tidy machine codes.
 MODELS = [
     {"name": "Qwen/Qwen2.5-Coder-7B-Instruct", "provider": "Qwen",
-     "params_b": 7.0, "use_case": "Coding", "fit_level": "perfect",
-     "fit_label": "Perfect", "run_mode": "gpu", "runtime": "llamacpp",
+     "params_b": 7.0, "use_case": "Code generation and completion",
+     "category": "Coding", "fit_level": "Perfect",
+     "fit_label": "Perfect", "run_mode": "GPU", "runtime": "llama.cpp",
      "best_quant": "Q5_K_M", "score": 86.5, "estimated_tps": 42.5,
      "memory_required_gb": 5.8, "memory_available_gb": 15.1,
      "disk_size_gb": 5.1, "effective_context_length": 8192,
      "estimate_confidence": "estimated", "installed": True,
      "ollama_name": "qwen2.5-coder:7b-instruct"},
     {"name": "unsloth/Qwen3.8-27B-GGUF", "provider": "Unsloth",
-     "params_b": 27.0, "use_case": "General", "fit_level": "marginal",
-     "fit_label": "Marginal", "run_mode": "cpu_offload", "runtime": "llamacpp",
+     "params_b": 27.0, "use_case": "General purpose",
+     "category": "General", "fit_level": "Marginal",
+     "fit_label": "Marginal", "run_mode": "CPU+GPU", "runtime": "llama.cpp",
      "best_quant": "UD-Q2_K_XL", "score": 71.0, "estimated_tps": 11.0,
      "memory_required_gb": 13.9, "memory_available_gb": 15.1,
      "disk_size_gb": 12.4, "effective_context_length": 4096,
      "estimate_confidence": "calibrated", "installed": False},
     {"name": "meta-llama/Llama-4-405B-Instruct", "provider": "Meta",
-     "params_b": 405.0, "use_case": "General", "fit_level": "too_tight",
-     "fit_label": "Too Tight", "run_mode": "cpu_only", "runtime": "llamacpp",
+     "params_b": 405.0, "use_case": "General purpose",
+     "category": "General", "fit_level": "Too Tight",
+     "fit_label": "Too Tight", "run_mode": "CPU", "runtime": "llama.cpp",
      "best_quant": "IQ1_S", "score": 40.0, "estimated_tps": 0.4,
      "memory_required_gb": 180.0, "memory_available_gb": 62.2,
      "disk_size_gb": 96.0, "effective_context_length": 2048,
@@ -148,6 +156,38 @@ def test_fit_row_maps_and_flags_runnable():
     assert tight.tps_text() == "0.4 tok/s"
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("Perfect", "perfect"), ("Too Tight", "too_tight"), ("too_tight", "too_tight"),
+    ("Marginal", "marginal"), ("Good", "good"), ("TOO TIGHT", "too_tight"),
+    (None, ""), ("algo-nuevo", "algo-nuevo"),
+])
+def test_fit_level_is_normalized_to_a_machine_code(raw, expected):
+    """El JSON de la CLI de llmfit dice "Too Tight"; su API REST, "too_tight".
+
+    Sin reconciliar los dos vocabularios, `--min-fit` y el exit code de
+    `--check` fallarian en silencio contra el binario real.
+    """
+    assert FitRow.from_payload({"name": "m", "fit_level": raw}).fit_level == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("llama.cpp", "llamacpp"), ("LlamaCpp", "llamacpp"), ("vLLM", "vllm"),
+    ("bitnet.cpp", "bitnetcpp"), ("MLX", "mlx"), ("llamacpp", "llamacpp"),
+    (None, ""),
+])
+def test_runtime_is_normalized_to_a_machine_code(raw, expected):
+    assert FitRow.from_payload({"name": "m", "runtime": raw}).runtime == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("GPU", "gpu"), ("CPU", "cpu"), ("CPU+GPU", "cpu+gpu"), ("MoE", "moe"),
+    ("cpu_offload", "cpu+gpu"), ("cpu_only", "cpu"),
+])
+def test_run_mode_is_normalized(raw, expected):
+    assert FitRow.from_payload({"name": "m", "run_mode": raw}).run_mode == expected
+
+
+
 def test_fit_row_missing_fields_render_as_question_mark():
     row = FitRow.from_payload({"name": "m"})
     assert row.params_text() == "?" and row.tps_text() == "?"
@@ -155,16 +195,39 @@ def test_fit_row_missing_fields_render_as_question_mark():
     assert row.render().startswith("m")
 
 
-def test_fit_report_render_is_deterministic_and_hides_nothing_by_default():
+def test_fit_report_render_is_deterministic_and_faithful():
+    """`render()` pinta lo que se le da: quien estrecha es `filtered()`.
+
+    Un render que ocultara filas por su cuenta haría imposible depurar por qué
+    un modelo no aparece; el estrechamiento es explícito (y el CLI lo hace).
+    """
     report = FitReport.from_payload({"system": SYSTEM, "models": MODELS,
                                      "total_models": 3})
     out = report.render()
     assert out == report.render()                     # sin aleatoriedad
     assert "Qwen2.5-Coder-7B-Instruct" in out
-    assert "Too Tight" not in out                     # la vista oculta lo que no cabe
+    assert "Too Tight" in out                         # fiel a lo recibido
     assert "fit OK" in out
+    # ... y el estrechamiento por defecto es lo que quita lo que no cabe.
+    assert "Too Tight" not in report.filtered().render()
     assert report.filtered(include_too_tight=True).render().count("\n") > \
-        report.render().count("\n")
+        report.filtered().render().count("\n")
+
+
+def test_render_reports_an_empty_catalog_instead_of_a_bare_table():
+    out = FitReport(system=SystemProfile.from_payload(SYSTEM)).render()
+    assert "sin filas" in out
+
+
+def test_render_singularizes_and_never_claims_missing_rows():
+    """Con filtros de lado SMCP, el total es el del catálogo: hay que decirlo."""
+    report = FitReport.from_payload({"models": MODELS, "total_models": 9872})
+    one = report.top(1).render()
+    assert "1 fila (catálogo: 9872 modelos)" in one
+    assert "top 1 de 9872" not in one          # sería una lectura falsa
+    assert "2 filas" in report.top(2).render()
+
+
 
 
 # -------------------------------------------------------------------- filtros
@@ -180,7 +243,25 @@ def test_filtered_honours_min_fit_runtime_search():
     assert len(report.filtered(runtime="vllm")) == 0
     assert len(report.filtered(runtime="llamacpp", include_too_tight=True)) == 3
     assert len(report.filtered(search="qwen")) == 2
-    assert len(report.filtered(search="meta")) == 1
+    # Por proveedor, y buscando solo entre lo que cabe: el 405B es de Meta pero
+    # no entra ni con --all.
+    assert len(report.filtered(search="meta", include_too_tight=True)) == 1
+    assert len(report.filtered(search="meta")) == 0
+
+
+def test_filtered_matches_the_use_case_against_category_and_description():
+    """`category` es el enum de llmfit; `use_case`, texto libre. Se buscan los dos."""
+    report = FitReport.from_payload({"models": MODELS})
+    assert [r.name for r in report.filtered(use_case="coding")] == \
+        [MODELS[0]["name"]]
+    assert len(report.filtered(use_case="General")) == 1          # el marginal
+    assert len(report.filtered(use_case="General", include_too_tight=True)) == 2
+
+    # Solo aparece en la descripción libre, no en la categoría.
+    assert len(report.filtered(use_case="code generation")) == 1
+    assert len(report.filtered(use_case="razonamiento-inexistente")) == 0
+
+
 
 
 def test_filtered_sorts():
@@ -206,8 +287,19 @@ def test_verdict_says_fits_for_a_runnable_model():
     v = verdict_for("Qwen/Qwen2.5-Coder-7B-Instruct", report)
     assert isinstance(v, ModelFitVerdict)
     assert v.matched and v.runnable and v.exit_code() == 0
-    assert "perfect" not in v.verdict_text().lower()  # usa el label humano
-    assert "Perfect" in v.verdict_text()
+    # El label humano, no el código de máquina.
+    assert v.verdict_text().endswith(": Perfect")
+    assert v.best_quant == "Q5_K_M" and v.estimated_tps == 42.5
+    assert v.suggestions == ()          # cabe: no hay nada que sugerir
+
+
+def test_verdict_falls_back_to_the_machine_code_when_there_is_no_label():
+    """`llmfit fit --json` pone el código bajo la misma clave: es normal."""
+    row = dict(MODELS[0])
+    row.pop("fit_label")
+    v = verdict_for(row["name"], FitReport.from_payload({"models": [row]}))
+    assert v.verdict_text().endswith(": perfect")
+
 
 
 def test_verdict_flags_a_model_that_does_not_fit_and_suggests():
@@ -219,13 +311,31 @@ def test_verdict_flags_a_model_that_does_not_fit_and_suggests():
     assert v.suggestions[0] == MODELS[0]["name"]
 
 
-def test_verdict_unknown_model_is_not_a_failure():
-    """Un id de modelo local no suele estar en el catalogo: se informa, no falla."""
+def test_verdict_resolves_a_served_local_id_to_its_catalog_row():
+    """El id que sirve un runtime local no es el nombre del catalogo.
+
+    `unsloth/Qwen3.8-27B-GGUF:UD-Q2_K_XL` (lo que un llama.cpp/MeshLLM expone)
+    se normaliza al `unsloth/Qwen3.8-27B-GGUF` del catalogo: sin eso, el
+    `--check` de una config local real no encontraria nunca su modelo.
+    """
     report = FitReport.from_payload({"models": MODELS})
-    v = verdict_for("unsloth/Qwen3.8-27B-GGUF:UD-Q2_K_XL-servido-local", report)
+    v = verdict_for("unsloth/Qwen3.8-27B-GGUF:UD-Q2_K_XL", report)
+    assert v.matched and v.row_name == "unsloth/Qwen3.8-27B-GGUF"
+    assert v.fit_level == "marginal" and v.runnable
+
+
+def test_verdict_unknown_model_is_not_a_failure():
+    """Un id que no esta en el catalogo se informa, no falla.
+
+    La config manda y llmfit asesora: un modelo que no este en su catalogo no es
+    motivo para bloquear un pipeline.
+    """
+    report = FitReport.from_payload({"models": MODELS})
+    v = verdict_for("mi-org/mi-modelo-privado-v3", report)
     assert not v.matched
     assert v.exit_code() == 0
     assert "no esta en el catalogo" in v.verdict_text()
+
 
 
 def test_verdict_of_empty_model_is_unknown():
@@ -300,34 +410,55 @@ def test_run_json_times_out(tmp_path):
     assert "tardo mas de" in str(exc.value)
 
 
-def test_report_orders_global_flags_before_the_subcommand(fake_llmfit,
-                                                         argv_of):
-    LlmfitRunner(fake_llmfit).report(limit=5, use_case="coding", perfect=True,
-                                     profile="ryzen-ai-max-plus-395",
-                                     memory="24G", ram="64G", cpu_cores=8,
-                                     max_context=8192,
-                                     force_runtime="llamacpp")
+def test_catalog_orders_global_flags_before_the_subcommand(fake_llmfit, argv_of):
+    LlmfitRunner(fake_llmfit).catalog(limit=5, profile="ryzen-ai-max-plus-395",
+                                      memory="24G", ram="64G", cpu_cores=8,
+                                      max_context=8192)
     assert _argv(argv_of) == [
-        "--profile", "ryzen-ai-max-plus-395",   # bloque global
+        "--profile", "ryzen-ai-max-plus-395",   # bloque global, ANTES del sub
         "--memory", "24G",
         "--ram", "64G",
         "--cpu-cores", "8",
         "--max-context", "8192",
         "fit",                                   # subcomando
-        "-n", "5",                               # bloque de la orden
-        "--use-case", "coding",
-        "--perfect",
-        "--force-runtime", "llamacpp",
+        "-n", "5",                               # flags del subcomando
         "--json",
     ]
 
 
-def test_report_passes_no_documented_flag_it_does_not_support(fake_llmfit,
-                                                               argv_of):
-    """`--min-fit`/`--sort` son de la API REST: no se le pasan al binario."""
-    report = LlmfitRunner(fake_llmfit).report(min_fit=None)
+def test_catalog_passes_no_filter_flag_to_the_binary(fake_llmfit, argv_of):
+    """El binario solo recibe hardware global + `-n`; los filtros son nuestros.
+
+    En llmfit 1.1.16 `llmfit fit --use-case|--min-fit|--runtime|--search`
+    salen con 2 (*unexpected argument*): viven en `recommend`, que a su vez no
+    devuelve filas `too_tight`. Por eso el reparto es fetch / narrow.
+    """
+    LlmfitRunner(fake_llmfit).catalog()
     assert _argv(argv_of) == ["fit", "--json"]
-    assert report.total_models == len(MODELS)   # catalogo completo, sin corte
+
+
+def test_report_only_pushes_the_limit_down_for_a_pure_top_n(fake_llmfit,
+                                                             argv_of):
+    """Pedir N filas a llmfit y filtrar después devuelve menos de N: no se hace."""
+    LlmfitRunner(fake_llmfit).report(limit=5, include_too_tight=True)
+    assert _argv(argv_of) == ["fit", "-n", "5", "--json"]
+
+    LlmfitRunner(fake_llmfit).report(limit=5, use_case="coding")
+    assert _argv(argv_of) == ["fit", "--json"]       # sin -n: filtramos nosotros
+
+
+def test_report_narrows_client_side(fake_llmfit):
+    """`report()` es la vista: por defecto fuera lo que no cabe."""
+    runner = LlmfitRunner(fake_llmfit)
+    assert [r.fit_level for r in runner.report(limit=9)] == ["perfect",
+                                                              "marginal"]
+    assert len(runner.report(limit=9, include_too_tight=True)) == 3
+    assert len(runner.report(limit=9, perfect=True)) == 1
+    assert len(runner.report(limit=9, use_case="coding")) == 1
+    assert len(runner.report(limit=9, min_fit="good")) == 1
+    assert runner.report(limit=1).models[0].name == MODELS[0]["name"]
+
+
 
 
 def test_system_command(fake_llmfit, argv_of):
@@ -341,8 +472,9 @@ def test_plan_command(fake_llmfit, argv_of):
     LlmfitRunner(fake_llmfit).plan("Qwen/Qwen3-4B-MLX-4bit", context=8192,
                                    quant="mlx-4bit", target_tps=25)
     assert _argv(argv_of) == ["plan", "Qwen/Qwen3-4B-MLX-4bit",
-                                   "--context", "8192", "--quant", "mlx-4bit",
-                                   "--target-tps", "25.0", "--json"]
+                              "--context", "8192", "--quant", "mlx-4bit",
+                              "--target-tps", "25", "--json"]
+
 
 
 # -------------------------------------------------------------------- la CLI
@@ -408,7 +540,9 @@ def test_cli_fit_check_sees_rows_the_table_hides(fake_llmfit, capsys,
     payload = json.loads(capsys.readouterr().out)
     assert payload["check"]["matched"] is True
     assert payload["check"]["fit_level"] == "too_tight"
-    assert payload["check"]["suggestions"] == [MODELS[0]["name"]]
+    assert payload["check"]["suggestions"] == [MODELS[0]["name"],
+                                               MODELS[1]["name"]]
+
 
 
 def test_cli_fit_check_unknown_model_is_not_a_failure(fake_llmfit, capsys,
@@ -490,10 +624,14 @@ def test_cli_fit_missing_llmfit_is_actionable_not_a_traceback(monkeypatch,
     assert "Traceback" not in err
 
 
-def test_cli_fit_reports_a_failing_llmfit(fake_llmfit, capsys):
-    assert main(["fit", "--llmfit-bin", fake_llmfit, "--memory", "999999G",
-                 "--boom"]) == EXIT_LLMFIT
-    assert "hardware detection failed" in capsys.readouterr().err
+def test_cli_fit_reports_a_failing_llmfit(fake_llmfit, capsys, monkeypatch):
+    """Un llmfit que sale con error se reporta como tal (exit 3), sin traceback."""
+    monkeypatch.setenv("FAKE_LLMFIT_BOOM", "1")
+    assert main(["fit", "--llmfit-bin", fake_llmfit]) == EXIT_LLMFIT
+    err = capsys.readouterr().err
+    assert "llmfit salio con 3" in err
+    assert "hardware detection failed" in err
+
 
 
 def test_cli_fit_is_in_the_help_and_the_examples():
@@ -519,11 +657,26 @@ def test_local_config_yaml_shape():
     assert "ollama pull qwen2.5-coder:7b-instruct" in text
     # Sin secretos: la key local es un placeholder, no un token real.
     assert 'api_key: "dummy"' in text
+    # Timeout propio del cliente (300 s), no el que espera a llmfit.
+    assert "timeout_s: 300.0" in text
+    # Y el comentario del quant distingue disco de memoria residente: son
+    # cifras distintas y confundirlas haría creer que falta VRAM.
+    assert "Q5_K_M" in text and "5.1G en disco" in text
+    assert "5.8G resident con 8192 tokens" in text
+    assert "42.5 tok/s" in text
+
+
+def test_local_config_yaml_timeout_is_overridable():
+    text = local_config_yaml(FitRow(name="x"), base_url="http://h/v1",
+                             timeout_s=90.0)
+    assert "timeout_s: 90.0" in text
 
 
 def test_local_config_yaml_survives_a_bare_row():
     text = local_config_yaml(FitRow(name="x"), base_url="http://h/v1")
     assert 'model: "x"' in text
+    assert "# quant" not in text               # sin quant, no se inventa
+
 
 
 # ------------------------------------------------------------------ opt-in

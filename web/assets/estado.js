@@ -260,6 +260,12 @@
     refreshConfig();
     refreshRuns();
     startLive();
+    // fit.js (u otro módulo) puede cambiar la config desde otra sección de la
+    // misma página: el contrato es el evento, no una referencia cruzada.
+    window.addEventListener("smcp:config-changed", function () {
+      refreshConfig();
+      refreshStatus();
+    });
     $("btn-status").addEventListener("click", function () {
       refreshStatus();
       refreshConfig();

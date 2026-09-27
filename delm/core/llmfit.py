@@ -81,8 +81,55 @@ INSTALL_HINT = (
 _FIT_ORDER = ("too_tight", "marginal", "good", "perfect")
 
 #: Levels where the model is actually usable locally. ``marginal`` counts: it
-#: runs, it is just tight (llmfit's own "runs with swaps/partial offload").
+#: runs, it is just tight (llmfit's own "runs with partial offload").
 _RUNNABLE = ("perfect", "good", "marginal")
+
+#: llmfit's CLI JSON speaks *human* strings where its REST API speaks machine
+#: codes — and it overloads the same key for both, so a real payload can say
+#: ``fit_level: "Too Tight"`` and a REST payload ``fit_level: "too_tight"``.
+#: These tables are the single place that reconciles the two vocabularies, so
+#: the rest of the module only ever sees snake_case machine codes. Only forms
+#: actually observed in 1.1.16 are listed; anything else falls through
+#: unchanged (and is simply not a level this repo ranks).
+_FIT_ALIASES = {
+    "too tight": "too_tight", "too_tight": "too_tight",
+    "marginal": "marginal", "good": "good", "perfect": "perfect",
+}
+_RUNTIME_ALIASES = {
+    "llama.cpp": "llamacpp", "llamacpp": "llamacpp",
+    "bitnet.cpp": "bitnetcpp", "bitnetcpp": "bitnetcpp",
+    "vllm": "vllm", "mlx": "mlx",
+}
+
+
+
+def _norm_fit(value: Any) -> str:
+    """Fit level as a machine code (``Too Tight`` / ``too_tight`` -> ``too_tight``)."""
+    key = _s(value).strip().lower().replace("_", " ")
+    return _FIT_ALIASES.get(key, key.replace(" ", "_"))
+
+
+def _norm_runtime(value: Any) -> str:
+    """Runtime as a machine code (``llama.cpp`` / ``LlamaCpp`` -> ``llamacpp``)."""
+    key = _s(value).strip().lower().replace("_", "").replace("-", "")
+    return _RUNTIME_ALIASES.get(key, key)
+
+
+#: llmfit reports the execution path as a human string: ``GPU``, ``CPU``,
+#: ``CPU+GPU``, ``MoE`` (and the REST API as ``cpu_offload``/``cpu_only``).
+_RUN_MODE_ALIASES = {
+    "gpu": "gpu", "cpu+gpu": "cpu+gpu", "gpu+cpu": "cpu+gpu",
+    "offload": "cpu+gpu", "cpu_offload": "cpu+gpu",
+    "cpu": "cpu", "cpu_only": "cpu", "cpu-only": "cpu",
+    "moe": "moe", "mcp": "moe",
+}
+
+
+def _norm_run(value: Any) -> str:
+    key = _s(value).strip().lower().replace(" ", "_")
+    return _RUN_MODE_ALIASES.get(key, key.replace("+", "+"))
+
+
 
 
 # --------------------------------------------------------------------- errors
@@ -196,10 +243,11 @@ class FitRow:
     provider: str = ""
     params_b: float | None = None
     use_case: str = ""
+    category: str = ""
     fit_level: str = ""            # machine code: perfect|good|marginal|too_tight
     fit_label: str = ""            # human string when llmfit ships one
-    run_mode: str = ""             # gpu|cpu_offload|cpu_only
-    runtime: str = ""              # llamacpp|vllm|mlx|bitnetcpp
+    run_mode: str = ""             # machine code: gpu|cpu+gpu|cpu|moe
+    runtime: str = ""              # machine code: llamacpp|vllm|mlx|bitnetcpp
     best_quant: str = ""
     score: float | None = None
     estimated_tps: float | None = None
@@ -214,7 +262,12 @@ class FitRow:
 
     @classmethod
     def from_payload(cls, row: Any) -> "FitRow":
-        """Parse one ``models[]`` entry; never raises on a partial row."""
+        """Parse one ``models[]`` entry; never raises on a partial row.
+
+        Tolerates both of llmfit's vocabularies (CLI human strings and REST
+        machine codes) for ``fit_level``, ``run_mode`` and ``runtime`` — see
+        :func:`_norm_fit` / :func:`_norm_runtime`.
+        """
         if not isinstance(row, dict):
             return cls(name="")
         return cls(
@@ -222,10 +275,11 @@ class FitRow:
             provider=_s(row.get("provider")),
             params_b=_f(row.get("params_b")),
             use_case=_s(row.get("use_case")),
-            fit_level=_s(row.get("fit_level")).lower(),
+            category=_s(row.get("category")),
+            fit_level=_norm_fit(row.get("fit_level")),
             fit_label=_s(row.get("fit_label")),
-            run_mode=_s(row.get("run_mode")).lower(),
-            runtime=_s(row.get("runtime")).lower(),
+            run_mode=_norm_run(row.get("run_mode")),
+            runtime=_norm_runtime(row.get("runtime")),
             best_quant=_s(row.get("best_quant")),
             score=_f(row.get("score")),
             estimated_tps=_f(row.get("estimated_tps")),
@@ -238,6 +292,7 @@ class FitRow:
             ollama_name=_s(row.get("ollama_name")),
             verify_command=_s(row.get("verify_command")),
         )
+
 
     @property
     def runnable(self) -> bool:
@@ -319,32 +374,45 @@ class FitReport:
                          total_models=self.total_models)
 
     def filtered(self, *, min_fit: str | None = None, runtime: str | None = None,
-                 search: str | None = None, sort_by: str | None = None,
+                 use_case: str | None = None, search: str | None = None,
+                 sort_by: str | None = None, perfect: bool = False,
                  include_too_tight: bool = False) -> "FitReport":
         """Narrow the rows client-side.
 
-        Why filter here and not pass ``--min-fit``/``--runtime``/``--sort`` down
-        to the binary: those knobs are documented for llmfit's REST API, and a
-        flag the installed build does not know is a hard ``exit 2``. Filtering
-        the parsed rows is deterministic, version-proof, and keeps the report
-        faithful — the caller decides what a "too tight" row is worth.
+        Why filter here and not pass ``--min-fit``/``--runtime``/``--use-case``
+        down to the binary: in llmfit 1.1.16 those knobs live on ``recommend``,
+        **not** on ``fit`` (``llmfit fit --use-case coding`` exits 2 with
+        "unexpected argument"), and SMCP reads the catalog through ``fit``
+        because ``recommend`` never returns ``too_tight`` rows — which is
+        exactly what ``--check`` needs to see. Filtering parsed rows is
+        deterministic, immune to flag churn between llmfit versions, and lets
+        one fetch answer both the table and the verdict.
 
-        ``sort_by`` accepts the same vocabulary as the API (``tps``, ``params``,
-        ``mem``, ``ctx``, ``score``, ``name``); ``score`` is a no-op because
-        llmfit already returns rows best-first.
+        ``use_case`` matches llmfit's ``category`` (``Coding``, ``Reasoning``,
+        …) or the free-text ``use_case`` description, case-insensitively.
+        ``sort_by`` accepts ``tps``, ``params``, ``mem``, ``ctx``, ``score`` and
+        ``name``; ``score`` is a no-op because llmfit already returns rows
+        best-first. ``perfect`` is shorthand for ``min_fit="perfect"``.
         """
-        rows = list(self.models)
-        floor = _FIT_ORDER.index(min_fit) if min_fit in _FIT_ORDER else 0
-        keep = []
-        for row in rows:
+        min_fit = "perfect" if perfect else min_fit
+        floor = _FIT_ORDER.index(_norm_fit(min_fit)) if min_fit else 0
+
+        want_runtime = _norm_runtime(runtime) if runtime else ""
+        want_use_case = use_case.strip().lower() if use_case else ""
+        needle = search.strip().lower() if search else ""
+
+        keep: list[FitRow] = []
+        for row in self.models:
             if not include_too_tight and row.fit_level == "too_tight":
                 continue
-            if min_fit in _FIT_ORDER and _FIT_ORDER.index(row.fit_level) < floor:
+            if min_fit and _FIT_ORDER.index(row.fit_level or "too_tight") < floor:
                 continue
-            if runtime and row.runtime and row.runtime != runtime.lower():
+            if want_runtime and row.runtime and row.runtime != want_runtime:
                 continue
-            if search and search.lower() not in row.name.lower() and \
-                    search.lower() not in row.provider.lower():
+            if want_use_case and not _matches_use_case(row, want_use_case):
+                continue
+            if needle and needle not in row.name.lower() and \
+                    needle not in row.provider.lower():
                 continue
             keep.append(row)
 
@@ -362,6 +430,7 @@ class FitReport:
         return FitReport(system=self.system, models=tuple(keep),
                          total_models=self.total_models)
 
+
     def by_name(self, needle: str) -> FitRow | None:
         """The row for *needle* (exact, then normalized) — see :func:`_match_row`."""
         return _match_row(needle, self.models)
@@ -373,9 +442,14 @@ class FitReport:
     def render(self, limit: int | None = None,
                title: str = "=== delm fit ===") -> str:
         """Deterministic text report — the CLI's default output."""
+        # "N filas de M en el catálogo" y no "top N de M": con filtros de lado
+        # SMCP, M es el tamaño del catálogo, no el del subconjunto mostrado, y
+        # decirlo de otra forma haría creer que faltan filas.
         out = [title, "--- hardware (detected by llmfit) ---", self.system.render(),
-               f"--- top {len(self.top(limit))} de {self.total_models} modelos ---",
+               f"--- {_n_rows(len(self.top(limit)))} "
+               f"(catálogo: {self.total_models} modelos) ---",
                self.header()]
+
         if not self.models:
             out.append("(sin filas: ningun modelo cabe con esos filtros)")
         for row in self.top(limit):
@@ -427,6 +501,12 @@ def _gb(value: float | None) -> str:
     if value is None:
         return "?"
     return f"{value:.1f}G"
+
+
+def _n_rows(n: int) -> str:
+    """``1 fila`` / ``3 filas`` — el spanish de una línea no worth un bug."""
+    return "1 fila" if n == 1 else f"{n} filas"
+
 
 
 # -------------------------------------------------------------------- verdict
@@ -485,6 +565,19 @@ def _normalize(name: str) -> str:
     for junk in ("-gguf", ".gguf", "-unsloth"):
         n = n.replace(junk, "")
     return n.strip("-_ ")
+
+
+def _matches_use_case(row: FitRow, needle: str) -> bool:
+    """Does *row* belong to the use case *needle*?
+
+    llmfit carries two fields for this: ``category`` (the enum the CLI filters
+    on: Coding/Reasoning/Chat/General/Multimodal/Embedding) and ``use_case``
+    (a free-text description like "Code generation and completion"). Matching
+    both means ``--use-case coding`` works for the enum and for a description
+    that only mentions the word.
+    """
+    return (needle in row.category.lower()
+            or needle in row.use_case.lower())
 
 
 def _match_row(model: str, rows: Sequence[FitRow]) -> FitRow | None:
@@ -550,6 +643,11 @@ def local_config_yaml(row: FitRow, *, base_url: str,
     api_key stays a harmless placeholder because local servers do not
     authenticate, and nothing here is ever written without ``--write-config``
     from the CLI.
+
+    ``timeout_s`` defaults to 300 s, not something derived from the caller: a
+    local runtime that has to load a 27B GGUF takes minutes on first call, and
+    the client's HTTP timeout is a different thing from how long we wait on
+    llmfit.
     """
     lines = [
         "# Generated by `delm fit --write-config <path>`.",
@@ -564,11 +662,21 @@ def local_config_yaml(row: FitRow, *, base_url: str,
         f"timeout_s: {timeout_s}",
     ]
     if row.best_quant:
-        lines.append(f"# quant elegido por llmfit: {row.best_quant} "
-                     f"({row.disk_size_gb or 0:.1f}G en disco)")
+        detail = f"quant elegido por llmfit: {row.best_quant}"
+        if row.disk_size_gb is not None:
+            detail += f" ({row.disk_size_gb:.1f}G en disco"
+            if row.memory_required_gb is not None:
+                detail += (f", {row.memory_required_gb:.1f}G resident con "
+                           f"{row.effective_context_length or '?'} tokens")
+            detail += ")"
+        lines.append(f"# {detail}")
     if row.ollama_name:
         lines.append(f"# ollama: ollama pull {row.ollama_name}")
+    if row.estimated_tps:
+        lines.append(f"# velocidad estimada: {row.estimated_tps:.1f} tok/s "
+                     f"({row.estimate_confidence or 'sin estimar'})")
     return "\n".join(lines) + "\n"
+
 
 
 # -------------------------------------------------------------------- runner
@@ -675,26 +783,30 @@ class LlmfitRunner:
         return payload
 
     # -- typed commands
-    def report(self, *, limit: int | None = None, use_case: str | None = None,
-               perfect: bool = False, profile: str | None = None,
-               memory: str | None = None, ram: str | None = None,
-               cpu_cores: int | None = None, max_context: int | None = None,
-               force_runtime: str | None = None) -> FitReport:
-        """``llmfit fit`` as a :class:`FitReport`.
+    def catalog(self, *, limit: int | None = None, profile: str | None = None,
+                memory: str | None = None, ram: str | None = None,
+                cpu_cores: int | None = None,
+                max_context: int | None = None) -> FitReport:
+        """``llmfit fit`` with no narrowing at all: the whole scored catalog.
 
-        Only flags documented for the *CLI* are passed down: the global
-        hardware block (``--profile``/``--memory``/``--ram``/``--cpu-cores``/
-        ``--max-context``) **before** the subcommand, and ``-n`` /
-        ``--perfect`` / ``--use-case`` / ``--force-runtime`` after it. Flag
-        order matters, so this is assembled in two blocks rather than
-        flattened.
+        **Why ``fit`` and not ``recommend``:** ``recommend`` is the JSON-friendly
+        command and carries the filter vocabulary (``--use-case``,
+        ``--min-fit``, ``--runtime``, ``--force-runtime``), but it never returns
+        ``too_tight`` rows — so a model that does *not* fit this host would come
+        back "unknown" instead of "does not fit". ``fit`` is the complete
+        catalog (``recommend --min-fit too_tight`` is rejected, and even
+        accepted it drops the rows), which is what a verdict needs. Its cost is
+        a filter vocabulary it does not have: on llmfit 1.1.16 ``llmfit fit
+        --use-case coding`` exits 2 with *unexpected argument*.
 
-        The result is the *whole* scored catalog for those settings, unfiltered
-        and unsliced. Narrowing (``--min-fit``-style thresholds, search, sort,
-        the final cut) is :meth:`FitReport.filtered` and ``.top()`` — kept out
-        of here so the caller can filter once and still search the full
-        catalog (that is how ``delm fit --check`` finds a model that is too
-        tight for this host: it must survive the view filter to be reported).
+        That is the whole reason the split is **the binary fetches, SMCP
+        narrows** (:meth:`report` / :meth:`FitReport.filtered`): one fetch
+        answers both the table and the verdict, and no llmfit flag we don't
+        control can change what we see.
+
+        The hardware block (``--profile``/``--memory``/``--ram``/``--cpu-cores``/
+        ``--max-context``) is genuinely global in llmfit and goes *before* the
+        subcommand; ``--json`` is appended last (also valid as a global).
         """
         argv: list[str] = []
         if profile:
@@ -707,17 +819,61 @@ class LlmfitRunner:
             argv += ["--cpu-cores", str(cpu_cores)]
         if max_context is not None:
             argv += ["--max-context", str(max_context)]
-
         argv.append("fit")
         if limit is not None:
             argv += ["-n", str(limit)]
-        if use_case:
-            argv += ["--use-case", use_case]
-        if perfect:
-            argv.append("--perfect")
-        if force_runtime:
-            argv += ["--force-runtime", force_runtime]
         return FitReport.from_payload(self.run_json(argv))
+
+    def report(self, *, limit: int | None = None, use_case: str | None = None,
+               min_fit: str | None = None, runtime: str | None = None,
+               search: str | None = None, sort_by: str | None = None,
+               perfect: bool = False, include_too_tight: bool = False,
+               profile: str | None = None, memory: str | None = None,
+               ram: str | None = None, cpu_cores: int | None = None,
+               max_context: int | None = None) -> FitReport:
+        """:meth:`catalog` narrowed and sliced — the *view* of the fit table.
+
+        Do not use this when the un-narrowed rows matter: a verdict needs
+        :meth:`catalog`, because narrowing is exactly what hides a model that
+        does not fit.
+
+        ``-n`` is only forwarded when the query is a pure top-N
+        (:meth:`narrowing`): llmfit applies it before our filters, so asking it
+        for N rows *and* narrowing on our side would quietly return fewer than
+        the N the user asked for.
+        """
+        hardware = dict(profile=profile, memory=memory, ram=ram,
+                        cpu_cores=cpu_cores, max_context=max_context)
+        narrow = dict(use_case=use_case, min_fit=min_fit, runtime=runtime,
+                      search=search, sort_by=sort_by, perfect=perfect,
+                      include_too_tight=include_too_tight)
+        if self.narrowing(**narrow):
+            report = self.catalog(limit=None, **hardware)
+        else:
+            report = self.catalog(limit=limit, **hardware)
+            return report.top(limit)
+        report = report.filtered(
+            use_case=use_case, min_fit=min_fit, runtime=runtime, search=search,
+            sort_by=sort_by, perfect=perfect,
+            include_too_tight=include_too_tight)
+        return report.top(limit)
+
+
+    @staticmethod
+    def narrowing(*, use_case: str | None = None, min_fit: str | None = None,
+                  runtime: str | None = None, search: str | None = None,
+                  sort_by: str | None = None, perfect: bool = False,
+                  include_too_tight: bool = False) -> bool:
+        """Is this query a *filtered* one (so ``-n`` must stay on our side)?
+
+        Public because the answer is a real constraint of the integration, not
+        an implementation detail: ask llmfit for the top N *and* filter, and
+        the N you get back is not the N you asked for.
+        """
+        return bool(use_case or min_fit or runtime or search or sort_by
+                    or perfect or not include_too_tight)
+
+
 
     def plan(self, model: str, *, context: int | None = None,
              quant: str | None = None, target_tps: float | None = None,
@@ -732,12 +888,18 @@ class LlmfitRunner:
         if quant:
             argv += ["--quant", quant]
         if target_tps is not None:
-            argv += ["--target-tps", str(target_tps)]
+            argv += ["--target-tps", f"{target_tps:g}"]
         return self.run_json(argv)
 
     def system(self, *, profile: str | None = None, memory: str | None = None,
                ram: str | None = None, cpu_cores: int | None = None) -> SystemProfile:
-        """``llmfit system`` — just the hardware profile."""
+        """``llmfit system`` — just the hardware profile.
+
+        Unlike ``fit``, the CLI's ``system --json`` emits the hardware object
+        *itself*, not the fit envelope, so this accepts both shapes (an object
+        carrying a ``system`` key, or the bare system object) instead of
+        guessing which llmfit build is on the other side.
+        """
         argv: list[str] = []
         if profile:
             argv += ["--profile", profile]
@@ -748,4 +910,7 @@ class LlmfitRunner:
         if cpu_cores is not None:
             argv += ["--cpu-cores", str(cpu_cores)]
         argv.append("system")
-        return SystemProfile.from_payload(self.run_json(argv))
+        payload = self.run_json(argv)
+        inner = payload.get("system")
+        return SystemProfile.from_payload(inner if isinstance(inner, dict)
+                                          else payload)
