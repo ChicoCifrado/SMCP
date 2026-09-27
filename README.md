@@ -1,6 +1,6 @@
 # SMCP — Shared Mesh Context Protocol
 
-> **SMCP** Implementación *clean-room* del núcleo de
+> **SMCP** - Implementación *clean-room* del núcleo de
 > coordinación de **DeLM** (Mao & Mirhoseini, *Decentralized Multi-Agent Systems
 > with Shared Context*, arXiv:2606.10662) más una capa de seguridad propia.
 
