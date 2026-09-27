@@ -277,6 +277,15 @@ fuente envenenada puede orientar a todos los que la lean.
 - **`api_server.py` + `smcp_api.py`** — la API de la web (FastAPI): estado en
   vivo, lanzar la suite/demos, y las acciones de sesión (scan, taint, config,
   export del ledger, SSE, meshllm). Sirve el estático de `web/`.
+- **`serve.py`** — `smcp-serve`: SMCP como agente **ACP por stdio**. Un cliente
+  ACP lo registra como un agente más, en vez de reimplementar el loop. Un
+  prompt corre el mismo `DelmPipeline` que `/api/run`; la salida vuelve como
+  notificaciones `session/update`. `stdout` está reservado para JSON-RPC (todo
+  el logging va a stderr); la config y la key se resuelven **en el servidor**
+  y nunca viajan al cliente. El default es `FakeLLMClient`, así que el smoke no
+  necesita modelo ni red; las sesiones son efímeras (`list_sessions` → vacío) y
+  `authenticate` es un no-op (la raíz de confianza es la clave del owner, no un
+  login).
 - **`web/`** — la UI (7 páginas). Es una vista sobre el mismo estado que la
   API expone; no añade lógica de dominio.
 - **`demo/`** — las 6 demos. Cubren: pipeline end-to-end (sin API key),

@@ -3,13 +3,14 @@
 Until now the package was only reachable through ``python -m delm.demo.*`` and
 two console scripts. This module is the single front door: one binary
 (``delm``) and one module entry point (``python -m delm``, which is the *same*
-parser) with four subcommands:
+parser) with five subcommands:
 
 - ``delm demo <name>``   — run a demo (pipeline, security, taint, multihost,
   rsi, real);
 - ``delm test``          — run the test suite (forwards args to pytest);
 - ``delm config-check``  — resolve the model config and show it with the API
   key masked;
+- ``delm fit``           — size the *local* model to this host (llmfit);
 - ``delm version``       — print the version (and the Python it runs on).
 
 Why demos are dispatched as **subprocesses** rather than in-process imports:
@@ -19,6 +20,11 @@ own report to stdout, and (in the multihost case) spawns child nodes with
 CLI a thin, honest wrapper: no demo has to be refactored to be callable, the
 demo's own exit code is the CLI's exit code, and the demos stay importable for
 the in-process API (:mod:`api_server`, :mod:`smcp_api`) and the tests.
+
+``delm fit`` is the one subcommand that talks to something outside the repo
+(``llmfit``, an external tool), so it is the one that can fail for a reason
+outside our control: missing tool → :data:`EXIT_LLMFIT` with an install hint,
+never a traceback. The adapter itself is :mod:`delm.core.llmfit`.
 
 Conventions this module follows (see the project conventions):
 
@@ -31,12 +37,19 @@ Conventions this module follows (see the project conventions):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Sequence
 
-__all__ = ["main", "build_parser", "DEMOS"]
+__all__ = ["main", "build_parser", "DEMOS", "EXIT_LLMFIT"]
+
+#: Exit code for "llmfit is not usable here" (absent tool, failed run, bad
+#: JSON). Distinct from ``2`` (config does not resolve / model does not fit) so
+#: a CI step can tell "my setup is broken" from "this host cannot run it".
+EXIT_LLMFIT = 3
 
 
 #: The demos the CLI can run, in the order they are listed. Each entry is
@@ -183,6 +196,120 @@ def _cmd_test(args: argparse.Namespace) -> int:
         return 130
 
 
+# ------------------------------------------------------------------- llmfit
+def _cmd_fit(args: argparse.Namespace) -> int:
+    """Right-size the local model for this host, via llmfit.
+
+    Three views of the same catalog, in increasing order of commitment:
+
+    * default          — the ranked table of what runs here;
+    * ``--check``      — does the model the *config* points to fit this host?
+      (exit 2 when it does not, so a script can branch without parsing);
+    * ``--write-config`` — persist the top pick as a ``model_config.yaml``,
+      the only step that touches the filesystem and it never overwrites
+      silently (``--force`` required).
+
+    llmfit is an optional external tool, never a dependency: when it is absent
+    the command explains how to install it and exits ``EXIT_LLMFIT``.
+    """
+    from delm.core.llmfit import LlmfitError, LlmfitRunner
+
+    runner = LlmfitRunner(args.llmfit_bin, timeout_s=args.timeout)
+    try:
+        raw = runner.report(
+            use_case=args.use_case, perfect=args.perfect,
+            profile=args.profile, memory=args.memory, ram=args.ram,
+            cpu_cores=args.cpu_cores, max_context=args.max_context,
+            force_runtime=args.force_runtime,
+        )
+    except LlmfitError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_LLMFIT
+
+    # The view is narrowed here, not in the runner: `--check` must still see
+    # the rows the view hides — a model too tight to run is exactly the one it
+    # needs to report.
+    view = raw.filtered(min_fit=args.min_fit, runtime=args.runtime,
+                        search=args.search, sort_by=args.sort,
+                        include_too_tight=args.all).top(args.limit)
+
+
+    if args.json:
+        payload = view.to_payload()
+        if args.check:
+            payload["check"] = _check_payload(verdict_for(
+                _configured_model(args), raw))
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print(view.render(title="=== delm fit ==="))
+    return _fit_followup(args, view, raw)
+
+
+def _configured_model(args: argparse.Namespace) -> str:
+    """The model the pipeline would actually use (env > YAML > default)."""
+    from delm.config import load_config
+
+    return load_config(args.config or _default_config_path()).model
+
+
+def _check_payload(verdict) -> dict:
+    """``--check --json`` view of a :class:`ModelFitVerdict` (no secrets)."""
+    return {
+        "model": verdict.model,
+        "matched": verdict.matched,
+        "runnable": verdict.runnable,
+        "fit_level": verdict.fit_level,
+        "fit_label": verdict.fit_label,
+        "best_quant": verdict.best_quant,
+        "memory_required_gb": verdict.memory_required_gb,
+        "estimated_tps": verdict.estimated_tps,
+        "runtime": verdict.runtime,
+        "row_name": verdict.row_name,
+        "suggestions": list(verdict.suggestions),
+    }
+
+
+def _fit_followup(args: argparse.Namespace, view, raw) -> int:
+    """`--check` and `--write-config`: the two committing steps."""
+    from delm.core.llmfit import local_config_yaml, verdict_for
+
+    rc = 0
+
+    if args.check:
+        verdict = verdict_for(_configured_model(args), raw)
+        print("--- check del modelo configurado ---")
+        print(f"veredicto : {verdict.verdict_text()}")
+        if verdict.matched and verdict.runnable:
+            print(f"quant     : {verdict.best_quant or '?'}  "
+                  f"velocidad: "
+                  f"{verdict.estimated_tps if verdict.estimated_tps else '?'} "
+                  f"tok/s  memoria: "
+                  f"{verdict.memory_required_gb or '?'}G")
+        for name in verdict.suggestions:
+            print(f"sugerencia: {name}")
+        rc = verdict.exit_code()
+
+    if args.write_config:
+        if not view.models:
+            print("error: ningun modelo cabe con esos filtros; no se escribe "
+                  "la config.", file=sys.stderr)
+            return EXIT_LLMFIT
+        path = Path(args.write_config)
+        if path.exists() and not args.force:
+            print(f"error: {path} ya existe. Usa --force para sobrescribir, o "
+                  f"otro --write-config.", file=sys.stderr)
+            return 2
+        top = view.models[0]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            local_config_yaml(top, base_url=args.base_url,
+                              timeout_s=args.timeout),
+            encoding="utf-8")
+        print(f"escrito   : {path}  (model={top.name}, quant={top.quant_text()})")
+    return rc
+
+
 # ----------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
@@ -194,6 +321,8 @@ def build_parser() -> argparse.ArgumentParser:
                "  delm demo security        # Capas 1+2\n"
                "  delm demo multihost       # 2 nodos sobre QUIC\n"
                "  delm demo real --dry-run  # resuelve la config, no llama al modelo\n"
+               "  delm fit                  # que modelos caben en esta maquina\n"
+               "  delm fit --check          # el modelo de la config cabe aqui?\n"
                "  delm test                 # la suite (por defecto: -m 'not slow')\n"
                "  delm config-check         # config de modelo con la key oculta\n"
                "  python -m delm version    # == delm version\n",
@@ -246,6 +375,63 @@ def build_parser() -> argparse.ArgumentParser:
     p_cfg.add_argument("--harness", action="store_true",
                        help="resuelve como backend harness (opt-in)")
     p_cfg.set_defaults(func=_cmd_config_check)
+
+    # --- fit (llmfit)
+    p_fit = sub.add_parser(
+        "fit", help="dimensiona el modelo local a este hardware (llmfit)")
+    p_fit.add_argument("-n", "--limit", type=int, default=10,
+                       help="cuantas filas mostrar (default: 10)")
+    p_fit.add_argument("--use-case", default=None,
+                       help="filtra por caso de uso (coding, reasoning, chat…)")
+    p_fit.add_argument("--perfect", action="store_true",
+                       help="solo los que caben perfecto")
+    p_fit.add_argument("--min-fit", default=None,
+                       choices=["perfect", "good", "marginal", "too_tight"],
+                       help="umbral de fit de la tabla (default: descarta "
+                            "los que no caben)")
+    p_fit.add_argument("--all", action="store_true",
+                       help="incluye los modelos que NO caben (too_tight)")
+    p_fit.add_argument("--runtime", default=None,
+                       choices=["mlx", "llamacpp", "vllm", "bitnetcpp"],
+                       help="filtra la tabla por runtime")
+    p_fit.add_argument("--force-runtime", default=None,
+                       choices=["mlx", "llamacpp", "vllm", "bitnetcpp"],
+                       help="fuerza el runtime del ANALISIS (p.ej. pedirle "
+                            "llama.cpp en Apple Silicon en vez de MLX)")
+    p_fit.add_argument("--search", default=None,
+                       help="filtra por nombre o proveedor")
+    p_fit.add_argument("--sort", default=None,
+                       choices=["score", "tps", "params", "mem", "ctx", "name"],
+                       help="ordena la tabla (default: el orden de llmfit)")
+    p_fit.add_argument("--profile", default=None,
+                       help="perfil de hardware de llmfit (simula otra maquina)")
+    p_fit.add_argument("--memory", default=None,
+                       help="override de VRAM (p.ej. 24G)")
+    p_fit.add_argument("--ram", default=None, help="override de RAM (p.ej. 64G)")
+    p_fit.add_argument("--cpu-cores", type=int, default=None,
+                       help="override de nucleos de CPU")
+    p_fit.add_argument("--max-context", type=int, default=None,
+                       help="tope de contexto para la estimacion de memoria")
+    p_fit.add_argument("--check", action="store_true",
+                       help="verifica si el modelo de la config cabe aqui "
+                            "(sale 2 si no cabe)")
+    p_fit.add_argument("--config", default=None,
+                       help="--check: ruta al YAML de modelo (misma "
+                            "resolucion que config-check)")
+    p_fit.add_argument("--write-config", default=None, metavar="RUTA",
+                       help="escribe el primer resultado como model_config.yaml")
+    p_fit.add_argument("--force", action="store_true",
+                       help="--write-config: sobrescribe un archivo existente")
+    p_fit.add_argument("--base-url", default="http://127.0.0.1:8080/v1",
+                       help="--write-config: base_url del runtime local")
+    p_fit.add_argument("--json", action="store_true",
+                       help="salida JSON (para scripts y la API web)")
+    p_fit.add_argument("--llmfit-bin", default=None,
+                       help="ruta/comando de llmfit (default: $DELM_LLMFIT_BIN, "
+                            "el PATH, o python -m llmfit)")
+    p_fit.add_argument("--timeout", type=float, default=120.0,
+                       help="segundos de espera para llmfit (default: 120)")
+    p_fit.set_defaults(func=_cmd_fit)
 
     # --- version
     p_ver = sub.add_parser("version", help="muestra la version")

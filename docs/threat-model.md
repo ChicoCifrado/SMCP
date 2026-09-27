@@ -10,7 +10,8 @@ un threat model que solo dice "esto es seguro" es peor que ninguno.
 - **Alcance**: el paquete `delm/`, sus capas de red (3 y 4) y la capa 5. La web
   (`web/`, `api_server.py`) es una *vista* sobre el estado local y **no** es una
   superficie de exposición propia: corre en `127.0.0.1` y su API refleja el
-  estado en memoria/proceso.
+  estado en memoria/proceso. Lo mismo para `smcp-serve` (`serve.py`, ACP por
+  stdio): su confianza es la del **límite de proceso** (ver §2, superficie ACP).
 
 ## 0. Resumen ejecutivo
 
@@ -196,6 +197,40 @@ pares (`peer_id` ↔ cert); (iv) la **disponibilidad** del canal de gossip.
     encuadre. SMCP acota el *blast radius* (cierre transitivo + omisión de
     CONFIRMED); no convierte al LLM en un intérprete de símbolos.
 
+### Superficie ACP (`smcp-serve`, `serve.py`) — fuera de capa
+
+No es una capa de seguridad; es una **puerta** (el agente habla ACP por stdio).
+Se documenta aquí porque añade una superficie de proceso con su propio modelo
+de confianza, distinto del de las capas.
+
+- **Adversario**: quien arranca o se engancha al proceso `smcp-serve` (un par no
+  de fiar que obtiene control del proceso; A1/A2 en potencia).
+- **Supuesto**: la confianza es la del **límite de proceso** — quien puede
+  arrancar/engancharse al proceso lo controla. No hay autenticación in-band:
+  `authenticate` es un **no-op** (la raíz de confianza es la clave pública del
+  owner, no un login).
+- **Garantías**:
+  - **Config y key en el servidor**: se resuelven en el proceso SMCP y **nunca**
+    viajan al cliente ACP; el par no puede exfiltrar ni alterar el modelo/clave
+    desde el otro lado del stdio.
+  - **Sesiones efímeras**: `list_sessions` → vacío; no hay estado de sesión
+    persistente que filtrar a posteriori (persiste el *contexto compartido*,
+    no la historia de runs).
+  - **Mismo pipeline, no otra vía**: un prompt corre el mismo `DelmPipeline`
+    que `/api/run`; las garantías de las Capas 1+2 y 5 se aplican igual (los
+    gists admitidos se verifican del mismo modo). La puerta ACP no reintroduce
+    una vía aparte.
+  - **Integridad del canal**: `stdout` está reservado para JSON-RPC; todo el
+    logging va a stderr, así un print erróneo no corrompe el protocolo.
+- **NO-garantías (explícitas)**:
+  - **No hay autenticación in-band**: la seguridad contra un par no de fiar
+    depende del límite de proceso. Un atacante que ya controla el proceso puede
+    enviar prompts; las Capas 1+2/5 acotan qué se *admite* en `C`, no quién
+    *arrancó* el proceso.
+  - **El default es `FakeLLMClient`**: sin configurar, la puerta ACP no llama a
+    un modelo real (el smoke no necesita red); por diseño del test, no una
+    garantía de runtime.
+
 ## 3. No-garantías transversales (el resumen honesto)
 
 Estas aplican a *todas* las capas y conviene tenerlas presentes:
@@ -229,6 +264,7 @@ Estas aplican a *todas* las capas y conviene tenerlas presentes:
 | identidad de par (QUIC) | `CN = peer_id` | enlace identidad-cert, `insecure` explícito | sin CA; solo enlace de identidad |
 | announce/gossip (Nostr) | Firma por evento + bootstrap del owner | rate-limit, dedup, tamaño; firma de eventos | relay puede reordenar/censurar |
 | contenido de agente (Capa 5) | Taint por fuente | detector + cierre transitivo + cuarentena | heurístico; encuadre ≠ sandbox |
+| `smcp-serve` (ACP, stdio) | Límite de proceso (no in-band) | config/key en el servidor; sesiones efímeras; mismo pipeline 1+2/5 | `authenticate` no-op; la confianza es del proceso que lo arranca |
 
 ## 5. Cómo se prueba lo anterior (evidencia, no promesa)
 
@@ -247,7 +283,9 @@ en CI sin red ni modelo:
 - Capa 5 (detector, niveles, cierre transitivo, cuarentena en render/unfold, y
   que el pipeline la trae por defecto) → `test_taint.py`;
 - convergencia de la malla (in-memory, QUIC y Nostr) → `test_mesh.py`,
-  `test_demo_multihost.py`.
+  `test_demo_multihost.py`;
+- puerta ACP (`smcp-serve`: helpers, ciclo de vida, que un prompt corre el
+  pipeline, los no-ops honestos y el smoke stdio slow) → `test_serve.py`.
 
 ## 6. Resumen de no-garantías (la lista corta)
 
@@ -272,3 +310,6 @@ Para tenerla a mano — el threat model en una línea por punto:
   confidencialidad punto a punto no está en el alcance.
 - Un **par firmado con intención maliciosa** no lo detiene la verificación
   determinista: marca la fuente, no la intención.
+- La **puerta ACP** (`smcp-serve`) no autentica in-band: su confianza es el
+  límite de proceso (quien lo arranca); la config/key nunca viajan al cliente y
+  las sesiones son efímeras.
