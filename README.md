@@ -718,7 +718,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **508 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **528 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -740,7 +740,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   (proponer/verificar/retener/sucesor) + 3 demo RSI (HCI 10.48→21.19) +
   19 métrica HCI (Benchmark/BenchFamily/HCIMeter/DeterministicScorer) + 19
   CLI: los subcomandos de `delm` (demo/test/config-check/version), el despacho
-  de demos, `--slow` y el enmascarado de la key + 48 llmfit: el adaptador
+  de demos, `--slow` y el enmascarado de la key + 74 llmfit: el adaptador
   (parseo de filas, filtros, orden, veredicto, runner con descubrimiento y
   errores) y el subcomando `delm fit` (tabla, `--check` con su exit code,
   `--write-config` sin pisar, y la ausencia de llmfit como exit `3`) + 19
