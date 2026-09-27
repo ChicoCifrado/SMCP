@@ -343,6 +343,9 @@ El suite está repartido en treinta y dos archivos, todos deterministas:
   y malla completa sobre sockets reales.
 - `test_quic_identity.py` — enlace identidad-cert del QUIC (legítimo,
   MITM rechazado, insecure, `CN = peer_id`).
+- `test_demo_multihost.py` — demo multi-host (2 nodos en procesos distintos):
+  test de integración **slow** (handshake QUIC ~60-120 s) que verifica la
+  convergencia sobre QUIC (default) y Nostr (`--nostr`).
 - `test_hci.py` — métrica Headroom-Closed Index (Benchmark, BenchFamily,
   HCIMeter, DeterministicScorer, SMCP_FAMILY).
 - `test_rsi.py` / `test_rsi_demo.py` — loop RSI L1: proponer/verificar/

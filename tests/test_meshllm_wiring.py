@@ -1,4 +1,4 @@
-"""Test opt-in: wiring SMCP → MeshLLM (Fase 1 del INTEGRATION.md).
+"""Test opt-in: wiring SMCP → MeshLLM (Fase 1 de la integración con la malla).
 
 Marcado ``slow``: **no** corre en la suite por defecto (``-m 'not slow'``).
 Verifica que el cliente estándar de SMCP (:class:`OpenAICompatibleClient`)
