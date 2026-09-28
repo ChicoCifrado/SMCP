@@ -44,6 +44,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
@@ -699,7 +700,11 @@ class LlmfitRunner:
                  python: str | None = None, timeout_s: float = 120.0,
                  env: dict[str, str] | None = None) -> None:
         self.binary = binary
-        self.python = python or os.sys.executable
+        # `os.sys` solo funciona si OTRO modulo ya importó `sys` (CPython
+        # adjunta sys a os, pero es un accidente de la implementacion, no
+        # parte de la API). Con un import lazy de llmfit en un proceso que no
+        # ha tocado sys, esto era un AttributeError al construir el runner.
+        self.python = python or sys.executable
         self.timeout_s = timeout_s
         self.env = env
 
@@ -842,11 +847,19 @@ class LlmfitRunner:
         for N rows *and* narrowing on our side would quietly return fewer than
         the N the user asked for.
         """
-        hardware = dict(profile=profile, memory=memory, ram=ram,
-                        cpu_cores=cpu_cores, max_context=max_context)
-        narrow = dict(use_case=use_case, min_fit=min_fit, runtime=runtime,
-                      search=search, sort_by=sort_by, perfect=perfect,
-                      include_too_tight=include_too_tight)
+        # Anotaciones explicitas: sin ellas pyright infiere el valor comun de
+        # los literales (`str | bool | None` en `narrow`, `str | int | None` en
+        # `hardware`) y los `**kwargs` se rompen uno por uno — 12 errores que
+        # son dos causas.
+        hardware: dict[str, Any] = dict(
+            profile=profile, memory=memory, ram=ram,
+            cpu_cores=cpu_cores, max_context=max_context,
+        )
+        narrow: dict[str, Any] = dict(
+            use_case=use_case, min_fit=min_fit, runtime=runtime,
+            search=search, sort_by=sort_by, perfect=perfect,
+            include_too_tight=include_too_tight,
+        )
         if self.narrowing(**narrow):
             report = self.catalog(limit=None, **hardware)
         else:

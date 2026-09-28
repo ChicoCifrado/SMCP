@@ -424,7 +424,11 @@ class NostrDiscoveryTransport:
                 try:
                     raw = base64.b64decode(ev.content).decode("utf-8")
                     ann = Announcement.from_dict(json.loads(raw))
-                except Exception:
+                except Exception:  # noqa: BLE001, S112 - un announce ajeno
+                    # corrupto (firma invalida, base64 roto, esquema
+                    # desconocido) se descarta y se sigue con el siguiente.
+                    # `continue` a proposito: un evento malformado de un par
+                    # no puede tumbar la lectura del resto del inbox.
                     continue
                 if ann.node_id != node:
                     out.append(ann)
@@ -545,7 +549,10 @@ class NostrRelayServer:
 
         self._server = await ws_server.serve(handler, self.host, self.port)
         # El puerto real (port=0 -> el SO lo asigna).
-        sock = self._server.sockets[0]
+        # `next(iter(...))` y no `[0]`: `sockets` esta tipado como Iterable,
+        # no indexable. Lanza StopIteration en vez de IndexError si viniera
+        # vacio, que es lo que querriamos de todos modos (no hay servidor).
+        sock = next(iter(self._server.sockets))
         self._bound_port = sock.getsockname()[1]
         self.port = self._bound_port
         self._ready.set()
@@ -554,9 +561,13 @@ class NostrRelayServer:
     def _shutdown(self) -> None:
         if self._server is not None:
             for ws in list(self._conns):
-                self._loop.call_soon_threadsafe(
-                    lambda w=ws: self._close_ws(w)
-                )
+                # `_loop` se asigna junto a `_server` (mismo arranque), asi que
+                # el `if` de arriba ya lo garantiza: no hay ruta donde
+                # `_server` exista y `_loop` sea None.
+                if self._loop is not None:
+                    self._loop.call_soon_threadsafe(
+                        lambda w=ws: self._close_ws(w)
+                    )
             self._server.close()
 
     def _close_ws(self, ws) -> None:
@@ -801,6 +812,12 @@ class NostrRelayClient:
         """
         import json as _json
 
+        # Publicar con el cliente cerrado (o aun no conectado) era un
+        # AttributeError sobre None. Ahora es un rechazo explicito, que es lo
+        # que el contrato de `publish` ya expresa con `False`.
+        if self._loop is None:
+            return False
+
         ready = threading.Event()
         result: dict = {}
         self._ok_wait = (ready, result)
@@ -838,7 +855,12 @@ class NostrRelayClient:
         self._connected.set()
         try:
             async for raw in self._ws:
-                self._on_inbound(raw)
+                # websockets entrega `str` si la conexion se abrio en modo
+                # texto y `bytes` en modo binario. El relay abre en binario,
+                # pero el anotado de `raw: bytes` de abajo era una
+                # asuncion que el type-checker no puede verificar y que
+                # romperia si el modo cambiara.
+                self._on_inbound(raw)  # type: ignore[arg-type]
         finally:
             self._connected.clear()
 

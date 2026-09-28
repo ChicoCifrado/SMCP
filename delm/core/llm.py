@@ -136,7 +136,13 @@ class OpenAICompatibleClient(LLMClient):
         else:  # pragma: no cover — openai layout change
             import copy
             hc = copy.deepcopy(getattr(inner, "_transport", None))
-            self._client._custom_http_client = httpx2.AsyncClient(
+            # Monkey-patch deliberado de un atributo PRIVADO del cliente de
+            # openai: es la unica via para inyectar un `event_hook` que quite
+            # la cabecera Authorization de las peticiones al gateway. La
+            # rama solo se alcanza si el layout interno de openai cambia
+            # (esta marcada no-cover por eso). Si openai renombra el
+            # atributo, esta asignacion falla al usar, no al importar.
+            self._client._custom_http_client = httpx2.AsyncClient(  # type: ignore[attr-defined]
                 event_hooks={"request": [_strip_auth]},
                 timeout=kwargs.get("timeout", 60),
             )

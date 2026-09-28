@@ -417,7 +417,7 @@ def _mesh_status(args: argparse.Namespace) -> int:
     print(f"vram       : {led.total_vram_gb():.1f}G verificados "
           f"({led.total_vram_gb(observed_only=False):.1f}G declarados)")
     print(f"endpoint   : {args.endpoint}")
-    print("")
+    print()
     if not peers:
         print("— ningún nodo ha aportado capacidad todavía —")
         print("  delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12")
@@ -428,7 +428,7 @@ def _mesh_status(args: argparse.Namespace) -> int:
               f"{('sí' if p.alive else 'NO'):>9} "
               f"{p.credits_available:>9.2f} "
               f"{policy.entitlement(p):>10.2f}")
-    print("")
+    print()
     print("nota: la capacidad es una afirmación *firmada* de la identidad, no "
           "una atestación de hardware (ver docs/threat-model.md).")
     return 0
@@ -559,7 +559,7 @@ def _mesh_check(args: argparse.Namespace) -> int:
         print(f"  {p.peer_id}: allocates {p.vram_gb:.1f}G · observed "
               f"{p.seconds_observed:.0f}s · entitlement "
               f"{policy.entitlement(p):.3f}")
-    print("")
+    print()
     print("lo que esto NO prueba: que la VRAM declarada exista. No hay "
           "atestación de hardware; es una afirmación firmada y auditable.")
     return 0 if chain_ok and not bad else 2

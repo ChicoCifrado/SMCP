@@ -39,14 +39,20 @@ delm-real-demo = "delm.demo.run_real_demo:main"
 # que hace de SMCP un *agente* para un cliente ACP (OpenDesign, Zed, VS Code)
 # en vez de solo un endpoint HTTP. Requiere el extra `delm[acp]`.
 smcp-serve = "delm.serve:main"
+# API + UI web. Antes vivia en `api_server.py` / `smcp_api.py` en la raiz del
+# repo, FUERA del paquete: el wheel no los shippeaba, asi que `delm[web]`
+# instalaba dependencias para un modulo ausente y la UI solo se podia lanzar
+# con `cd` al checkout. Ahora es superficie del paquete (P1).
+delm-serve-web = "delm.web.app:main"
 
 # Extras: dependencias opcionales por transporte/capa.
 #   delm[nostr]  -> websockets (relay Nostr de red, capa 4)
 #   delm[quic]   -> aioquic (QUIC entre hosts, capa 3)
 #   delm[mdns]   -> aiozeroconf (mDNS discovery, capa 4)
-#   delm[web]    -> fastapi + uvicorn (api_server.py :8099)
+#   delm[web]    -> fastapi + uvicorn (delm-serve-web :8099)
 #   delm[acp]    -> agent-client-protocol (smcp-serve: SMCP como agente ACP)
 #   delm[docs]   -> pdoc (doc generable de la API; opt-in, no obligatoria)
+#   delm[dev]    -> ruff + pyright + pytest-cov (los gates de P4)
 #   delm[all]    -> los anteriores
 [project.optional-dependencies]
 nostr = ["websockets>=12.0"]
@@ -55,6 +61,11 @@ mdns = ["aiozeroconf>=0.1.8"]
 web = ["fastapi>=0.110", "uvicorn>=0.27"]
 acp = ["agent-client-protocol>=0.9.0"]
 docs = ["pdoc>=14.0"]
+dev = [
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "pytest-cov>=5.0",
+]
 all = [
     "websockets>=12.0",
     "aioquic>=1.0",
@@ -63,15 +74,272 @@ all = [
     "uvicorn>=0.27",
     "agent-client-protocol>=0.9.0",
     "pdoc>=14.0",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "pytest-cov>=5.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ChicoCifrado/SMCP"
+Repository = "https://github.com/ChicoCifrado/SMCP"
+Issues = "https://github.com/ChicoCifrado/SMCP/issues"
+Changelog = "https://github.com/ChicoCifrado/SMCP/blob/latest/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["delm*"]
+
+# Los estaticos de la web son datos de paquete, no codigo. Sin esto el wheel
+# instala `delm-serve-web` pero no los .html/.css/.js que sirve, y la UI cae
+# en un 404 silencioso al primer asset. `packages.find` solo recoge modulos
+# Python, de ahi el patron explicito.
+[tool.setuptools.package-data]
+"delm.web" = ["*.html", "assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q -m 'not slow'"
 markers = [
     "slow: tests de integración lentos (handshake QUIC, subprocess); excludir con -m 'not slow'",
+]
+
+# ---------------------------------------------------------------------------
+# Gates de calidad (P4). Antes no habia NINGUNO: ni ruff, ni pyright, ni
+# cobertura, sobre 12.100 lineas de libreria + 8.296 de tests. Una suite
+# verde no puede ver ni el drift del bloque `Estructura` del README ni el
+# hecho de que el wheel no shippease la capa web.
+#
+# Calibracion de `select` a la severidad que el repo necesita de verdad:
+#   E, F, B  -> correccion real (F821 undefined-name es un bug, no estilo)
+#   S        -> seguridad (bandit)
+#   I, UP, RUF, SIM, RET, PERF, C4, FURB, PIE, PL -> legibilidad mecanica
+# Se dejan fuera a PROPOSITO, y no por pereza:
+#   ANN/DOC  -> el codigo ya documenta con docstrings consistentes; exigir
+#               anotacion en cada parametro seria ruido, no senal.
+#   BLE001   -> el codigo YA marca los suyos con `# noqa: BLE001 - <motivo>`
+#               cuando son deliberados. Los 10 restantes son cierre
+#               tolerante en rutas de red (quic_host, transport), donde
+#               except-pass es la semantica correcta. Activar la regla sin
+#               revisar caso por caso solo genera unchecked noqa.
+#   S110     -> try-except-pass: mismo caso, y ya hay commented.
+#   PLR09xx  -> complejidad: la legibilidad de placement.py y nostr.py viene
+#               de su estructura explicita, no de partir funciones.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "build", "dist", "web"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle
+    "F",     # pyflakes
+    "B",     # bugbear
+    "S",     # bandit
+    "I",     # isort
+    "UP",    # pyupgrade
+    "RUF",   # ruff-specific
+    "SIM",   # simplify
+    "RET",   # return
+    "PERF",  # perftuning
+    "C4",    # comprehensions
+    "FURB",  # refurb
+    "PIE",   # pie
+    "PL",    # pylint
+]
+ignore = [
+    "E501",    # line-too-long: la longitud la fija el formatter, no el linter
+    "PLC0415", # import-outside-top-level: el import lazy es un patron
+               # deliberado (harness_client, serve, provenance, verifier)
+    "PLR2004", # magic-value-comparison: umbrales de negocio explicitos
+    "PLR0913", # too-many-arguments: las firmas de Dataclass y de los contratos
+               # de transporte (send/poll) son explicitas a proposito
+    "PLR0917", # too-many-positional-arguments: mismo caso
+    "PLR0911", # too-many-return-statements
+    "PLR0912", # too-many-branches
+    "PLR0915", # too-many-statements: la legibilidad de placement.py y
+               # nostr.py viene de su estructura explicita, no de partir
+    # ---------------------------------------------------------------------
+    # Deuda medida, no criterio estetico. Cada entrada dice CUANTOS hay y
+    # POR QUE se aplazan; cuando baje de 0, la entrada se borra y la regla
+    # vuelve a bloquear. Ver `ruff check --statistics` para el conteo vivo.
+    # ---------------------------------------------------------------------
+    "UP006",   # non-pep585-annotation: 8. El tipado lo hace pyright.
+    "UP017",   # datetime-timezone-utc: 2
+    "UP035",   # deprecated-import: 10 (typing.Dict/List frente a dict/list)
+    "UP037",   # quoted-annotation: 58. Migracion cosmetica; con
+               # `from __future__ import annotations` es inocua.
+    "UP042",   # str/Enum: 5. El codebase usa `class X(str, Enum)` a mano.
+    "UP045",   # non-pep604-annotation-optional: 20 (Optional[X])
+    "FURB110", # if-exp-instead-of-or-operator: 2
+    "FURB122", # for-loop-writes: 2
+    "FURB167", # regex-flag-alias: 17
+    "RUF005",  # collection-literal-concatenation: 5
+    "RUF006",  # asyncio-dangling-task: 3
+    "RUF022",  # unsorted-dunder-all: 14
+    "RUF100",  # unused-noqa: 16. Se limpian cuando las reglas que motivan
+               # el noqa esten desactivadas aqui.
+    "C402",    # unnecessary-generator-dict: 1
+    "C408",    # unnecessary-collection-call: 5. `dict()` explicito se lee
+               # mejor que un literal en un mapping de opciones.
+    "C416",    # unnecessary-comprehension: 1
+    "C420",    # unnecessary-dict-comprehension-for-iterable: 2
+    "E702",    # multiple-statements-on-one-line-semicolon: 1
+    "E712",    # true-false-comparison: 1 (en un test)
+    "E741",    # ambiguous-variable-name: 10 (`l`, `I`). Convencion heredada.
+    "F401",    # unused-import: 34. Muchos son re-exports deliberados
+               # (`delm/__init__.py`) o el import que registra un side effect.
+    "F541",    # f-string-missing-placeholders: 3
+    "F841",    # unused-variable: 13
+    "I001",    # unsorted-imports: 39
+    "PERF401", # manual-list-comprehension: 8
+    "PERF102", # incorrect-dict-iterator: 1
+    "PLR0402", # manual-from-import: 1
+    "PLR1711", # useless-return: 3. En `serve.py` los `return None` explicitos
+               # de `close_session`/`cancel` y el `return None` del
+               # `find_spec` de los tests NO son ruido: son el no-op
+               # DELIBERADO del contrato ACP y del MetaPathFinder, escrito
+               # como tal. Borrarlos deja el mismo comportamiento pero
+               # pierde la senal de "aqui no se hace nada, y es a
+               # proposito", que es justamente lo que uno lee al mantener
+               # un adaptador de protocolo.
+    "PLW0108", # unnecessary-lambda: 1
+    "PLW1510", # subprocess-run-without-check: 9. Los demos y la capa web
+               # lanzan subprocess a proposito y revisan su exit code.
+    "PLW2901", # redefined-loop-name: 5
+    "RET501",  # unnecessary-return-none: 4
+    "RET504",  # unnecessary-assign: 3
+    "SIM102",  # collapsible-if: 2
+    "SIM103",  # needless-bool: 1
+    "SIM105",  # suppressible-exception: 12. `contextlib.suppress` donde
+               # importa es mas lento; los 5 que ya lo usan se dejan asi.
+    "SIM108",  # if-else-block-instead-of-if-exp: 2
+    "SIM114",  # if-with-same-arms: 1
+    "SIM115",  # open-file-with-context-handler: 8
+    "SIM117",  # multiple-with-statements: 1
+    "B007",    # unused-loop-control-variable: 3
+    "B905",    # zip-without-explicit-strict: 5. `strict=` es 3.10+; el
+               # proyecto declara >=3.11 pero estos bucles son truncados
+               # a proposito (reparto por capas).
+    "B011",    # assert-false: 1 (test)
+    "PIE790",  # unnecessary-placeholder: 1
+    "PLC0206", # dict-index-missing-items: 1
+    "RUF007",  # zip-instead-of-pairwise: 1
+    "RUF043",  # pytest-raises-ambiguous-pattern: 1 (test)
+    "S101",    # assert-used: 3. Es la asercion en produccion que no deberia
+               # estar; los tests y demos quedan cubiertos por
+               # per-file-ignores.
+    "S105",    # hardcoded-password-string: falso positivo en tests (los
+               # nombres de peer/fixtures no son secretos).
+    "S106",    # hardcoded-password-func-arg: idem.
+    "S110",    # try-except-pass: 12. Cierre tolerante en rutas de red
+               # (quic_host, transport): except-pass ES la semantica.
+    "S603",    # subprocess-without-shell-equals-true: 11. Invocacion
+               # directa por lista de args (sin shell), que es la forma
+               # segura; la regla no distingue.
+    "S310",    # suspicious-url-open-usage: 2 (un test opt-in a un endpoint
+               # OpenAI-compatible, que es justo lo que se prueba).
+    "S108",    # hardcoded-temp-directory: 10 (en un test)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Los tests afirman sobre Exception a proposito: lo que se comprueba es que
+# la operacion falle, no la clase exacta. Se baja B017 aqui en vez de apagarlo
+# en el codigo de produccion.
+"tests/*" = [
+    "B017",    # assert blind Exception: lo que se comprueba es que la
+               # operacion falle, no la clase exacta
+    "S101",    # assert: es el lenguaje de un test
+    "PLR2004", # magic values: umbrales explicitos en el test
+    "PLC0415", # import local: los tests fuerzan reimports limpios
+    "F401",    # unused import: fixtures/imports de reexport
+    "F811",    # redefinition: el patron de purge+reload de sys.modules
+    "S105",    # hardcoded-password-string: nombres de peer, no secretos
+    "S106",    # hardcoded-password-func-arg: idem
+    "RUF059",  # unused-unpacked-variable: `owner, bus, node = _setup()`
+               # desempaca el bus aunque el test solo use owner/node; la
+               # tupla completa es mas legible que indexar [0] y [2].
+]
+# Los demos son scripts ejecutables: el printing es su contrato de salida.
+"delm/demo/*" = ["T201", "S101"]
+# La capa web lanza scripts de demo/pytest por design (es su proposito).
+"delm/web/*" = ["S603", "S607", "S108", "T201", "S104"]
+# El detector de prompt-injection contiene, DELIBERADAMENTE, una tabla de
+# homoglifos cirilicos y griegos: `_CONFUSABLES` mapea "а"->a, "о"->o, etc.
+# RUF001 (ambiguous-unicode) no puede distinguir "cirilico intencional" de
+# "corrupcion" — es exactamente la confusion que el detector existe para
+# detectar, escrita al reves. Ignorar la regla en ESE archivo es correcto;
+# dejarla activa en el resto del repo es lo que atrapa una corrupcion real
+# de un write_file largo.
+"delm/core/injection_hardened.py" = ["RUF001"]
+# La UI estatica no es Python: no entra en el analisis.
+"web/*" = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["delm"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+# ---------------------------------------------------------------------------
+# Pyright: los TRES bugs silenciosos del adaptador ACP (`sync` donde el SDK
+# exige `async`, `sessionId=` en vez de `session_id=`, `acp.TextContentBlock`
+# en vez de `acp.schema`) los cazaron Pyright/LSP en el EDITOR, no el CI.
+# Un type-checker en el gate convierte "me lo salto porque lo veo en el
+# editor" en "rompe el CI".
+# ---------------------------------------------------------------------------
+[tool.pyright]
+include = ["delm"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+reportMissingModuleSource = false
+# `reportPrivateImportUsage` marca los reexports de nivel superior de aioquic
+# (`from aioquic.asyncio import connect, serve`) como "privados" porque estan
+# definidos en los submodulos client/server. Son la API publica de alto nivel
+# que el propio proyecto expone, y el import de nivel superior es el que
+# conviene: es estable entre versiones de aioquic mientras que las rutas
+# interna no. Verificado en runtime: ambos nombres resuelven.
+reportPrivateImportUsage = false
+# Los `possibly-unbound` de provenance.py NO se silencian aqui: se resuelven
+# en el punto de uso, con el motivo escrito junto a cada uno.
+enableTypeIgnoreComments = true
+exclude = [
+    "**/__pycache__",
+    "delm/core/harness_client.py",  # SDK externo sin stubs (opt-in)
+]
+
+[tool.coverage.run]
+source = ["delm"]
+branch = false
+# `delm/demo/` se omite a proposito: son scripts ejecutables cuyo contrato es
+# producir un informe en stdout, y el pipeline las ejercita como SUBPROCESO
+# (`delm demo <n>`), no por import. Incluirlas baja la cifra sin medir nada
+# que no midiese ya el job `demos` del CI.
+omit = [
+    "*/__pycache__/*",
+    "*/demo/*",
+]
+
+[tool.coverage.report]
+# `fail_under` es el gate. El valor NO se elige a ojo: se mide con la suite
+# real y se fija POR DEBAJO del valor medido, con margen deliberado.
+#
+# Medido: 88% con `delm[all]` instalado (4633 stmts, 540 sin cubrir). Era 84%
+# sin `agent-client-protocol`, porque el extra ausente hacia que los 20 tests
+# de test_serve.py corrieran en modo degradado — el del ciclo de vida ACP
+# estaba skipped — y `serve.py` marcara 11% en vez de 77%.
+#
+# El umbral es 85, no 88: ponerlo igual a lo medido deja margen cero, y
+# entonces cualquier linea nueva sin cubrir rompe el CI y el gate se vuelve
+# un obstaculo que empuja a escribir `# pragma: no cover` para librarse.
+# Subirlo a 90+ es trabajo propio: los huecos que quedan son `llm.py` (70%),
+# `harness_client.py` (51%, SDK externo) y `shared_context.py` (85%).
+fail_under = 85
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
 ]

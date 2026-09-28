@@ -22,7 +22,12 @@ production use.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+from delm.core.gist import Summary
+
+if TYPE_CHECKING:  # pragma: no cover - solo para el type-checker
+    from delm.core.llm import LLMClient
 
 
 def _to_text(obj: Any) -> str:
@@ -171,9 +176,17 @@ class LLMVerifier:
                 "You are an admission verifier. Decide whether the summary "
                 "bullets are each grounded in the raw source. Respond with "
                 "JSON: {\"ok\": bool, \"reasons\": [str]}. Raw source:\n"
-                + payload.get("raw", "") +
-                "\nSummary bullets:\n" +
-                "\n".join(b.get("claim", "") for b in (payload.get("summary").claims or []))
+                + payload.get("raw", "")
+                + "\nSummary bullets:\n"
+                + "\n".join(
+                    b.get("claim", "")
+                    # `payload.get("summary")` es None si el payload no trae
+                    # summary: sin el `or Summary()` caia en AttributeError
+                    # DENTRO de la construccion del prompt, y el except de
+                    # abajo lo degradaba a "verifier error" enmascarando el
+                    # fallo real. Un summary vacio verifica como vacio.
+                    for b in (payload.get("summary") or Summary()).claims
+                )
             )
         else:
             prompt = (

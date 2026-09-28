@@ -678,10 +678,18 @@ class MeteredLLMClient:
         self.log.append(entry)
         if not ok:
             self.refused += 1
+            # El peer puede no estar en el ledger todavia (identidad vista
+            # pero capacidad nunca admitida). Antes, formatear este mensaje
+            # hacia `None.credits_available` -> AttributeError DENTRO de la
+            # construccion del PermissionError, de modo que el un error que
+            # debe explicar el saldo del par lo reemplazaba por un
+            # AttributeError. Se formatea el saldo de forma tolerante.
+            _rec = self.ledger.peers.get(self.peer_id)
+            _saldo = getattr(_rec, "credits_available", None)
+            _saldo_txt = f"{_saldo:.4f}" if _saldo is not None else "0.0000 (sin registro)"
             raise PermissionError(
                 f"inferencia sin crédito ({reason}): {self.peer_id} necesita "
-                f"{cost:.4f} y tiene "
-                f"{self.ledger.peers.get(self.peer_id).credits_available:.4f} "
+                f"{cost:.4f} y tiene {_saldo_txt} "
                 f"disponibles")
         self.served += 1
         return await self.inner.complete(*args, **kwargs)

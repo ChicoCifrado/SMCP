@@ -243,9 +243,16 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
     """
     policy = policy or ExchangePolicy()
     total_vram = ledger.total_vram_gb(observed_only=observed_only)
-    base = dict(model=spec.name, memory_required_gb=spec.memory_required_gb,
-                total_vram_gb=total_vram,
-                endpoint=endpoint or spec.endpoint_hint or DEFAULT_MESH_ENDPOINT)
+    # Anotacion explicita: sin ella pyright infiere `dict[str, str | float]`
+    # (el valor comun de los literales) y cada `PlacementPlan(**base)` de la
+    # funcion se convierte en 7 reportArgumentType distintos — 41 errores de
+    # tipado que son UNO solo, aqui.
+    base: dict[str, Any] = dict(
+        model=spec.name,
+        memory_required_gb=spec.memory_required_gb,
+        total_vram_gb=total_vram,
+        endpoint=endpoint or spec.endpoint_hint or DEFAULT_MESH_ENDPOINT,
+    )
 
     if spec.memory_required_gb <= 0:
         return PlacementPlan(ok=False, reason=PlanReject.SPEC_MISSING_MEMORY.value,
@@ -258,14 +265,22 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
         # Distinguish "nobody joined" from "joined but not observed": the fix is
         # different in each case and the operator needs to know which.
         joined = ledger.admitted_peers(observed_only=False)
+        # `notes` es `tuple[str, ...]` en el dataclass. La declaracion va
+        # ANTES de las ramas: mas abajo la misma variable se construye como
+        # lista, y sin esto pyright la fijaba como `list` desde aqui y luego
+        # rechazaba cada rama, o al reves.
+        notes: tuple[str, ...]
         if not joined:
-            reason, notes = PlanReject.NO_ADMITTED_PEERS.value, (
+            reason = PlanReject.NO_ADMITTED_PEERS.value
+            notes = (
                 "ningún nodo ha admitido capacidad todavía: `delm mesh contribute`.",
             )
         else:
-            reason, notes = PlanReject.PEER_NOT_OBSERVED.value, (
+            reason = PlanReject.PEER_NOT_OBSERVED.value
+            notes = (
                 f"{len(joined)} nodo(s) admitidos pero ninguno observado ahora mismo: "
-                "el crédito solo se acumula con el nodo vivo.",)
+                "el crédito solo se acumula con el nodo vivo.",
+            )
         return PlacementPlan(ok=False, reason=reason, notes=notes, **base)
 
     usable = [(p, max(0.0, p.vram_gb - reserve_gb)) for p in candidates]
@@ -288,21 +303,31 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
         picked.append((peer, free))
         covered += free
     if not picked:
+        # Un solo rechazo accionable. La tupla vacia de la rama `else` es lo
+        # que pyright no unia con `tuple[str]`: al declararla aqui, la
+        # anotacion manda y la rama `()` deja de romper la inferencia.
+        _motivo = PlanReject.INSUFFICIENT_CREDIT.value if blocked else PlanReject.PEER_TOO_SMALL.value
+        _notas_bloqueo: tuple[str, ...] = (
+            ("nodos con VRAM pero sin crédito: " + ", ".join(blocked),)
+            if blocked
+            else ()
+        )
         return PlacementPlan(ok=False,
-                             reason=(PlanReject.INSUFFICIENT_CREDIT.value
-                                     if blocked else PlanReject.PEER_TOO_SMALL.value),
-                             notes=(("nodos con VRAM pero sin crédito: "
-                                     + ", ".join(blocked)) if blocked else (),),
+                             reason=_motivo,
+                             notes=_notas_bloqueo,
                              detail={"blocked": blocked}, **base)
 
     if covered + 1e-9 < spec.memory_required_gb:
         missing = round(spec.memory_required_gb - covered, 3)
-        notes = [f"faltan {missing:.1f}G de VRAM verificada para este modelo."]
+        # Nombre propio: `notes` arriba ya existe como `tuple[str, ...]` en las
+        # ramas tempranas (que retornan antes). Reutilizarlo aqui lo convertia
+        # en `list` para pyright y rompia la unificacion de tipo.
+        _notas = [f"faltan {missing:.1f}G de VRAM verificada para este modelo."]
         if blocked:
-            notes.append("nodos con VRAM pero sin crédito (excluidos): "
-                         + ", ".join(blocked))
+            _notas.append("nodos con VRAM pero sin crédito (excluidos): "
+                          + ", ".join(blocked))
         return PlacementPlan(ok=False, reason=PlanReject.INSUFFICIENT_MESH_VRAM.value,
-                             notes=tuple(notes), detail={"blocked": blocked},
+                             notes=tuple(_notas), detail={"blocked": blocked},
                              **base)
 
     # Trim the tail: the last picked peer may not need its whole capacity.
@@ -335,20 +360,24 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
     stages = [replace(s, first_layer=lay[0], last_layer=lay[1])
               for s, lay in zip(stages, layers)]
 
-    notes: list[str] = []
+    # Se acumulan en lista y se convierten a tupla al construir el plan
+    # (`notes` es `tuple[str, ...]`). Nombre `_ok_notes` y no `notes` para no
+    # colisionar con el `notes: tuple[str, ...]` de las ramas de rechazo
+    # de rechazo tempranas de esta misma funcion.
+    _ok_notes: list[str] = []
     if len(stages) == 1:
-        notes.append(f"cabe entero en {stages[0].peer_id}: no hace falta repartir.")
+        _ok_notes.append(f"cabe entero en {stages[0].peer_id}: no hace falta repartir.")
     else:
-        notes.append("reparto por cuota de VRAM verificada; "
-                     "el mapeo capa→stage lo resuelve el executor (MeshLLM).")
+        _ok_notes.append("reparto por cuota de VRAM verificada; "
+                         "el mapeo capa→stage lo resuelve el executor (MeshLLM).")
     if spec.n_layers <= 0:
-        notes.append("el modelo no publica nº de capas: el plan es por memoria.")
+        _ok_notes.append("el modelo no publica nº de capas: el plan es por memoria.")
     if blocked:
-        notes.append("nodos excluidos por falta de crédito: " + ", ".join(blocked))
+        _ok_notes.append("nodos excluidos por falta de crédito: " + ", ".join(blocked))
 
     return PlacementPlan(ok=True, reason=PlanReject.OK.value,
                          stages=tuple(stages),
-                         single_node=len(stages) == 1, notes=tuple(notes),
+                         single_node=len(stages) == 1, notes=tuple(_ok_notes),
                          detail={"blocked": blocked}, **base)
 
 

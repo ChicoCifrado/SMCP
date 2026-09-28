@@ -34,6 +34,15 @@ from dataclasses import dataclass
 from typing import Any
 
 # --- backend detection (lazy, optional) -------------------------------------
+# Los tres imports de abajo solo se ligan DENTRO del `try`. Pyright no
+# propaga `HAVE_ED25519` (derivado del exito del try) hasta ellos, y reporta
+# "possibly unbound" en cada uso — 6 falsos positivos: el unico camino que
+# llega a `KeyPair.new(kind="ed25519")` pasa antes por
+# `if not HAVE_ED25519: raise`, de modo que `_ed25519`/`_Encoding`/
+# `_PublicFormat` estan ligadas ahi sin excepcion. Se silencia en el punto de
+# uso (ver abajo) y no aqui: ponerlos a None en el except cambia "posiblemente
+# no ligado" por "miembro de None", que es el mismo falso positivo con otro
+# nombre, y deja un None alcanzable en una ruta de criptografia.
 try:  # pragma: no cover - exercised only when installed
     from cryptography.hazmat.primitives.asymmetric import ed25519 as _ed25519
     from cryptography.hazmat.primitives.serialization import (
@@ -168,9 +177,12 @@ class KeyPair:
         if kind == "ed25519":
             if not HAVE_ED25519:
                 raise RuntimeError("ed25519 requested but 'cryptography' is not installed")
-            priv = _ed25519.Ed25519PrivateKey.generate()
+            # `HAVE_ED25519` True implica que el `try` de arriba termino bien y
+            # que estas tres quedaron ligadas; el `raise` de la linea anterior
+            # es la garantia. Pyright no rastrea esa implication.
+            priv = _ed25519.Ed25519PrivateKey.generate()  # type: ignore[possibly-unbound]
             pub = priv.public_key().public_bytes(
-                _Encoding.Raw, _PublicFormat.Raw
+                _Encoding.Raw, _PublicFormat.Raw  # type: ignore[possibly-unbound]
             )
             return cls(author_id, "ed25519", priv, pub)
         if kind == "hmac":
@@ -235,9 +247,15 @@ class KeyPair:
             blob = json.load(fh)
         if blob.get("kind") != "ed25519":
             raise ValueError(f"unsupported persisted key kind: {blob.get('kind')!r}")
-        priv = _ed25519.Ed25519PrivateKey.from_private_bytes(
+        # Misma garantia que en `KeyPair.new`: sin `cryptography` no se puede
+        # haber escrito un blob de kind "ed25519", y sin las clases no habria
+        # ni forma de generarlo. Pyright no ve esa dependencia entre archivos.
+        priv = _ed25519.Ed25519PrivateKey.from_private_bytes(  # type: ignore[possibly-unbound]
             bytes.fromhex(blob["private_key"]))
-        pub = priv.public_key().public_bytes(_Encoding.Raw, _PublicFormat.Raw)
+        pub = priv.public_key().public_bytes(
+            _Encoding.Raw,  # type: ignore[possibly-unbound]
+            _PublicFormat.Raw,  # type: ignore[possibly-unbound]
+        )
         return cls(str(blob.get("author_id", "")), "ed25519", priv, pub)
 
 

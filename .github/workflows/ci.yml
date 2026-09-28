@@ -73,6 +73,44 @@ jobs:
       - name: "demo 4: run_real_demo --dry-run (resuelve la config)"
         run: python -m delm.demo.run_real_demo --dry-run
 
+  # Gates de calidad (P4). Antes de esto el CI no tenia NINGUNO: ni lint, ni
+  # tipos, ni cobertura. Una suite verde no puede detectar ni el drift del
+  # bloque `Estructura` del README ni el hecho de que el wheel no shippease
+  # la capa web.
+  #
+  # Se instala `.[all]` A PROPOSITO, no `.[dev]`: los extras opcionales
+  # (agent-client-protocol, aioquic, websockets, aiozeroconf) cambian la
+  # cobertura de forma grande — con el SDK ACP ausente, los 20 tests de
+  # test_serve.py corren en modo degradado y serve.py marca 11% en vez de
+  # 77%. Un gate medido con un conjunto de dependencias distinto del de
+  # produccion mide otra cosa.
+  quality:
+    name: lint + cobertura
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+      - name: Instalar delm[all] + deps de test
+        run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
+      - name: "ruff (config en pyproject.toml: select + ignore justificado)"
+        run: python -m ruff check .
+      # `ruff format --check` NO es gate todavia, a proposito: 81 de 92
+      # archivos se reformatearian, y aplicarlo aqui mezclaria un cambio
+      # cosmetico sobre 12.100 lineas con los hallazgos reales del
+      # type-checker, escondiendo justamente lo que el gate debe revelar.
+      # Formatear es un commit propio (sin logica) y despues se activa.
+      # El umbral (`fail_under`) vive en [tool.coverage.report]. Es un gate
+      # real, no un informe: baja de cobertura y rompe el build.
+      - name: Suite + cobertura
+        run: python -m pytest --cov=delm --cov-report=term:skip-covered
+
   # Check de conciliación README: el conteo declarado en el README debe cuadrar
   # con `pytest --collect-only -q`. Si no cuadra, rompe el CI (fuerza la
   # convención de actualizar el README al añadir/quitar tests).

@@ -422,8 +422,11 @@ class QuicHostNode:
             except Exception:  # noqa: BLE001 - cierre tolerante
                 pass
             try:
-                await srv.wait_closed()
+                await srv.wait_closed()  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001 - cierre tolerante
+                # `wait_closed` no existe en todas las versiones de aioquic
+                # (1.0 lo anadio). El try/except lo convierte en "si esta
+                # disponible, esperala; si no, sigue": cerramos igualmente.
                 pass
 
     def _make_handler(self, par: str):
