@@ -908,9 +908,21 @@ delm/
   cli.py              la CLI unificada (demo/test/config-check/fit/mesh/version)
   __main__.py         `python -m delm` == `delm` (mismo parser)
   serve.py            smcp-serve: SMCP como agente ACP por stdio (vía A)
-  web/
+  web/                la capa web, DENTRO del paquete (delm[web])
     app.py            FastAPI :8099 — /api/status, /api/run, estático
     api.py            el router interactivo (/api/runs, /api/scan, …)
+    static/                11 páginas (nav común en todas) + assets
+      index.html nucleo.html seguridad.html demos.html arquitectura.html
+      play.html context.html ledger.html estado.html malla.html console.html
+      js/                   three.min.js (la escena 3D de `nucleo.html`)
+      assets/
+        app.js               tema dark/light + recordar última página
+        api.js               fetch/JSON/SSE + pip de salud (compartido)
+        estado.js            estado en vivo: señales, config, runs, acciones
+        fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
+        malla.js             la malla: intercambio, reparto y auditoría
+        context.js ledger.js play.js demos.js seguridad.js   una por página
+        style.css            design system · OpenCode.otf · smcp-mark.svg
   core/
     gist.py            Gist, Summary, RefTag, GistKind   (el modelo de datos)
     shared_context.py  SharedContext                     (el C verificado)
@@ -952,19 +964,6 @@ delm/
     run_taint_demo.py      demo Capa 5
     run_multihost_demo.py  demo multi-host (QUIC / Nostr)
     run_rsi_demo.py        demo RSI L1 (mide HCI)
-  web/
-    static/                11 páginas (nav común en todas)
-      index.html nucleo.html seguridad.html demos.html arquitectura.html
-      play.html context.html ledger.html estado.html malla.html console.html
-      console.js            una por página
-      assets/
-        app.js               tema dark/light + recordar última página
-        api.js               fetch/JSON/SSE + pip de salud (compartido)
-        estado.js            estado en vivo: señales, config, runs, acciones
-        fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
-        malla.js             la malla: intercambio, reparto y auditoría
-        context.js ledger.js play.js demos.js seguridad.js   una por página
-        style.css            design system · OpenCode.otf
   tests/   (38 archivos — ver lista arriba)
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)

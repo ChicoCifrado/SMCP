@@ -8,6 +8,14 @@ __pycache__/
 build/
 dist/
 
+# Artefactos generados en la raiz. `delm_report.pdf` estuvo versionado
+# 10 commits (3b3c2f8) sin que nada lo sirviera ni lo referenciara: la web
+# monta `delm/web/static/`, no la raiz del repo, asi que era inalcanzable.
+# Nada en el repo lo genera (ni reportlab ni weasyprint), asi que era un
+# export manual. Se ignora para que no vuelva a colarse.
+delm_report.pdf
+*.pdf
+
 # Environments
 .venv/
 venv/
