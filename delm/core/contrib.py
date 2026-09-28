@@ -93,14 +93,28 @@ IDENTITY_RELATIVE = Path("config") / "mesh_identity.json"
 def _default_path(relative: Path) -> Path:
     """``<repo>/config/<file>`` when that directory exists, else CWD-relative.
 
-    Mirrors :func:`smcp_api._config_path`: prefer the layout next to the package
-    (so ``python -m delm`` and ``python api_server.py`` agree) and fall back to
-    the working directory for a standalone deployment.
+    Shares the resolution rule with :func:`delm.web.api._config_path`: prefer
+    the layout next to the checkout root (so ``python -m delm`` and
+    ``delm-serve-web`` agree on where ``config/`` lives) and fall back to the
+    working directory for a standalone deployment.
+
+    The root comes from :func:`delm.web.find_repo_root` rather than from
+    walking up from this file: walking up three levels from ``delm/core/``
+    lands on ``site-packages/`` in an installed wheel, where there is no
+    ``config/`` to find and no checkout to point at.
+
+    That import is **lazy** on purpose: ``delm.web`` pulls in fastapi (an
+    optional extra), and this module is core. A top-level import would make
+    the whole library require the web extra to read a config path.
     """
-    package_root = Path(__file__).resolve().parent.parent.parent
-    beside = package_root / relative
-    if beside.parent.exists():
-        return beside
+    try:
+        from delm.web import REPO_ROOT
+    except ImportError:  # pragma: no cover - delm[web] no instalado
+        REPO_ROOT = None
+    if REPO_ROOT is not None:
+        beside = REPO_ROOT / relative
+        if beside.parent.exists():
+            return beside
     return relative
 
 

@@ -8,10 +8,17 @@ un threat model que solo dice "esto es seguro" es peor que ninguno.
 - **Doc relacionada**: [`architecture.md`](architecture.md) — qué piezas hay en
   cada capa. Este documento asume que las leíste.
 - **Alcance**: el paquete `delm/`, sus capas de red (3 y 4) y la capa 5. La web
-  (`web/`, `api_server.py`) es una *vista* sobre el estado local y **no** es una
-  superficie de exposición propia: corre en `127.0.0.1` y su API refleja el
-  estado en memoria/proceso. Lo mismo para `smcp-serve` (`serve.py`, ACP por
-  stdio): su confianza es la del **límite de proceso** (ver §2, superficie ACP).
+  (`delm/web/`, `app.py` + `api.py`) es una *vista* sobre el estado local y
+  **no** es una superficie de exposición propia: corre en `127.0.0.1` y su API
+  refleja el estado en memoria/proceso. Lo mismo para `smcp-serve` (`serve.py`,
+  ACP por stdio): su confianza es la del **límite de proceso** (ver §2,
+  superficie ACP).
+- **No-garantía de la capa web**: que la UI servida desde el wheel tenga todo
+  lo que la UI del checkout enseña. `delm-serve-web` sin checkout arranca y
+  sirve la UI, pero los contadores que leen el árbol de fuentes
+  (`test_fns`, `test_files`, `core_modules`) no existen y se declaran como no
+  disponibles — la degradación es explícita, pero la *capacidad* de la UI sí
+  depende de qué se instaló.
 
 ## 0. Resumen ejecutivo
 

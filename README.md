@@ -597,7 +597,7 @@ El suite está repartido en treinta y ocho archivos, todos deterministas:
   y funciona aunque llmfit no esté). El config se redirige a `tmp_path`.
 - `test_api_actions.py` / `test_api_config.py` / `test_api_demo.py` /
   `test_api_inspect.py` / `test_api_runs.py` — la API interactiva de
-  `api_server.py` + `smcp_api.py`: las acciones de sesión (scan, taint, config,
+  `delm/web/app.py` + `delm/web/api.py`: las acciones de sesión (scan, taint, config,
   export del ledger, SSE, meshllm), las demos in-proceso, la inspección del
   contexto y el gestor de runs (35 tests en total).
 - `test_serve.py` — `smcp-serve` (SMCP como agente ACP): los helpers de prompt
@@ -610,11 +610,21 @@ El suite está repartido en treinta y ocho archivos, todos deterministas:
 ### Web UI y API
 
 ```bash
-pip install -e ".[web]"      # fastapi + uvicorn
-python api_server.py         # http://127.0.0.1:8099
+pip install delm[web]        # fastapi + uvicorn
+delm-serve-web                # http://127.0.0.1:8099
 ```
 
-`api_server.py` expone:
+El servidor es ahora **superficie del paquete** (`delm/web/`), no un script
+suelto en la raíz del repo: `pip install delm[web]` instala el servidor y los
+estáticos que sirve, y la UI funciona igual instalada que en desarrollo.
+
+Lo único que necesita un checkout es correr **la suite** y contar
+`tests/` / `delm/core/`. Sin checkout, `/api/status` responde `repo: false`
+con la lista de lo no disponible, y `POST /api/run/tests` devuelve un motivo
+accionable en vez de un error de pytest — es una degradación explícita, no
+un cero silencioso que la UI leería como "el proyecto tiene cero tests".
+
+`delm-serve-web` expone:
 
 - `/api/functions` — lista de funciones (demo, seguridad, taint, multi-host, tests).
 - `/api/run/<id>` — lanza la función (subprocess) y devuelve JSON.
@@ -891,7 +901,9 @@ delm/
   cli.py              la CLI unificada (demo/test/config-check/fit/mesh/version)
   __main__.py         `python -m delm` == `delm` (mismo parser)
   serve.py            smcp-serve: SMCP como agente ACP por stdio (vía A)
-  api_server.py       FastAPI :8099 — /api/status, /api/run, estático web/
+  web/
+    app.py            FastAPI :8099 — /api/status, /api/run, estático
+    api.py            el router interactivo (/api/runs, /api/scan, …)
   core/
     gist.py            Gist, Summary, RefTag, GistKind   (el modelo de datos)
     shared_context.py  SharedContext                     (el C verificado)
@@ -933,21 +945,25 @@ delm/
     run_taint_demo.py      demo Capa 5
     run_multihost_demo.py  demo multi-host (QUIC / Nostr)
     run_rsi_demo.py        demo RSI L1 (mide HCI)
-  web/                    11 páginas (nav común en todas)
-    index.html nucleo.html seguridad.html demos.html arquitectura.html
-    play.html context.html ledger.html estado.html malla.html console.html
-    assets/
-      app.js               tema dark/light + recordar última página
-      api.js               fetch/JSON/SSE + pip de salud (compartido)
-      estado.js            estado en vivo: señales, config, runs, acciones
-      fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
-      malla.js             la malla: intercambio, reparto y auditoría
-      context.js ledger.js play.js demos.js seguridad.js   una por página
-      style.css            design system · OpenCode.otf
+  web/
+    static/                11 páginas (nav común en todas)
+      index.html nucleo.html seguridad.html demos.html arquitectura.html
+      play.html context.html ledger.html estado.html malla.html console.html
+      console.js            una por página
+      assets/
+        app.js               tema dark/light + recordar última página
+        api.js               fetch/JSON/SSE + pip de salud (compartido)
+        estado.js            estado en vivo: señales, config, runs, acciones
+        fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
+        malla.js             la malla: intercambio, reparto y auditoría
+        context.js ledger.js play.js demos.js seguridad.js   una por página
+        style.css            design system · OpenCode.otf
   tests/   (38 archivos — ver lista arriba)
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa
+scripts/
+  check_readme_count.py   gate de conciliación README ↔ pytest
 ```
 
 ---

@@ -28,7 +28,7 @@ Each ACP ``session`` maps to a SMCP run: an editor prompt becomes one or more
 :class:`~delm.core.pipeline.DelmPipeline` (compress → verify → admit into the
 signed shared context), and the result streams back as ``session/update``
 chunks. Nothing here re-implements the pipeline — it is the same code path the
-HTTP API uses (:mod:`smcp_api`), so an ACP run and an ``/api/runs`` run are the
+HTTP API uses (:mod:`delm.web.api`), so an ACP run and an ``/api/runs`` run are the
 same pipeline over the same admission gate.
 
 Contract invariants

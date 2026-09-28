@@ -19,7 +19,7 @@ own report to stdout, and (in the multihost case) spawns child nodes with
 ``python -m delm.demo.run_multihost_demo``. Dispatching the module keeps the
 CLI a thin, honest wrapper: no demo has to be refactored to be callable, the
 demo's own exit code is the CLI's exit code, and the demos stay importable for
-the in-process API (:mod:`api_server`, :mod:`smcp_api`) and the tests.
+the in-process API (:mod:`delm.web.app`, :mod:`delm.web.api`) and the tests.
 
 ``delm fit`` is the one subcommand that talks to something outside the repo
 (``llmfit``, an external tool), so it is the one that can fail for a reason

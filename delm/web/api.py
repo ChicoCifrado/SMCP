@@ -1,7 +1,7 @@
 """SMCP interactive API — sessions, inspection, demos (in-process).
 
-Mounts under /api/* from api_server.py. Localhost-only by design; the
-frontend never receives api_key values.
+Mounted under ``/api/*`` by :mod:`delm.web.app`. Localhost-only by design; the
+frontend never receives ``api_key`` values.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from delm.config import DEFAULT_CONFIG_PATH, build_client, load_config
+from delm.web import REPO_ROOT
 from delm.core.contrib import (
     ExchangePolicy,
     default_identity_path,
@@ -411,9 +412,7 @@ def session_state(s: RunSession) -> dict[str, Any]:
             queue_labels.append({"label": lbl, "state": st, "error": t.error})
         ctx = s.pipeline.ctx
         ctx_labels = list(ctx.labels())
-        if hasattr(ctx, "taint_report"):
-            with contextlib.suppress(Exception):
-                taint = ctx.taint_report()
+        taint = _taint_report(ctx)
         metrics = s.pipeline.metrics.aggregate()
     gists = []
     if s.pipeline is not None:
@@ -469,6 +468,25 @@ def outcome_dict(s: RunSession) -> dict[str, Any]:
     }
 
 
+def _taint_report(ctx: Any) -> dict[str, int]:
+    """El reporte de taint de ``ctx``, o ``{}`` si el contexto no lo tiene.
+
+    ``taint`` / ``taint_report`` existen en :class:`SecureSharedContext` (con
+    su registro de taint) pero no en el :class:`SharedContext` base: el
+    endpoint tiene que servir ambos. Se resuelve con ``getattr`` — y no con
+    ``hasattr`` seguido de acceso — porque el type-checker no estrecha el
+    tipo con ``hasattr``, y el patron ya es la convencion del archivo (ver el
+    ``getattr(s.pipeline.ctx, "ledger", None)`` de /api/ledger).
+    """
+    fn = getattr(ctx, "taint_report", None)
+    if fn is None:
+        return {}
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 - un reporte que falla no tumba la vista
+        return {}
+
+
 # ------------------------------------------------------------------ config
 def _load_cfg():
     """Load config from the resolved YAML path (env still wins)."""
@@ -477,14 +495,17 @@ def _load_cfg():
 
 
 def _config_path() -> Path:
-    # Resolve relative to CWD so api_server's ROOT layout is respected.
+    # `config/model_config.yaml` es relativo al CWD por defecto. Con un
+    # checkout se prefiere la copia junto a la raiz del repo; en una
+    # instalacion sin checkout se usa la del CWD (o la que ya exista), que es
+    # donde un usuario de un `pip install` espera tenerla.
     p = Path(DEFAULT_CONFIG_PATH)
     if p.is_absolute():
         return p
-    # Prefer the copy under the server package root when present.
-    root_cfg = Path(__file__).resolve().parent / p
-    if root_cfg.exists() or root_cfg.parent.exists():
-        return root_cfg
+    if REPO_ROOT is not None:
+        root_cfg = REPO_ROOT / p
+        if root_cfg.exists() or root_cfg.parent.exists():
+            return root_cfg
     return p
 
 
@@ -769,10 +790,7 @@ def get_context(run: str | None = None) -> dict[str, Any]:
     if s.pipeline is None:
         raise HTTPException(status_code=409, detail=f"run {s.id} has no pipeline yet")
     ctx = s.pipeline.ctx
-    taint: dict[str, int] = {}
-    if hasattr(ctx, "taint_report"):
-        with contextlib.suppress(Exception):
-            taint = ctx.taint_report()
+    taint: dict[str, int] = _taint_report(ctx)
     gists = [_gist_dict(g) for g in ctx.snapshot()]
     # strip huge raw from list view
     for g in gists:
@@ -920,6 +938,19 @@ def _require_pipeline(run: str | None) -> RunSession:
     return s
 
 
+def _ctx_of(s: RunSession) -> Any:
+    """El contexto de una sesión que ya pasó por :func:`_require_pipeline`.
+
+    Existe para el type-checker: ``s.pipeline`` es opcional en el dataclass y
+    pyright no sabe que :func:`_require_pipeline` ya asegura que no lo es. El
+    ``assert`` no cambia el comportamiento en runtime (la condición es
+    invariante tras el helper, y si algún día dejara de serlo, prefiero un
+    AssertionError explícito que un ``AttributeError`` en un endpoint).
+    """
+    assert s.pipeline is not None, "_require_pipeline garantiza pipeline"
+    return s.pipeline.ctx
+
+
 @router.post("/scan")
 def post_scan(body: ScanIn) -> dict[str, Any]:
     """Deterministic prompt-injection scan (baseline + hardened A/B)."""
@@ -954,11 +985,14 @@ def post_scan(body: ScanIn) -> dict[str, Any]:
 @router.get("/taint")
 def get_taint(run: str | None = None) -> dict[str, Any]:
     s = _require_pipeline(run)
-    ctx = s.pipeline.ctx
-    if not hasattr(ctx, "taint"):
+    ctx = _ctx_of(s)
+    # `taint` existe solo en SecureSharedContext, no en el SharedContext base:
+    # por eso la interogacion. Se hace con getattr (y no hasattr + acceso) para
+    # que el type-checker tambien lo vea.
+    reg = getattr(ctx, "taint", None)
+    if reg is None:
         raise HTTPException(status_code=409, detail="context has no taint registry")
-    reg = ctx.taint
-    report = ctx.taint_report() if hasattr(ctx, "taint_report") else {}
+    report = _taint_report(ctx)
     sources = [
         {
             "label": src.label,
@@ -983,10 +1017,13 @@ def get_taint(run: str | None = None) -> dict[str, Any]:
 def post_taint(body: TaintIn) -> dict[str, Any]:
     """Operator action: escalate or clear taint on a label in the run."""
     s = _require_pipeline(body.run)
-    ctx = s.pipeline.ctx
-    if not hasattr(ctx, "taint"):
+    ctx = _ctx_of(s)
+    # `taint` existe solo en SecureSharedContext, no en el SharedContext base:
+    # por eso la interogacion. Se hace con getattr (y no hasattr + acceso) para
+    # que el type-checker tambien lo vea.
+    reg = getattr(ctx, "taint", None)
+    if reg is None:
         raise HTTPException(status_code=409, detail="context has no taint registry")
-    reg = ctx.taint
     label = body.label
     if body.action == "clear":
         reg.clear(label)
@@ -1001,7 +1038,7 @@ def post_taint(body: TaintIn) -> dict[str, Any]:
             raise HTTPException(status_code=422, detail="escalate requires level 1 or 2")
         reg.escalate(label, lvl, reason=body.reason or "manual:operator")
         action_note = f"escalated to {lvl.name}"
-    report = ctx.taint_report() if hasattr(ctx, "taint_report") else {}
+    report = _taint_report(ctx)
     _push(s, "taint", label=label, action=body.action, note=action_note)
     return {
         "ok": True,

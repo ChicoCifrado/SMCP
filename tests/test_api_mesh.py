@@ -29,11 +29,11 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
-import smcp_api
-from api_server import app
+from delm.web import api as smcp_api
+from delm.web.app import app
 from delm.core.contrib import ContributionLedger
 from delm.core.provenance import KeyPair
-from smcp_api import MANAGER
+from delm.web.api import MANAGER
 
 MESH = "malla-api-test"
 

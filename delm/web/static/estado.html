@@ -40,6 +40,15 @@
     .kv .k { color: var(--muted); }
     .kv .v { word-break: break-all; }
     .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-top: 10px; }
+    /* Aviso de "instalación sin checkout": degradación explícita (opción 2)
+       en vez de dejar los contadores en "—" sin explicación. */
+    .aviso-repo {
+      border: 1px solid var(--warn-line, #7a5c1e); border-left-width: 3px;
+      background: var(--warn-bg, rgba(250, 200, 80, .10));
+      border-radius: 8px; padding: 10px 12px; margin-bottom: 14px;
+      font-size: 13px; line-height: 1.5; color: var(--text);
+    }
+    .aviso-repo strong { color: var(--text); }
     .shortcuts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
     .shortcuts a {
       font-size: 13px; padding: 7px 14px; border: 1px solid var(--line);
@@ -124,6 +133,11 @@
 
       <section>
         <h2>Señales</h2>
+        <div id="sin-repo" class="aviso-repo" hidden>
+          <strong>Instalación sin checkout del repo.</strong>
+          <span id="sin-repo-msg"></span>
+          Clona el repo si quieres correr la suite; las demos funcionan igual.
+        </div>
         <div class="live-grid">
           <div class="live-card"><div class="num" id="s-test-fns">—</div><div class="lbl">def test_ (fs)</div></div>
           <div class="live-card"><div class="num" id="s-test-files">—</div><div class="lbl">archivos de test</div></div>

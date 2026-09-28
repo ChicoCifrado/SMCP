@@ -29,6 +29,22 @@
   }
 
   function fillStatus(status) {
+    // Opción 2 (degradar con aviso, no con ceros): `test_fns`, `test_files`
+    // y `core_modules` solo existen con un checkout del repo. Sin él, la API
+    // los omite y declara `repo: false` + `unavailable` en vez de devolver
+    // ceros — un 0 aquí sería indistinguible de "el proyecto tiene cero
+    // tests". Se avisa en el panel para que el "—" no parezca un dato roto.
+    var sinRepo = status.repo === false;
+    if (sinRepo) {
+      var aviso = $("sin-repo");
+      if (aviso) {
+        aviso.hidden = false;
+        var falta = (status.unavailable || []).join(", ");
+        $("sin-repo-msg").textContent =
+          "instalación sin checkout: no se puede leer tests/ ni contar módulos ("
+          + falta + "). Las demos siguen disponibles.";
+      }
+    }
     $("s-test-fns").textContent = status.test_fns != null ? status.test_fns : "—";
     $("s-test-files").textContent = status.test_files != null ? status.test_files : "—";
     $("s-core").textContent = status.core_modules != null ? status.core_modules : "—";
@@ -65,7 +81,7 @@
       })
       .catch(function (e) {
         SMCP.setApi(false, "API caída (" + e.message + ")");
-        show("No se pudo leer /api/status.\nArranca: python api_server.py → http://127.0.0.1:8099\n" + e, "err");
+        show("No se pudo leer /api/status.\nArranca: delm-serve-web → http://127.0.0.1:8099\n" + e, "err");
       });
   }
 

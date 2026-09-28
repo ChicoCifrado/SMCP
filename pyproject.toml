@@ -92,9 +92,10 @@ include = ["delm*"]
 # Los estaticos de la web son datos de paquete, no codigo. Sin esto el wheel
 # instala `delm-serve-web` pero no los .html/.css/.js que sirve, y la UI cae
 # en un 404 silencioso al primer asset. `packages.find` solo recoge modulos
-# Python, de ahi el patron explicito.
+# Python, de ahi el patron explicito. El OTF (wordmark) va dentro por el
+# `assets/*`: sin el, la fuente cae al fallback del sistema en silencio.
 [tool.setuptools.package-data]
-"delm.web" = ["*.html", "assets/*"]
+"delm.web" = ["static/*", "static/assets/*", "static/js/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

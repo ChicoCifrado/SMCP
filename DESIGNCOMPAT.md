@@ -7,7 +7,7 @@
 ## 1. Hechos de compatibilidad
 
 - **OpenDesign** — Apache-2.0, monorepo Node ~24 + pnpm. Desktop local-first (Electron + daemon + web). No comparte runtime con SMCP.
-- **SMCP (DeLM)** — Python 3.11+, FastAPI. Servidor `smcp_api.py` (FastAPI, `/api/*`) + `api_server.py` (vanilla, :8099). Cliente `OpenAICompatibleClient` que consume LLMs vía OpenAI-compatible.
+- **SMCP (DeLM)** — Python 3.11+, FastAPI. Servidor `delm/web/` (FastAPI, `/api/*` + estáticos, :8099) vía `delm-serve-web`. Cliente `OpenAICompatibleClient` que consume LLMs vía OpenAI-compatible.
 - **Lenguaje de integración:** ACP (Agent Client Protocol) + OpenAI-compatible. Son los dos protocolos que OpenDesign ya habla.
 
 ## 2. Cómo añade OpenDesign un agente (el anclaje)
@@ -20,7 +20,7 @@
 
 ## 3. Qué expone SMCP hoy
 
-- **FastAPI (`smcp_api.py`):** `/api/config`, `/api/health`, `/api/runs` (create/get/state/outcome/cancel), `/api/context`, `/api/ledger`, `/api/metrics`, `/api/unfold`, `/api/verifier/check`, `/api/demo/{name}`, `/api/scan`, `/api/taint`, `/api/ledger/export`, `/api/runs/{id}/events`, `/api/meshllm`.
+- **FastAPI (`delm/web/api.py`):** `/api/config`, `/api/health`, `/api/runs` (create/get/state/outcome/cancel), `/api/context`, `/api/ledger`, `/api/metrics`, `/api/unfold`, `/api/verifier/check`, `/api/demo/{name}`, `/api/scan`, `/api/taint`, `/api/ledger/export`, `/api/runs/{id}/events`, `/api/meshllm`.
 - **Cliente OpenAI-compatible:** `OpenAICompatibleClient` consume LLMs (es el mismo que hizo el wiring P2 contra `127.0.0.1:8888/v1`).
 - **Web propio:** `web/` (7 páginas) + `web/assets/api.js` (el cliente JS).
 - **Falta:** un **CLI que hable ACP** por stdio. Es la pieza que SMCP no expone hoy y que la vía A requiere.
@@ -66,13 +66,13 @@
 
 ## 7. Próximos pasos (concretos)
 
-- **B primero (validar):** exponer `/v1/chat/completions` en `smcp_api.py` sobre el loop; apuntar OpenDesign BYOK a `127.0.0.1:8099/v1`. Verificar que el stream llega a la web UI.
-- **Luego A (consolidar):** implementar `smcp-serve` (CLI, ACP/stdio) reutilizando el loop de `smcp_api.py`; añadir `smcp.ts` en `apps/daemon/src/runtimes/defs/` + registro en `registry.ts`.
+- **B primero (validar):** exponer `/v1/chat/completions` en `delm/web/api.py` sobre el loop; apuntar OpenDesign BYOK a `127.0.0.1:8099/v1`. Verificar que el stream llega a la web UI.
+- **Luego A (consolidar):** implementar `smcp-serve` (CLI, ACP/stdio) reutilizando el loop de `delm/web/api.py`; añadir `smcp.ts` en `apps/daemon/src/runtimes/defs/` + registro en `registry.ts`.
 - **Paridad con Hermes:** clonar la forma de `hermes.ts` (mismo `streamFormat`, misma detección de modelos) para que SMCP sea indistinguible de un agente más del catálogo.
 
 ## 8. Referencias
 
 - **OpenDesign** — `https://github.com/nexu-io/open-design` (Apache-2.0). Clonado en `~/.hermes/cache/scratch/open-design`.
 - **Adapter contract** — `open-design/apps/daemon/src/runtimes/types.ts` (`RuntimeAgentDef`); `defs/hermes.ts` (precedente ACP); `registry.ts` (registro).
-- **SMCP** — `/mnt/d/Hermes/DeLM/delm` (GPL-3.0). `smcp_api.py` (FastAPI, `/api/*`), `api_server.py` (:8099), `delm/core/llm.py` (`OpenAICompatibleClient`).
+- **SMCP** — `/mnt/d/Hermes/DeLM/delm` (GPL-3.0). `delm/web/` (FastAPI, `/api/*` + estáticos, :8099), `delm/core/llm.py` (`OpenAICompatibleClient`).
 - **P2 (wiring verificado)** — `tests/test_meshllm_wiring.py` (el contrato SMCP→OpenAI-compatible ya probado contra `127.0.0.1:8888`).

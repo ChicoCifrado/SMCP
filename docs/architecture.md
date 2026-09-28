@@ -274,9 +274,26 @@ fuente envenenada puede orientar a todos los que la lean.
   hijos) y devuelve su exit code; `delm test` corre la suite; `delm
   config-check` resuelve la config con la key enmascarada. Detalle en el
   README → "La CLI `delm`".
-- **`api_server.py` + `smcp_api.py`** — la API de la web (FastAPI): estado en
-  vivo, lanzar la suite/demos, y las acciones de sesión (scan, taint, config,
-  export del ledger, SSE, meshllm). Sirve el estático de `web/`.
+- **`web/app.py` + `web/api.py`** — la API de la web (FastAPI), montada bajo
+  `delm/web/` y expuesta con `delm-serve-web`: estado en vivo, lanzar la
+  suite/demos, y las acciones de sesión (scan, taint, config, export del
+  ledger, SSE, meshllm). Sirve el estático de `web/static/`, que viaja en el
+  wheel como *package data*. Antes vivía en `api_server.py` / `smcp_api.py`
+  en la raíz del repo, fuera del paquete: el wheel no lo shippeaba, así que
+  `delm[web]` instalaba dependencias para un módulo ausente y la UI solo se
+  podía lanzar con `cd` al checkout.
+  - **`REPO_ROOT` es opcional, y esa es la decisión de diseño.** Un checkout
+    solo hace falta para lo que *inspecciona el árbol de fuentes*: correr la
+    suite y contar `tests/` / `delm/core/`. Las demos son módulos instalados y
+    se lanzan en cualquier sitio. Sin checkout, `/api/status` responde
+    `repo: false` + `unavailable: [...]` en vez de ceros (un `0` sería
+    indistinguible de "el proyecto tiene cero tests"), `POST /api/run/tests`
+    devuelve un motivo accionable en vez de un error de pytest, y la página
+    *estado* muestra un aviso visible. Es degradación explícita, no silenciosa.
+  - `delm/core/contrib.py` comparte ese mismo `REPO_ROOT` para resolver
+    `config/`, con el import **lazy**: `delm.web` arrastra fastapi (extra
+    opcional) y `contrib` es núcleo, así que un import de nivel superior
+    haría que toda la librería necesitara el extra web para leer una ruta.
 - **`serve.py`** — `smcp-serve`: SMCP como agente **ACP por stdio**. Un cliente
   ACP lo registra como un agente más, en vez de reimplementar el loop. Un
   prompt corre el mismo `DelmPipeline` que `/api/run`; la salida vuelve como

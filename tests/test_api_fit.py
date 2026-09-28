@@ -25,8 +25,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import smcp_api
-from api_server import app
+from delm.web import api as smcp_api
+from delm.web.app import app
 from delm.core.llmfit import (
     FitReport,
     FitRow,
@@ -34,7 +34,7 @@ from delm.core.llmfit import (
     LlmfitRunner,
     SystemProfile,
 )
-from smcp_api import MANAGER
+from delm.web.api import MANAGER
 
 SYSTEM = {
     "total_ram_gb": 31.3, "available_ram_gb": 22.0, "cpu_cores": 12,
