@@ -3,7 +3,7 @@
 Qué se cubre, y por qué es lo que importa:
 
 * **El reto es de un solo uso y expira.** Es lo que hace una afirmación de
-  capacidad *no-replayable*: sin esto, un "tengo 64G" firmado seCould volver a
+  capacidad *no-replayable*: sin esto, un "tengo 64G" firmado se Could volver a
   presentar mañana. Se prueban las tres ramas (replay, reto vencido, informe
   vencido) porque son las que un atacante probaría primero.
 * **La firma ata los números.** Cambiar `vram_gb` después de firmar debe
@@ -448,3 +448,125 @@ def test_a_refusal_survives_a_save_load_cycle(tmp_path):
     assert back.peers["a"].rejections == 1
     assert back.verify_chain() is True
 
+
+
+# ==================================================================
+# El cobro va antes, pero `served` solo cuenta lo servido (P2)
+# ==================================================================
+# `MeteredLLMClient` debita el credito ANTES del `await`: es lo que impide
+# que un par sin credito gaste GPU ajena. El coste de ese orden es que un
+# endpoint caido tambien se cobra. Estos tests fijan la otra mitad — que el
+# fallo quede REGISTRADO como fallo, no como inferencia servida.
+#
+# El caso end-to-end contra un endpoint real vive en
+# `tests/test_meshllm_thesis.py` (opt-in, `slow`). Aqui va la version
+# offline, con un doble que falla, para que CI lo vea siempre.
+
+
+class _FailingInner:
+    """Un backend que falla, como lo haria un endpoint caido."""
+
+    async def complete(self, *a, **k):
+        raise RuntimeError("endpoint caido")
+
+
+class _ExplodingInner:
+    """Falla ruidosamente si alguien lo llama: aqui no debe llamarse nunca."""
+
+    async def complete(self, *a, **k):
+        raise AssertionError("el modelo no debe llamarse sin credito")
+
+
+def _credited(peer: str, *, vram: float = 8.0, observe_s: float = 1800.0,
+              policy: ExchangePolicy | None = None) -> tuple:
+    """Ledger con un par admitido, observado y con credito. -> (led, pol, id)."""
+    led = ContributionLedger(MESH)
+    key = KeyPair.new(peer)
+    pol = policy or ExchangePolicy(credits_per_gib_hour=10.0,
+                                   baseline_credits=0.0)
+    assert admit(led, peer, vram, key=key, now=NOW, observe_s=observe_s,
+                 policy=pol), "el par debe admitirse y ganar credito"
+    assert led.peers[peer].credits_available > 0.0
+    return led, pol, peer
+
+
+@pytest.mark.asyncio
+async def test_served_is_not_incremented_when_inference_fails():
+    """Un endpoint caido no puede contar como inferencia servida.
+
+    Antes de P2: `served += 1` ocurria ANTES del `await`, asi que un 404 o
+    un timeout contaba como servicio y el log decia `ok: True` de una
+    inferencia que nunca existio. El credito, ademas, ya estaba debitado.
+    """
+    led, pol, peer = _credited("p2-falla")
+    client = MeteredLLMClient(_FailingInner(), led, peer, pol)
+
+    with pytest.raises(RuntimeError):
+        await client.complete("hola", tokens_in=100, tokens_out=100)
+
+    assert client.served == 0, "un fallo de inferencia no es un servicio"
+    assert client.failed == 1
+    # el log se corrige: la entrada paso de cobro-aceptado a fallo
+    assert client.log[-1]["ok"] is False
+    assert "inference_failed" in client.log[-1]["reason"]
+    # y el credito se cobro igualmente: el orden es deliberado
+    assert led.peers[peer].credits_spent > 0.0
+
+
+@pytest.mark.asyncio
+async def test_refused_and_failed_are_distinct_outcomes():
+    """Rechazado por credito != cobrado y fallo de inferencia.
+
+    Un par sin credito nunca llega al modelo (`failed` no se toca); uno con
+    credito cuyo endpoint cae si lo hace. Confundirlos haria parecer que se
+    intento servir algo que se rechazo de entrada.
+    """
+    # (a) sin credito -> refused, failed == 0, el modelo no se toca
+    led = ContributionLedger(MESH)
+    key = KeyPair.new("p2-sin-credito")
+    strict = ExchangePolicy(baseline_credits=0.0, credits_per_gib_hour=0.0)
+    assert admit(led, "n1", 8.0, key=key, now=NOW, observe_s=0.0,
+                 policy=strict)
+    assert led.peers["n1"].credits_available == 0.0
+    without = MeteredLLMClient(_ExplodingInner(), led, "n1", strict)
+    with pytest.raises(PermissionError):
+        await without.complete("x", tokens_in=1000, tokens_out=1000)
+    assert without.refused == 1
+    assert without.served == 0 and without.failed == 0
+
+    # (b) con credito, endpoint caido -> failed, refused == 0
+    led2, pol2, peer2 = _credited("p2-con-credito")
+    failing = MeteredLLMClient(_FailingInner(), led2, peer2, pol2)
+    with pytest.raises(RuntimeError):
+        await failing.complete("x", tokens_in=100, tokens_out=100)
+    assert failing.failed == 1
+    assert failing.refused == 0 and failing.served == 0
+
+
+@pytest.mark.asyncio
+async def test_successful_inference_still_counts_and_does_not_touch_failed():
+    """El camino feliz no cambia: `served` sube, `failed` no se toca."""
+    led, pol, peer = _credited("p2-feliz")
+    client = MeteredLLMClient(FakeLLMClient(), led, peer, pol)
+    out = await client.complete("hola", tokens_in=10, tokens_out=10)
+    assert isinstance(out, str)
+    assert client.served == 1
+    assert client.failed == 0 and client.refused == 0
+    assert client.log[-1]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_stats_exposes_the_three_outcomes():
+    """`stats()` distingue servida / rechazada / fallida.
+
+    `served + failed` es lo que se cobro de verdad (el cobro va antes);
+    `served` es lo que se recibio. La diferencia es responsabilidad del
+    endpoint, y tiene que ser visible sin abrir el log a mano.
+    """
+    led, pol, peer = _credited("p2-stats")
+    client = MeteredLLMClient(FakeLLMClient(), led, peer, pol)
+    await client.complete("hola", tokens_in=10, tokens_out=10)
+    st = client.stats()
+    assert st["served"] == 1
+    assert st["failed"] == 0 and st["refused"] == 0
+    assert "failed" in st

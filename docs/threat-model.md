@@ -357,6 +357,14 @@ número y lo tome por una medición verificada.
   - **`metrics` es in-process y no persistente**: `MetricsTracker` es un
     `@dataclass` en memoria; `aggregate()` es una vista, y perder el proceso
     pierde las métricas. No es un log de auditoría (para eso está el ledger).
+  - **El endpoint al que se cobra es responsabilidad de quien lo opera.**
+    `MeteredLLMClient` debita el crédito **antes** del `await` — es lo que
+    impide que un par sin crédito gaste GPU ajena — así que una inferencia
+    que falla (timeout, 404, modelo no cargado) **también se cobra**. El
+    sistema no reembolsa: `served` cuenta lo que se recibió, `failed` lo que
+    se cobró sin recibir, y `served + failed` es lo que se facturó. La
+    discrepancia es responsabilidad del nodo que opera el endpoint, y solo él
+    puede resolverla (reintentar, o dejar la petición sin cobrar).
   - **La interacción RSI ↔ HCI no está verificada.** Aunque mañana se conecten
     (una regla retenida → una medida), el gate de retención sigue siendo
     *consistencia de la evidencia* (`RuleVerifier`), no "la mejora funcionó":

@@ -741,6 +741,11 @@ class MeteredLLMClient:
         self.log: list[dict[str, Any]] = []
         self.served = 0
         self.refused = 0
+        #: Requests that passed the credit check but whose inference failed
+        #: (endpoint down, timeout, model error). These were *charged* — the
+        #: debit is deliberate and happens first — so `served + failed` is what
+        #: the mesh was billed for, and `served` alone is what it actually got.
+        self.failed = 0
 
     async def complete(self, *args: Any, **kwargs: Any) -> Any:
         tokens_in = int(kwargs.get("tokens_in", 0) or 0)
@@ -759,8 +764,8 @@ class MeteredLLMClient:
             # pero capacidad nunca admitida). Antes, formatear este mensaje
             # hacia `None.credits_available` -> AttributeError DENTRO de la
             # construccion del PermissionError, de modo que el un error que
-            # debe explicar el saldo del par lo reemplazaba por un
-            # AttributeError. Se formatea el saldo de forma tolerante.
+            # debe explicar al par lo reemplazaba por un AttributeError.
+            # Se formatea el saldo de forma tolerante.
             _rec = self.ledger.peers.get(self.peer_id)
             _saldo = getattr(_rec, "credits_available", None)
             _saldo_txt = f"{_saldo:.4f}" if _saldo is not None else "0.0000 (sin registro)"
@@ -768,8 +773,22 @@ class MeteredLLMClient:
                 f"inferencia sin crédito ({reason}): {self.peer_id} necesita "
                 f"{cost:.4f} y tiene {_saldo_txt} "
                 f"disponibles")
+        # El cobro va ANTES de la inferencia, a proposito: es lo que impide
+        # que un par sin credito gaste GPU ajena (si se comprobara despues,
+        # el `await` ya habria ocurrido). El coste de ese orden es que un
+        # endpoint caido tambien se cobra, asi que `served` SOLO sube cuando
+        # la inferencia ocurrio de verdad. Antes subia antes del `await`: un
+        # 404 o un timeout contaba como servida, y el log decia `ok: True`
+        # de una inferencia que nunca existio.
+        try:
+            out = await self.inner.complete(*args, **kwargs)
+        except BaseException as exc:
+            entry["ok"] = False
+            entry["reason"] = f"inference_failed: {type(exc).__name__}: {exc}"
+            self.failed += 1
+            raise
         self.served += 1
-        return await self.inner.complete(*args, **kwargs)
+        return out
 
     def stats(self) -> dict[str, Any]:
         peer = self.ledger.peers.get(self.peer_id)
@@ -777,6 +796,7 @@ class MeteredLLMClient:
             "peer_id": self.peer_id,
             "served": self.served,
             "refused": self.refused,
+            "failed": self.failed,
             "credits_available": peer.credits_available if peer else 0.0,
             "entitlement": self.policy.entitlement(peer) if peer else 0.0,
             "log": list(self.log),

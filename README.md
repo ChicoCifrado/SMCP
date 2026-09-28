@@ -556,6 +556,13 @@ El suite está repartido en treinta y ocho archivos, todos deterministas:
   `AdmissionLedger` (dump/load/export, opt-in).
 - `test_meshllm_wiring.py` — wiring SMCP→MeshLLM (opt-in `slow`; se skipea
   sin endpoint; **2 passed** vs malla pública 2026-09-23).
+- `test_meshllm_thesis.py` — la tesis del intercambio contra un endpoint
+  **real** (opt-in `slow`): report firmado → observe → plan → `MeteredLLMClient`
+  → inferencia de verdad. Tres casos: la cadena completa, el rechazo **antes**
+  de cualquier llamada de red, y un 404 real que deja el cobro registrado como
+  fallo. Se skipea sin endpoint:
+  `MESH_LLM_URL=http://127.0.0.1:8888/v1 python -m pytest tests/test_meshllm_thesis.py -m slow -v`
+  (**3 passed** contra unsloth/Qwen3.8-27B-GGUF el 2026-09-28).
 - `test_cli.py` — la CLI unificada (issue #9): los subcomandos
   (`demo`/`test`/`config-check`/`version`), el despacho de cada demo a su módulo,
   el passthrough de flags, `--slow` pisando el `-m 'not slow'` de los addopts,
@@ -728,7 +735,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **539 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **543 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
