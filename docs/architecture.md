@@ -256,12 +256,23 @@ fuente envenenada puede orientar a todos los que la lean.
 ## 6. Mejoras (opt-in)
 
 - **`metrics.py`** — `MetricsTracker`: coste y latencia por tarea; agregado al
-  final del pipeline.
+  final del pipeline. **Instrumentación autoinformada**: los precios por defecto
+  son de referencia (un modelo desconocido presupuesta a 0.0 en silencio) y los
+  percentiles mezclan tareas admitidas y fallidas. Ver §2 "Mejoras opt-in" del
+  threat model.
 - **`expansion.py`** — `ExpansionPolicy`: la política del paso "generate more"
   (el último worker decide si crear más subtareas o finalizar).
-- **`hci.py` / `rsi.py`** — la métrica **Headroom-Closed Index** (HCI) y el loop
-  RSI L1 (proponer → verificar → retener/sucesor), que usa el HCI para medir
-  cuánto headroom se cierra con una mejora.
+- **`hci.py`** — la métrica **Headroom-Closed Index** (HCI): normaliza un score
+  a 0-100 contra un `frontier` y un `perfect`.
+- **`rsi.py`** — el loop RSI L1 (proponer → verificar → retener/sucesor). Cada
+  regla retenida queda **auditada** (digest + firma + cadena del ledger).
+- **HCI y RSI van hoy por caminos separados.** `RSILoop` **no importa** `hci`:
+  la única integración es `delm/demo/run_rsi_demo.py` y sus tests. Es decir:
+  una regla puede retenerse sin que nadie mida si ayudó, y el HCI se puede
+  mover sin que el loop lo mire. Para que la medida gobierne la retención
+  harían falta (a) un `Scorer` externo y fijado (no una constante del repo),
+  (b) el HCI derivado de esa suite, y (c) usar la medida como señal y no como
+  verdad. Ver §2 "Mejoras opt-in" del threat model.
 - **`harness_client.py`** — backend de agente (DeepSeek Harness) detrás de la
   interfaz `LLMClient`; **opt-in** (`use_harness` / `DELM_HARNESS`), con import
   lazy para que la suite siga verde sin el SDK.

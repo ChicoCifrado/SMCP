@@ -170,3 +170,85 @@ def test_smcp_family_has_two_benchmarks():
 def test_smcp_family_frontiers_are_valid():
     for b in SMCP_FAMILY.benchmarks:
         assert 0.0 <= b.frontier < b.perfect
+
+
+# ==================================================================
+# Las NO-GARANTIAS del HCI, como tests (P3)
+# ==================================================================
+# El threat model dice (seccion 2, "Mejoras opt-in") que el HCI es
+# instrumentacion autoinformada: el frontier es una constante escrita a
+# mano, el Scorer no esta verificado, y el HCI no esta conectado al loop
+# RSI. Estas afirmaciones son *codigo*, asi que se comprueban: si alguien
+# conecta de verdad el HCI al loop, o ancla el frontier a una suite
+# externa, el test falla y obliga a reescribir la no-garantia.
+
+
+def test_hci_is_not_wired_into_the_rsi_loop():
+    """`RSILoop` no debe importar `hci`: la medida no gobierna la retencion.
+
+    El threat model afirma que hoy van por caminos separados. Si este test
+    falla, la no-garantia "el HCI no gobierna el gate" queda obsoleta y hay
+    que reescribir esa seccion (no solo borrarla: sigue siendo cierto que
+    el Scorer no esta verificado).
+    """
+    import inspect
+
+    from delm.core import rsi
+
+    src = inspect.getsource(rsi)
+    assert "hci" not in src.lower(), (
+        "RSILoop ya menciona hci: la no-garantia 'el HCI no esta conectado al "
+        "loop RSI' del threat model hay que actualizarla."
+    )
+
+
+def test_hci_normalizes_against_a_hardcoded_frontier():
+    """El HCI es aritmetica contra una constante del repo, no una medida.
+
+    Con el mismo `frontier`, el HCI es una funcion pura de los scores. Este
+    test no juzga si el numero es *correcto* (no se puede saber sin una suite
+    externa) sino que fija lo que el HCI **si** es: una transformacion
+    determinista de numeros que el propio repo declara como orientativos.
+    """
+    b = SMCP_FAMILY.benchmarks[0]
+    # el mismo score -> el mismo HCI, siempre
+    assert b.hci(0.5) == b.hci(0.5)
+    # y mover el frontier mueve el HCI: la escala la define el repo
+    shifted = Benchmark(id=b.id, frontier=b.frontier + 0.2, perfect=b.perfect)
+    assert shifted.hci(0.5) < b.hci(0.5), (
+        "el HCI depende del frontier declarado: no es una medicion externa"
+    )
+
+
+def test_a_scorer_can_lie_and_the_hci_will_not_notice():
+    """El `Scorer` no esta verificado: un scorer mentiroso produce un HCI valido.
+
+    Este es el punto central de la no-garantia. Un `Scorer` que devuelve
+    0.99 sin ejecutar nada produce un HCI de 100 igual que uno "honesto" con
+    esos mismos numeros: la formula es identica y lo unico que cambia es la
+    entrada, que no lleva ninguna firma. El `RSIImprovement` resultante queda
+    *auditable* (se puede firmar y encadenar) pero no *veraz*.
+    """
+    # un scorer que NO ejecuta nada y se inventa el mismo 0.99 para cualquier
+    # config: da igual que "mejore" el parametro, el score no se mueve
+    liar = DeterministicScorer(lambda c: {"swe-style": 0.99, "multi-doc-qa": 0.99})
+    meter = HCIMeter(SMCP_FAMILY, liar)
+
+    imp = meter.improve({}, {"max_burst": 8})
+
+    # el HCI sale casi perfecto (98.17: el `before` vacio cae a la frontera)...
+    assert imp.hci_after == pytest.approx(98.1746, abs=0.001)
+    # ...y no hay nada en el resultado que delate de donde salio
+    summary = imp.summary()
+    assert set(summary) == {
+        "family", "hci_before", "hci_after", "closed", "before", "after"}
+    # el summary no registra de donde salieron los scores: no hay scorer_id,
+    # ni timestamp, ni digest que ate la medida a una ejecucion concreta
+    assert "scorer" not in summary
+    assert "digest" not in summary
+    assert "timestamp" not in summary
+
+    # lo que se firma al retener una regla RSI es la REGLA, no su efecto
+    # medido: aqui la "mejora" no mueve el HCI y aun asi el numero es
+    # presentable, sin ninguna marca de que el scorer no haya ejecutado nada
+    assert imp.closed == 0.0

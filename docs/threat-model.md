@@ -313,6 +313,63 @@ de confianza, distinto del de las capas.
     un modelo real (el smoke no necesita red); por diseño del test, no una
     garantía de runtime.
 
+### Mejoras opt-in: HCI y métricas (`hci.py`, `metrics.py`, `rsi.py`) — fuera de capa
+
+No son capas de seguridad: son **instrumentación que se afirma a sí misma**. Se
+documentan aquí porque el riesgo no es que fallen, sino que alguien lea un
+número y lo tome por una medición verificada.
+
+- **Adversario**: nadie externo todavía. El riesgo es el **propio operador**, o
+  un tercero que consume la cifra: que confiera a un número autoinformado la
+  autoridad de una medición.
+- **Supuestos**: el `Scorer` es honesto; los `frontier` de `SMCP_FAMILY` son los
+  publicados; el reloj mide latencia de verdad.
+- **NO-garantías (explícitas)**:
+  - **El HCI no está anclado a nada externo.** `hci.py` normaliza
+    linealmente contra un `frontier` y un `perfect` que son **constantes
+    escritas a mano** (`0.30` / `0.55` en `SMCP_FAMILY`, orientativas por
+    comentario propio). El HCI es aritmética, no evidencia: con las mismas
+    entradas da el mismo número aunque el `Scorer` mienta, siempre que la
+    fórmula sea la misma. La escala es estable *por construcción*, no por
+    medición.
+  - **El `Scorer` no está verificado ni atado al ledger.** Es un
+    `Callable` que devuelve `benchmark.id -> score`. Nada le impide inventarse
+    los scores, y `HCIMeter.improve()` los mete en el `RSIImprovement` tal
+    cual, firmándose a sí mismo la conclusión ("cerró 12 puntos de
+    headroom"). La mejora RSI queda **auditada** (digest + firma + cadena del
+    ledger) pero su *efecto* — el HCI — es **una afirmación sin ancla**.
+  - **El HCI no está conectado al loop RSI.** `RSILoop` (`rsi.py`) no importa
+    `hci`; solo la demo (`delm/demo/run_rsi_demo.py`) y sus tests lo usan. La
+    afirmación de `architecture.md` de que el loop "usa el HCI para medir" y la
+    de `hci.py` de "uso en el loop RSI" describen la **intención**, no el
+    estado del código: hoy la retención de una regla y su medida van por
+    caminos separados y nadie compara ambas.
+  - **La precisión de la latencia es la del reloj del proceso** y los
+    percentiles (p50/p95) son sobre la mezcla **admitidas + fallidas**
+    (`metrics.py::aggregate` lo dice, pero el número agregado por defecto las
+    mezcla). Para latencia de rutas felices hay que filtrar `records()`
+    antes. Sin NTP/jumps, el reloj es el reloj (§3.3).
+  - **El coste es orientativo.** `DEFAULT_PRICING` son precios 2026 de
+    referencia; un modelo desconocido **se presupuesta a 0.0 en silencio**
+    (`price()` nunca lanza). Un `total_cost_usd` de 0 puede significar "gratis"
+    o "no sé el precio": hay que pasar tu propia tabla
+    (`MetricsTracker(pricing=...)`) para contabilidad real.
+  - **`metrics` es in-process y no persistente**: `MetricsTracker` es un
+    `@dataclass` en memoria; `aggregate()` es una vista, y perder el proceso
+    pierde las métricas. No es un log de auditoría (para eso está el ledger).
+  - **La interacción RSI ↔ HCI no está verificada.** Aunque mañana se conecten
+    (una regla retenida → una medida), el gate de retención sigue siendo
+    *consistencia de la evidencia* (`RuleVerifier`), no "la mejora funcionó":
+    una regla puede pasar el gate y ser inútil. El HCI, si se conecta, será un
+    *observador* del avance, no una *puerta* de admisión.
+
+**Consecuencia práctica para el threat model**: un HCI que sube, o un
+`total_cost_usd` que cuadre, **no** son afirmaciones verificables por este
+sistema. Para convertirlas en evidencia harían falta (a) un `Scorer` externo y
+fijado (suite real con versionado del benchmark), (b) el HCI derivado de esa
+suite y no de una constante del repo, y (c) una política que use la medida
+como señal, no como verdad.
+
 ## 3. No-garantías transversales (el resumen honesto)
 
 Estas aplican a *todas* las capas y conviene tenerlas presentes:
@@ -337,10 +394,15 @@ Estas aplican a *todas* las capas y conviene tenerlas presentes:
    amenazas no promete "infalible"; promete **"verificable, trazable y
    acotado en su radio de explosión"**.
 6. **La capacidad de un nodo es una afirmación firmada, no una medición**: el
-   intercambio garantiza *quién*ospelto y *cuándo*, no que la VRAM exista
+   intercambio garantiza *quién*-la-emitió y *cuándo*, no que la VRAM exista
    (ver §2, "El intercambio de la malla"). El día que la atestación sea real,
    esta línea se reescribe; hasta entonces, el radio de la mentira es
    "acotado y auditable", no "cero".
+7. **Las cifras propias no son evidencia**: HCI y `metrics` son
+   **instrumentación autoinformada** — un `frontier` de referencia escrito a
+   mano y un `Scorer` que nadie verifica. Un HCI que sube o un coste que cuadra
+   son afirmaciones del propio sistema, auditables pero **no verificables**
+   (ver §2, "Mejoras opt-in"). El HCI ni siquiera está conectado al loop RSI.
 
 ## 4. De dónde a dónde (mapa de responsabilidades)
 
@@ -397,6 +459,12 @@ Para tenerla a mano — el threat model en una línea por punto:
   confidencialidad punto a punto no está en el alcance.
 - Un **par firmado con intención maliciosa** no lo detiene la verificación
   determinista: marca la fuente, no la intención.
+- El **HCI y las métricas son autoinformados**: el `frontier` es una constante
+  escrita a mano y el `Scorer` no está verificado; además el HCI **no está
+  conectado al loop RSI** (solo lo usa la demo). Una cifra que sube no es una
+  medición verificada.
+- El **coste de `metrics` puede ser 0 por desconocido**, no por gratis: los
+  precios por defecto son de referencia y un modelo no listado presupuesta a 0.
 - La **puerta ACP** (`smcp-serve`) no autentica in-band: su confianza es el
   límite de proceso (quien lo arranca); la config/key nunca viajan al cliente y
   las sesiones son efímeras.

@@ -331,3 +331,76 @@ def test_pipeline_expansion_policy_bounds_burst():
     assert out.rounds == 2
     assert len(out.metrics["by_worker"]) >= 1
     assert out.metrics["tasks"] == 4  # 1 seed + 3 bounded burst
+
+
+# ==================================================================
+# Las NO-GARANTIAS de metrics, como tests (P3)
+# ==================================================================
+# Ver §2 "Mejoras opt-in" de docs/threat-model.md. Estas afirmaciones
+# tambien son codigo, asi que se fijan aqui.
+
+
+def test_unknown_model_prices_at_zero_silently():
+    """Un modelo no listado presupuesta a 0.0: "gratis" y "desconocido" se mezclan.
+
+    La politica de no-lanzar es deliberada (una metricas nunca debe tumbar un
+    pipeline), pero el agregado no distingue los dos casos: un `cost_usd` de
+    0 no es evidencia de que el modelo fuera gratis.
+    """
+    t = MetricsTracker()
+    assert t.price("modelo-que-no-existe", 1_000_000, 1_000_000) == 0.0
+    with t.timed("t", model="modelo-que-no-existe", tokens_in=1_000, tokens_out=1_000):
+        pass
+    assert t.aggregate()["total_cost_usd"] == 0.0
+    # con la tabla correcta, el mismo uso si cuesta algo
+    t2 = MetricsTracker()
+    with t2.timed("t", model="gpt-4o", tokens_in=1_000_000, tokens_out=1_000_000):
+        pass
+    assert t2.aggregate()["total_cost_usd"] > 0.0
+
+
+def test_aggregate_mixes_failed_tasks_into_the_latency_percentiles():
+    """El p50/p95 agregado mezcla admitidas y fallidas.
+
+    Por diseño (el docstring de `aggregate` lo dice): el agregado por defecto
+    es "qué pasó", no "cómo va la ruta feliz". Para latencies de tareas
+    admitidas hay que filtrar `records()` primero.
+    """
+    t = MetricsTracker()
+    with t.timed("ok", model="fake"):
+        pass
+    try:
+        with t.timed("roto", model="fake"):
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+
+    agg = t.aggregate()
+    assert agg["tasks"] == 2
+    assert agg["admitted"] == 1
+    assert agg["failed"] == 1
+    # el percentil se calcula sobre los 2 registros, no solo el admitido
+    lat = sorted(r.latency_ms for r in t.records())
+    assert agg["latency_ms"]["p50"] == pytest.approx(
+        lat[0] + (lat[1] - lat[0]) * 0.5, abs=0.01)
+    # filtrando, la ruta feliz se lee sola
+    happy = [r for r in t.records() if r.admitted]
+    assert len(happy) == 1
+
+
+def test_metrics_tracker_is_in_process_and_loses_everything():
+    """El tracker no es un log de auditoria: perder el proceso pierde las cifras.
+
+    Lo que es append-only y a prueba de manipulacion en este proyecto es el
+    ledger (`delm.core.ledger`), no esto. Este test fija esa distincion para
+    que nadie cite `aggregate()` como evidencia durable.
+    """
+    t = MetricsTracker()
+    with t.timed("x", model="fake"):
+        pass
+    assert t.aggregate()["tasks"] == 1
+    # el registro vive solo en `_records`, sin backing store
+    assert isinstance(t._records, list)
+    assert not hasattr(t, "path")
+    assert not hasattr(t, "save")
+    assert not hasattr(t, "load")

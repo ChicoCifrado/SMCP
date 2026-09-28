@@ -20,7 +20,7 @@ clamp a ``[0, 100]``: un score por debajo de la frontera da 0; uno por encima
 del tope da 100. El HCI de la *familia* (varios benchmarks) es la media
 ponderada de los HCI individuales.
 
-Uso en el loop RSI (P1):
+Uso previsto en el loop RSI::
 
     family = SMCP_FAMILY            # SWE-bench-style + Multi-Doc QA
     scorer = DeterministicScorer(fn)  # o un Scorer real (evalúa un config)
@@ -28,6 +28,22 @@ Uso en el loop RSI (P1):
     base   = meter.measure(scorer(config_base))     # HCI de la línea base
     after  = meter.measure(scorer(config_improved)) # HCI tras una mejora RSI
     gained = after - base                          # puntos de headroom cerrados
+
+**El HCI NO está conectado al loop RSI.** :class:`~delm.core.rsi.RSILoop` no
+importa este módulo; la única integración es la demo
+``delm/demo/run_rsi_demo.py``. Dos consecuencias que conviene no confundir:
+
+* El HCI es **aritmética, no evidencia**. ``frontier`` y ``perfect`` son
+  constantes escritas a mano (:data:`SMCP_FAMILY` lo admite: son "orientativos"),
+  y el :data:`Scorer` es un ``Callable`` que nadie verifica. La misma fórmula
+  con las mismas entradas da el mismo número aunque el scorer mienta, así que
+  la escala es estable *por construcción*.
+* Una regla RSI puede retenerse (queda firmada y en el ledger) **sin que nadie
+  mida** si ayudó. Cuando se conecten, el HCI será un *observador* del avance,
+  no una puerta: el gate de retención sigue siendo la consistencia de la
+  evidencia (``RuleVerifier``), no "la mejora funcionó".
+
+Ver §2 "Mejoras opt-in" de ``docs/threat-model.md``.
 
 Módulo de solo lectura sobre la infra existente: no re-implementa verificación
 ni proveniencia; solo normaliza scores y mide el avance de una mejora RSI

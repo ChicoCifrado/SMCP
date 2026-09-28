@@ -24,9 +24,20 @@ Notes:
 
 * Prices in :data:`DEFAULT_PRICING` are *orientative* 2026 defaults and
   change frequently; pass your own table to ``MetricsTracker(pricing=...)``
-  for real accounting. Unknown models price at 0.0 (never raises).
+  for real accounting. Unknown models price at 0.0 (never raises) — **a 0 in
+  ``total_cost_usd`` can mean "free" or "not priced here"**, and the two are
+  indistinguishable in the aggregate. That is a deliberate no-raise policy,
+  not a verified cost.
 * Recording is append-only under asyncio (GIL-sufficient). If workers ever
   run on real threads, guard :meth:`record` with a lock.
+* **This is observability, not an audit log.** The tracker is an in-process
+  dataclass: ``aggregate()`` is a view of ``_records``, and losing the process
+  loses the numbers. The append-only, tamper-evident record in this project is
+  the ledger (``delm.core.ledger``), not this.
+* :meth:`aggregate` computes latency percentiles over **all** records, so
+  crashed and retried tasks are mixed into the p50/p95. The docstring on
+  :meth:`aggregate` says so; filter :meth:`records` on ``admitted`` first if
+  you want happy-path latency only.
 """
 
 from __future__ import annotations
