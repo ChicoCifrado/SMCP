@@ -69,6 +69,7 @@ __all__ = [
     "ContributionLedger",
     "ExchangePolicy",
     "MeteredLLMClient",
+    "capacity_is_intact",
     "default_state_path",
     "default_identity_path",
     "EXCHANGE_FORMAT_VERSION",
@@ -198,6 +199,19 @@ class Challenge:
                    expires_at=float(d.get("expires_at", 0.0)))
 
 
+def capacity_is_intact(peer: PeerContribution, mesh_id: str) -> bool:
+    """Does ``peer``'s capacity still match what was signed at admission?
+
+    True for a peer admitted with a capacity digest and untouched since.
+    False when the digest is missing — nothing to check against, which is the
+    honest answer for a peer built by hand in a test or loaded from a ledger
+    written before this field existed — or when a number was rewritten.
+    """
+    if not peer.admitted_digest:
+        return False
+    return peer.capacity_digest(mesh_id) == peer.admitted_digest
+
+
 # ------------------------------------------------------------ capacity report
 @dataclass(frozen=True)
 class CapacityReport:
@@ -239,6 +253,29 @@ class CapacityReport:
 
     def compute_digest(self) -> str:
         return _digest(self.payload())
+
+    @staticmethod
+    def capacity_digest(*, mesh_id: str, peer_id: str, vram_gb: float,
+                        ram_gb: float, cpu_cores: int, backend: str) -> str:
+        """Digest over **only** the capacity numbers, ignoring the nonce/dates.
+
+        This is the anchor that keeps admitted capacity tied to a signature.
+        It deliberately excludes ``nonce``/``issued_at``/``expires_at``: those
+        say *when* the claim was made, not how big the node is, and a node
+        re-reports with a fresh nonce as often as it likes. Pinning the
+        capacity is the point — a node that rewrites its own ``vram_gb`` after
+        admission changes this digest, which is exactly what
+        :func:`capacity_is_intact` detects.
+
+        Lives here, next to :meth:`payload`, so the admission path and the
+        verification path cannot drift apart: both call this one function.
+        """
+        return _digest({"mesh_id": mesh_id,
+                        "peer_id": peer_id,
+                        "vram_gb": round(float(vram_gb), 4),
+                        "ram_gb": round(float(ram_gb), 4),
+                        "cpu_cores": int(cpu_cores),
+                        "backend": backend})
 
     def sign(self, key: KeyPair) -> "CapacityReport":
         """Sign the canonical digest with *key*; returns a new report."""
@@ -329,6 +366,13 @@ class PeerContribution:
     ``vram_gb`` is the *admitted* number — never a raw claim. ``seconds_observed``
     is the honest part: it only grows while :meth:`ContributionLedger.observe`
     is called, i.e. while the mesh can see the peer.
+
+    ``admitted_digest`` is the digest of the signed :class:`CapacityReport` the
+    numbers came from. It is the anchor that keeps the admitted capacity tied
+    to a signature: the fields stay plain attributes for ergonomics (and for
+    the ledger's own JSON), but :func:`capacity_is_intact` re-checks them
+    against the digest, so rewriting ``vram_gb`` after admission is detectable
+    instead of silently believed.
     """
 
     peer_id: str
@@ -345,6 +389,15 @@ class PeerContribution:
     credits_spent: float = 0.0
     reports: int = 0
     rejections: int = 0
+    #: digest of the signed report these numbers were admitted from
+    admitted_digest: str = ""
+
+    def capacity_digest(self, mesh_id: str) -> str:
+        """The capacity-only digest for this record, under *mesh_id*."""
+        return CapacityReport.capacity_digest(
+            mesh_id=mesh_id, peer_id=self.peer_id,
+            vram_gb=self.vram_gb, ram_gb=self.ram_gb,
+            cpu_cores=self.cpu_cores, backend=self.backend)
 
     @property
     def credits_available(self) -> float:
@@ -364,7 +417,12 @@ class PeerContribution:
                 "seconds_observed": self.seconds_observed,
                 "credits": self.credits, "credits_spent": self.credits_spent,
                 "reports": self.reports, "rejections": self.rejections,
-                "credits_available": self.credits_available}
+                "credits_available": self.credits_available,
+                # El anchor de integridad DEBE viajar con el estado: sin el, un
+                # ledger re-escrito en disco (o copiado a otro host) perdería la
+                # capacidad admitida al releerla, que es la mitad de lo que
+                # `capacity_is_intact` existe para detectar.
+                "admitted_digest": self.admitted_digest}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "PeerContribution":
@@ -386,7 +444,8 @@ class PeerContribution:
                    credits=float(d.get("credits", 0.0) or 0.0),
                    credits_spent=float(d.get("credits_spent", 0.0) or 0.0),
                    reports=int(d.get("reports", 0) or 0),
-                   rejections=int(d.get("rejections", 0) or 0))
+                   rejections=int(d.get("rejections", 0) or 0),
+                   admitted_digest=str(d.get("admitted_digest", "") or ""))
 
 
 class ContributionLedger:
@@ -459,6 +518,10 @@ class ContributionLedger:
             peer.sig_kind = report.sig_kind
             peer.admitted_at = now
             peer.reports += 1
+            # Anchor the admitted numbers to a digest of the *capacity* (not of
+            # the whole report: the nonce rotates), so a later rewrite of a
+            # number is detectable via capacity_is_intact.
+            peer.admitted_digest = peer.capacity_digest(self.mesh_id)
             self.used_nonces.add(report.nonce)
         else:
             peer.rejections += 1

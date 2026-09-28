@@ -255,6 +255,13 @@ def status():
         "repo": root is not None,
         "functions": len(FUNCTIONS),
         "web_pages": len(list(STATIC.glob("*.html"))),
+        # Las demos son modulos INSTALADOS (`delm.demo.*`), no ficheros del
+        # checkout: se cuentan desde el paquete, asi que el numero es real
+        # con o sin arbol de fuentes. Contarlo por `root` seria mentir en la
+        # direccion contraria — untrue-zero cuando el paquete si las trae.
+        "demos": sorted(
+            p.stem for p in
+            (Path(__file__).resolve().parent.parent / "demo").glob("run_*.py")),
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     if root is None:
@@ -279,13 +286,12 @@ def status():
             test_fns += p.read_text(encoding="utf-8").count("def test_")
         except OSError:
             pass
-    demos = sorted((root / "delm" / "demo").glob("run_*.py"))
     base.update({
         "core_modules": len(core_names),
         "core": core_names,
         "test_files": len(tests),
         "test_fns": test_fns,
-        "demos": [p.stem for p in demos],
+        # `demos` ya viene en `base`, contado desde el paquete instalado.
     })
     return base
 

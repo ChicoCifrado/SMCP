@@ -36,7 +36,12 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Sequence
 
-from delm.core.contrib import ContribReject, ContributionLedger, ExchangePolicy
+from delm.core.contrib import (
+    ContribReject,
+    ContributionLedger,
+    ExchangePolicy,
+    capacity_is_intact,
+)
 
 __all__ = [
     "PlanReject",
@@ -64,6 +69,8 @@ class PlanReject(str, Enum):
     INSUFFICIENT_CREDIT = "insufficient_credit"
     SPEC_MISSING_MEMORY = "spec_missing_memory"
     SPEC_NOT_FITTABLE = "spec_not_fittable"   # even an unbounded mesh can't
+    #: capacidad admitida que no supera el digest firmado al admitirla
+    NO_VERIFIED_PEERS = "no_verified_peers"
 
 
 @dataclass(frozen=True)
@@ -261,6 +268,24 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
                              **base)
 
     candidates = ledger.admitted_peers(observed_only=observed_only)
+    # Integridad: una capacidad admitida está anclada a un digest firmado al
+    # admitirla. Si alguien reescribió `vram_gb` en el ledger (o el ledger vino
+    # de una versión sin el campo), el número ya no es una afirmación firmada
+    # y no se puede colocar carga sobre él. Se descarta aquí, antes de que
+    # `total_vram_gb` de arriba lo haya contado — ese total es un dato
+    # informativo, la decisión la toman los candidatos que pasan este filtro.
+    intact = [p for p in candidates if capacity_is_intact(p, ledger.mesh_id)]
+    tampered = [p for p in candidates if not capacity_is_intact(p, ledger.mesh_id)]
+    if tampered and not intact:
+        return PlacementPlan(
+            ok=False, reason=PlanReject.NO_VERIFIED_PEERS.value,
+            notes=("la capacidad admitida no supera la verificación de firma: "
+                   + ", ".join(sorted(p.peer_id for p in tampered))
+                   + " (atribución de capacidad manipulada tras admitirla; "
+                     "re-admite con un report firmado nuevo).",),
+            detail={"tampered_peers": sorted(p.peer_id for p in tampered)},
+            **base)
+    candidates = intact
     if not candidates:
         # Distinguish "nobody joined" from "joined but not observed": the fix is
         # different in each case and the operator needs to know which.
