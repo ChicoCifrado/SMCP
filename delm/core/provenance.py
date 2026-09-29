@@ -266,7 +266,16 @@ def verify_public(kind: str, public_key: bytes, digest: str, signature: bytes) -
     ``kind`` must match the scheme the signer used. For ``ed25519`` this is a
     real asymmetric check; for ``hmac`` it requires the pre-shared key to be
     present (the "trust anchor"), which is exactly the limit of the fallback.
+
+    ``ecdsa-secp256k1`` (the BSV anchor identity, :mod:`delm.core.bsv_keys`)
+    is dispatched to that module. A peer that only holds a public key and the
+    ``sig_kind`` string can verify an anchor without importing the anchor
+    module itself — which is the point: the third party checking a chain
+    record must not need this repo's internals.
     """
+    if kind == "ecdsa-secp256k1":
+        from delm.core.bsv_keys import verify_public as _v
+        return _v(public_key, digest, signature)
     msg = digest.encode("utf-8")
     if kind == "ed25519":
         if not HAVE_ED25519:

@@ -378,6 +378,48 @@ fijado (suite real con versionado del benchmark), (b) el HCI derivado de esa
 suite y no de una constante del repo, y (c) una política que use la medida
 como señal, no como verdad.
 
+### El anclaje a BSV (`bsv_keys.py`, `timechain.py`) — fuera de capa, en construcción
+
+Existe la **identidad** y el **reloj del nodo**; el anclaje a la cadena todavía
+no. Lo que hay y lo que no, exactamente:
+
+**Lo que hay.** `Secp256k1KeyPair` (ECDSA-secp256k1, firma `r||s` de 64 bytes)
+es la identidad que una cadena BSV puede verificar — Bitcoin no tiene Ed25519
+nativo, y anclar Ed25519 sería un protocolo propietario. `Timechain` es el
+registro del nodo de lo que publicó, con persistencia y `rebroadcast()` de todo
+lo no confirmado. Un nodo que no recuerda qué publicó no puede defender que lo
+publicó a esa hora, y una transacción no confirmada sigue siendo reemplazable
+por cualquiera que la tenga en mempool: reenviarla hasta que la cadena la
+confirme es lo que cierra esa ventana.
+
+**Lo que NO hay — y es lo importante:**
+
+- **No se publica nada.** No hay construcción de transacciones, ni
+  `OP_RETURN`, ni mAPI, ni chain tracker. `Timechain.status()` lo dice:
+  `spv_verified: false`.
+- **No se verifica ninguna inclusion.** `mark_mined()` registra lo que la
+  cadena *informó*; no comprueba una prueba de Merkle contra una cabecera. Por
+  eso `AnchorRecord.proven` existe y vale `False` por defecto, y por eso
+  `load()` restaura las entradas como no probadas: un nodo que reinicia no ha
+  verificado nada en esta ejecución. "La cadena dijo que está" y "alguien
+  comprobó la prueba" no son la misma afirmación.
+- **La cadena es un tercero de confianza, y se asume como tal.** El orden, los
+  sellos de tiempo y el trabajo de los bloques son lo que da valor de reloj. El
+  ledger local (`ledger.py`) no es un sustituto: es rápido y encadenado, pero su
+  orden lo fija quien escribe, no la red. `reorg` y Censorship son Threats
+  reales de este diseño y no están mitigados por lo que hay hoy.
+- **El ledger local no se ancla a este módulo.** Coexisten: las admisiones
+  siguen firmando con Ed25519 vía `provenance.py`, y `provenance.verify_public`
+  despacha `ecdsa-secp256k1` al módulo nuevo. Migrar las admisiones exige
+  cambiar el valor por defecto de `sig_kind`, que viaja por la serialización
+  de `contrib.py` y por tanto rompe entradas ya emitidas. Es un paso aparte y
+  deliberadamente reversible.
+- **Fuga de metadatos.** Solo sale el digest a la cadena, nunca el contenido.
+  Pero el `entry_hash` va encadenado y la cadena es pública: un observador ve
+  **cuántas** entradas sella cada nodo, **cuándo** y **a qué ritmo**. No ve qué
+  admitieron; sí el patrón de actividad. Eso se acepta explícitamente y no se
+  considera un detalle de implementación.
+
 ## 3. No-garantías transversales (el resumen honesto)
 
 Estas aplican a *todas* las capas y conviene tenerlas presentes:
