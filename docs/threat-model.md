@@ -420,6 +420,47 @@ confirme es lo que cierra esa ventana.
   admitieron; sí el patrón de actividad. Eso se acepta explícitamente y no se
   considera un detalle de implementación.
 
+### La identidad del nodo (`spv.py`) — fuera de capa, en construcción
+
+La atribución no la da la cadena, la da la clave, y **antes de este módulo no
+existía criptográficamente**: `TrustGate.permit()` recibía
+`(author_id: str, has_signature: bool)`, así que `author_id` era una etiqueta de
+texto sin ninguna firma que la respaldara. Un nodo podía anunciarse
+`nodo-0` y firmar con una clave sin relación con ese nombre. El objetivo de
+atribución no se cumplía con la cadena ni sin ella.
+
+**Lo que hay.** `SpvWallet` implementa BRC-75 (mnemonic BIP39 → `sha256(seed)`
+como maestro), BRC-42 (derivación por secreto ECDH compartido, no BIP32) y
+BRC-43 (`keyId` = `<nivel>-<protocolo>-<id>`). `address()` es
+`pubkey → hash160 → base58check`: determinista y verificable por un tercero
+que extraiga la pubkey de un input.
+
+**Por qué BKDS y no BIP32.** BIP32 deriva las hijas con un chain code, así que
+quien tenga la pubkey maestra y un índice ve *todas* las hijas: la pseudonymía
+se pierde. BKDS usa el secreto ECDH de las dos partes, y el mismo índice da una
+clave distinta para cada contraparte. Aquí se usa autoderivación, así que cada
+propósito (`anchor`, `admission`, y el de pagos cuando exista) es una clave
+distinta del mismo maestro: comprometer una no compromete la identidad, y un
+observador no puede enlazarlas.
+
+**No-garantías de esta capa:**
+
+- **La pseudonymía no es anonimato, y no pretende serlo.** Cada clave es
+  pública y las derivadas son deterministas: un observador ve cuántas anclas
+  firma un nodo y con qué claves. Lo que la derivación aporta es que no puede
+  *enlazar* unas con otras ni con el maestro.
+- **El mnemonic es el punto de fallo único.** Está en el fichero 0600, no en
+  el `repr`, y `create()` rechaza una frase con el checksum mal en vez de
+  aceptarla en silencio. Pero un mnemonic en un disco es un secreto con doce
+  palabras de longitud: no hay umbral, no hay hardware. El respaldo en papel
+  sigue siendo la única protección real y **no está implementado**.
+- **La passphrase no está probada.** `SpvWallet.save()` no la guarda, así que
+  una wallet creada con passphrase no se puede restaurar desde su fichero
+  (solo desde el mnemonic). Es un hueco conocido, no una decisión.
+- **El ledger local sigue sin anclarse y las admisiones siguen con ed25519.**
+  `spv.py` da la identidad; no está conectado a `provenance.py` ni a
+  `contrib.py`. Esa conexión es un paso aparte.
+
 ## 3. No-garantías transversales (el resumen honesto)
 
 Estas aplican a *todas* las capas y conviene tenerlas presentes:

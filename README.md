@@ -735,7 +735,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **559 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **577 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -957,8 +957,9 @@ delm/
     llmfit.py          LlmfitRunner + FitReport/veredicto (dimensionar el modelo local)
     contrib.py         Challenge/CapacityReport + ContributionLedger + créditos
     placement.py       ModelSpec/Stage/PlacementPlan (reparto entre nodos)
-    bsv_keys.py        ECDSA-secp256k1 (la identidad que ancla a BSV)
+    bsv_keys.py        ECDSA-secp256k1 (la firma que ancla a BSV)
     timechain.py       el reloj del nodo: qué publicó, reenvía y no ha probado
+    spv.py             la wallet del nodo: maestro, derivación BRC-42 y dirección
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
