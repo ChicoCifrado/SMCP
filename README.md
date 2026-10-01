@@ -380,7 +380,7 @@ Cuatro propiedades que hacen que esto no sea un registro de promesas:
   save/load, y `delm mesh check` la verifica y dice, en mayúsculas, lo que no
   prueba.
 
-`delm mesh` y la web (página **Malla**, `web/malla.html`) comparten el fichero de
+`delm mesh` y la web (página **Malla**, `delm/web/static/malla.html`) comparten el fichero de
 estado vía `delm.core.contrib.default_state_path()`: aportar desde el navegador
 se ve en `delm mesh status` y al revés. Eso está fijado en un test que lanza la
 CLI como subprocess.
@@ -657,16 +657,16 @@ un cero silencioso que la UI leería como "el proyecto tiene cero tests".
 - `/` — estático de `web/` (11 páginas: inicio, núcleo, seguridad, demos,
   arquitectura, lab, contexto, ledger, **estado en vivo**, **malla**, consola 3D).
 
-`web/estado.html` + `web/assets/estado.js` leen `/api/status` en vivo y permiten
-lanzar suite/demo/taint desde el navegador. `web/assets/fit.js` añade la
+`delm/web/static/estado.html` + `delm/web/static/assets/estado.js` leen `/api/status` en vivo y permiten
+lanzar suite/demo/taint desde el navegador. `delm/web/static/assets/fit.js` añade la
 sección **Modelo local (llmfit)**: los filtros de `delm fit`, la tabla, el
 veredicto en rojo/verde/neutro y un botón *usar* por fila que llama a
 `/api/fit/apply` y refresca la config mediante el evento
 `smcp:config-changed` (los dos módulos de la página no se conocen entre sí).
-`web/malla.html` + `web/assets/malla.js` son la página **Malla**: el intercambio
+`delm/web/static/malla.html` + `delm/web/static/assets/malla.js` son la página **Malla**: el intercambio
 y el reparto de modelos (contribuir, observar, planear, auditar). Comparte
 fichero de estado con la CLI, así que lo que se aporta en el navegador se ve en
-`delm mesh status`. `web/assets/app.js` guarda la última página en `localStorage`
+`delm mesh status`. `delm/web/static/assets/app.js` guarda la última página en `localStorage`
 y la restaura al volver al home.
 
 ### Usar un modelo real
@@ -735,48 +735,60 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **603 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **604 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
-  15 taint + 28 mejoras +
-  16 config + 2 wiring + 83 capa 3: 13 gossip + 12 requirements + 10
-  heartbeat + 17 malla: transport/nodo/red/pipeline + QUIC e2e + Nostr e2e +
-  3 QUIC entre hosts: framing/round-trip/malla completa + 4 identidad: el
-  enlace identidad-cert del QUIC (legítimo/MITM/insecure/`CN=peer_id`) +
-  19 capa 3/4 Nostr: BIP340 contra los 19 vectores + relay de red +
-  NostrTransport + convergencia de malla + 5 guardia de relay: rate-limit
-  por `pubkey`, dedup, límite de tamaño, snapshot/restore y default efímero +
-  21 capa 4: 13 discovery/relays/bootstrap/control-plane + transporte
-  Nostr de red + 8 mDNS: el transporte de discovery mDNS (swappable con
-  `DiscoveryBus`, mismo contrato que `DeploymentNode` no cambia) + 9 modo
-  estricto: el provenance no degrada silenciosamente a HMAC (lanza en estricto,
-  warning en no-estricto, `allow_hmac_fallback`) + 6 adaptador DeepSeek
-  Harness: import lazy del módulo, subclase `LLMClient`, `build_client`
-  por defecto / `use_harness`, `DELM_HARNESS` en env (opt-in) + 1 demo
-  multi-host: convergencia sobre QUIC (default) + 31 RSI/HCI: 9 loop L1
-  (proponer/verificar/retener/sucesor) + 3 demo RSI (HCI 10.48→21.19) +
-  19 métrica HCI (Benchmark/BenchFamily/HCIMeter/DeterministicScorer) + 19
-  CLI: los subcomandos de `delm` (demo/test/config-check/version), el despacho
-  de demos, `--slow` y el enmascarado de la key + 74 llmfit: el adaptador
-  (parseo de filas, filtros, orden, veredicto, runner con descubrimiento y
-  errores) y el subcomando `delm fit` (tabla, `--check` con su exit code,
-  `--write-config` sin pisar, y la ausencia de llmfit como exit `3`) + 19
-  `delm fit` en la API (contrato de `/api/fit` y `/api/fit/apply`: validación
-  de filtros, veredicto sobre el catálogo entero, cero secretos, llmfit
-  ausente como estado normal y el escritor de config compartido) + 99 la malla
-  (32 del intercambio: reto de un solo uso, firma que ata los números, `peer_id`
-  ligado a su clave, cadena y rechazos persistentes, crédito por uptime, gasto
-  que se niega; 22 del reparto: rechazo accionable, exclusividad del greedy,
-  suma exacta y capas que teselan, determinismo y replay; 25 de `delm mesh`
+  15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
+  12 requirements + 10 heartbeat + 17 malla: transport/nodo/red/pipeline +
+  QUIC e2e + Nostr e2e + 3 QUIC entre hosts: framing/round-trip/malla completa +
+  4 identidad: el enlace identidad-cert del QUIC (legítimo/MITM/insecure/
+  `CN=peer_id`) + 19 Nostr: BIP340 contra los 19 vectores + relay de red +
+  NostrTransport + convergencia + 5 guardia de relay (rate-limit por `pubkey`,
+  dedup, límite de tamaño, snapshot/restore, default efímero) +
+  21 capa 4: 13 discovery/relays/bootstrap/control-plane + transporte Nostr
+  de red + 8 mDNS: discovery swappable con `DiscoveryBus` (el contrato de
+  `DeploymentNode` no cambia) + 9 provenance estricto: no degrada a HMAC en
+  silencio (lanza en estricto, warning en no-estricto) + 6 adaptador DeepSeek
+  Harness (import lazy, `build_client`, `DELM_HARNESS` opt-in) +
+  1 demo multi-host (convergencia sobre QUIC) +
+  34 RSI/HCI (fuera de tesis, ver abajo): 9 loop L1 + 3 demo RSI (HCI
+  10.48→21.19) + 22 métrica HCI (Benchmark/BenchFamily/HCIMeter/
+  DeterministicScorer) +
+  19 CLI base: los subcomandos `demo`/`test`/`config-check`/`version`, el
+  despacho de demos, `--slow` y el enmascarado de la key (`fit` y `mesh` tienen
+  suite propia) +
+  74 llmfit: el adaptador (el vocabulario real de llmfit 1.1.16 —`fit_level`
+  humano de su CLI y código de máquina de su API, `llama.cpp`/`vLLM`,
+  `category`—, filtros, orden, veredicto, runner con descubrimiento y errores)
+  y el subcomando `delm fit` (tabla, `--check` con su exit code,
+  `--write-config` sin pisar, llmfit ausente como exit `3`) +
+  19 `/api/fit*` (validación de filtros, veredicto sobre el catálogo entero,
+  cero secretos, el escritor de config compartido con `PUT /api/config`) +
+  103 la malla: 36 del intercambio (reto de un solo uso y caducidad, firma que
+  ata los números, `peer_id` ligado a su clave, cadena con rechazos
+  persistentes, crédito por uptime, gasto que se niega) + 22 del reparto
+  (rechazo accionable, exclusividad del greedy, suma exacta de stages, capas
+  que teselan `[0, n-1]`, determinismo y replay) + 25 de `delm mesh`
   (identidad persistente, dos nodos sobre un estado, `plan` con y sin llmfit,
-  `check` que detecta la cadena alterada); 20 de `/api/mesh/*` incluido el que
-  comprueba que CLI y web ven la misma malla) + 35 API: las
-  acciones de
-  sesión (scan, taint, config, export del ledger, SSE, meshllm) y las demos
-  in-proceso + 20 `smcp-serve` (SMCP como agente ACP: el handshake, el
-  ciclo de vida de sesión, el prompt corriendo el pipeline real, cancelación,
-  y un smoke JSON-RPC por stdio) + 4
-  demos que pasan. 7 tests `slow` se excluyen del default (`-m 'not slow'`).
+  `check` que detecta la cadena alterada) + 20 de `/api/mesh/*` incluido el
+  que comprueba que CLI y web ven la misma malla +
+  60 anclaje a BSV (Fase 1): 26 bytes canónicos del ledger (v1/v2 y por qué v1
+  no era reproducible), 18 wallet SPV (BRC-75 maestro, BRC-42 derivación,
+  BRC-43 `keyId`) + 16 anclaje (identidad secp256k1, reloj del nodo,
+  rebroadcast frente a reemplazo en mempool) +
+  5 tesis del intercambio encadenada de punta a punta (contribuir → ganar
+  crédito → el planner coloca el modelo ahí → la inferencia se sirve solo si ese
+  crédito se gasta) +
+  21 ACP (`smcp-serve`: handshake, ciclo de vida, el contrato de firmas de los
+  overrides contra `acp.Agent`, prompt con el pipeline real, cancelación, smoke
+  JSON-RPC por stdio) +
+  35 API: 12 acciones de sesión (scan, taint, config, export del ledger) +
+  7 demos in-proceso + 7 inspección del contexto + 6 gestor de runs +
+  3 config +
+  4 demos que pasan. 10 tests `slow` se excluyen del default
+  (`-m 'not slow'`): handshake QUIC multi-host, adaptador Harness, llmfit real,
+  el smoke ACP por stdio y los 3+2 de la malla contra un endpoint real
+  (`test_meshllm_thesis.py`, `test_meshllm_wiring.py`, opt-in).
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
 - **Modelo local dimensionado por hardware** — `delm fit` (`delm/core/llmfit.py`)
@@ -805,7 +817,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   `MeteredLLMClient` como consumidor. 22 tests.
 - **Las tres piezas en una sola superficie** — `delm mesh
   {status,contribute,observe,plan,check}`, `/api/mesh*` y la página **Malla**
-  (`web/malla.html`), las tres sobre el **mismo fichero de estado** (lo resuelve
+  (`delm/web/static/malla.html`), las tres sobre el **mismo fichero de estado** (lo resuelve
   `delm.core.contrib.default_state_path()`; hay un test que aporta por HTTP y lo
   lee con la CLI en subprocess). 45 tests.
 - **Identidad persistente** — `KeyPair.save`/`load` (ed25519, `chmod 600`): sin
@@ -914,7 +926,8 @@ delm/
     static/                11 páginas (nav común en todas) + assets
       index.html nucleo.html seguridad.html demos.html arquitectura.html
       play.html context.html ledger.html estado.html malla.html console.html
-      js/                   three.min.js (la escena 3D de `nucleo.html`)
+      js/                   three.min.js (la escena 3D de `console.html`)
+      console.js            el visor 3D de la malla (sin three, propio)
       assets/
         app.js               tema dark/light + recordar última página
         api.js               fetch/JSON/SSE + pip de salud (compartido)

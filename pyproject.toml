@@ -129,7 +129,13 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = [".venv", "build", "dist", "web"]
+# OJO con la forma de estos patrones: sin "/" inicial casan en CUALQUIER
+# nivel (semantica de .gitignore), asi que el antiguo "web" seguia excluyendo
+# `delm/web/` cuando la capa web se movio dentro del paquete (commit 060c800) y
+# dejo ~1.900 lineas de Python (app.py + api.py) sin lintear: el sweep del CI
+# pasaba en verde mientras `ruff check delm/web/app.py`arnsE402 a mano. Ahora
+# se excluye SOLO el directorio de estaticos, que no es Python.
+extend-exclude = [".venv", "build", "dist", "/web", "delm/web/static"]
 
 [tool.ruff.lint]
 select = [
@@ -274,7 +280,7 @@ ignore = [
 # de un write_file largo.
 "delm/core/injection_hardened.py" = ["RUF001"]
 # La UI estatica no es Python: no entra en el analisis.
-"web/*" = ["ALL"]
+"delm/web/static/*" = ["ALL"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["delm"]

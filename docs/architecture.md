@@ -36,6 +36,16 @@ las mismas tres primitivas: un modelo de datos (`Gist`), una firma
   CAPA 5 — anti prompt-injection            (transversal, on by default)
     injection · injection_hardened · taint   → cuarentena en render/unfold
   ──────────────────────────────────────────────────────────────────────────
+  CAPA 6 — intercambio + anclaje           (la tesis: VRAM ⇄ inferencia)
+    contrib    Challenge/CapacityReport + ContributionLedger + créditos +
+               ExchangePolicy + MeteredLLMClient
+    placement  ModelSpec/Stage/PlacementPlan  (el binario trae, SMCP estrecha)
+    llmfit     adaptador de la dimensionadora externa (stdlib-only)
+    bsv_keys   identidad secp256k1 (BRC-220) — Fase 1 del anclaje
+    spv        wallet: maestro BRC-75, derivación BRC-42, keyId BRC-43
+    ledger_canon  bytes canónicos v1/v2 del ledger (la raíz del ancla)
+    timechain  historial propio + rebroadcast() antes de la cadena
+  ──────────────────────────────────────────────────────────────────────────
   CAPA 4 — despliegue multi-proceso
     deployment (Owner/DiscoveryBus/DeploymentNode) · nostr · mdns
   ──────────────────────────────────────────────────────────────────────────

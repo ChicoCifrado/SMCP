@@ -171,6 +171,18 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
         One ACP session == one SMCP run: a prompt becomes tasks, the real
         :class:`DelmPipeline` runs them against a signed shared context, and
         the output streams back as ``session/update`` chunks.
+
+        **Los overrides repiten la firma de :class:`acp.Agent` tal cual**
+        (``session_id`` antes que ``prompt``, ``cwd`` antes que ``cursor``, …),
+        aunque el SDK despacha por keyword (`func(**params)` en
+        `acp/router.py`) y nuestra versión anterior funcionara con el orden
+        invertido. Es deliberado: el orden de una firma pública es parte del
+        contrato LSP, y un orden distinto rompe en silencio a cualquier
+        llamador posicional (o a un SDK que despache posicionalmente) asignando
+        ``cwd`` donde va ``session_id``. Los parámetros que SMCP ignora a
+        propósito (``additional_directories``) se **declaran** en vez de
+        tragarse en ``**kwargs``, para que la decisión se lea y no se deduzca.
+        `tests/test_serve.py::test_overrides_match_the_acp_contract` lo fija.
         """
 
         def __init__(self) -> None:
@@ -202,13 +214,20 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
                 auth_methods=[],
             )
 
-        async def new_session(self, cwd, mcp_servers=None, **kwargs):
+        async def new_session(self, cwd, additional_directories=None,
+                              mcp_servers=None, **kwargs):
+            # `additional_directories` se acepta y se **ignora a propósito**:
+            # SMCP no toca el filesystem (no es una herramienta de agente), así
+            # que no hay directorio que abrir. Se declara explícitamente en vez
+            # de dejarlo caer en **kwargs para que la decisión sea legible y no
+            # un efecto colateral del `**kwargs`.
             session_id = str(uuid.uuid4())
             self._sessions[session_id] = cwd
             logger.info("ACP new_session: %s (cwd=%s)", session_id, cwd)
             return acp.NewSessionResponse(session_id=session_id)
 
-        async def load_session(self, cwd, session_id, mcp_servers=None, **kwargs):
+        async def load_session(self, cwd, session_id, mcp_servers=None,
+                               additional_directories=None, **kwargs):
             # SMCP runs are ephemeral (the shared context persists, the run
             # does not), so a resume starts clean rather than faking history.
             self._sessions[session_id] = cwd
@@ -222,7 +241,7 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             self._sessions.pop(session_id, None)
             return None
 
-        async def list_sessions(self, cursor=None, cwd=None, **kwargs):
+        async def list_sessions(self, cwd=None, cursor=None, **kwargs):
             """SMCP runs are ephemeral: there is nothing to enumerate.
 
             An empty list (not an error) is the honest answer — the shared
@@ -232,7 +251,8 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
 
             return ListSessionsResponse(sessions=[])
 
-        async def fork_session(self, cwd, session_id, mcp_servers=None, **kwargs):
+        async def fork_session(self, session_id, cwd, additional_directories=None,
+                               mcp_servers=None, **kwargs):
             # Forking would mean cloning admitted state; SMCP's shared context
             # IS the fork mechanism (a new run reads the same C), so a forked
             # session is just a new session.
@@ -241,7 +261,8 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             self._sessions.pop(session_id, None)
             return ForkSessionResponse(session_id=str(uuid.uuid4()))
 
-        async def resume_session(self, cwd, session_id, mcp_servers=None, **kwargs):
+        async def resume_session(self, session_id, cwd, additional_directories=None,
+                                mcp_servers=None, **kwargs):
             from acp.schema import ResumeSessionResponse
 
             self._sessions[session_id] = cwd
@@ -251,7 +272,7 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             """No auth: SMCP's trust anchor is the owner's key, not a login."""
             return None
 
-        async def set_session_mode(self, mode_id, session_id, **kwargs):
+        async def set_session_mode(self, session_id, mode_id, **kwargs):
             # No modes declared in new_session, so a mode set is a no-op.
             return None
 
@@ -282,7 +303,7 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             return None
 
         # -- the loop --------------------------------------------------
-        async def prompt(self, prompt, session_id, message_id=None, **kwargs):
+        async def prompt(self, session_id, prompt, **kwargs):
             text = prompt_text(prompt)
             logger.info("ACP prompt: session=%s chars=%d tasks=%d",
                         session_id, len(text), len(split_tasks(text)))

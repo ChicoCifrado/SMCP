@@ -101,6 +101,15 @@ jobs:
         run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
       - name: "ruff (config en pyproject.toml: select + ignore justificado)"
         run: python -m ruff check .
+      # pyright ES gate (0 errores hoy). Durante meses su configuración estuvo
+      # en pyproject.toml sin que nada lo ejecutara, y la deriva se acumuló: los
+      # overrides de ACP en serve.py tenían el orden de parámetros invertido
+      # respecto a acp.Agent. No rompía en runtime porque el router del SDK
+      # despacha por keyword, así que ni la suite ni una revisión a ojo lo
+      # detectaban. Ejecutarlo aquí es lo que convierte la config en gate de
+      # verdad.
+      - name: "pyright (type-check, config en pyproject.toml)"
+        run: python -m pyright
       # `ruff format --check` NO es gate todavia, a proposito: 81 de 92
       # archivos se reformatearian, y aplicarlo aqui mezclaria un cambio
       # cosmetico sobre 12.100 lineas con los hallazgos reales del

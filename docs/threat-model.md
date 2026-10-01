@@ -48,6 +48,10 @@ un threat model que solo dice "esto es seguro" es peor que ninguno.
 | A3 | **Fuente envenenada** (documento malicioso que un agente lee) | Solo controla el texto que entra | Que un agente siga sus instrucciones (prompt-injection) | 5 (detector + taint + cuarentena) |
 | A4 | **Fuente envenenada con linaje limpio** (A3, pero el gist derivado lo "lava") | Escribe un gist que parece legítimo pero viene del texto envenenado | Propagar la inyección bajo otras etiquetas | 5 (cierre transitivo del taint) |
 | A5 | **Relay/transport jamming** (saturación, spam) | Controla o afloja la ruta de announce/gossip | Inundar el canal, agotar recursos | 4 (guardia de relay: rate-limit/dedup/tamaño) |
+| A6 | **Nodo que miente sobre su capacidad** (el adversario con incentivo económico) | Es un par legítimo y posee su clave | Declarar más VRAM de la que tiene: inflar su crédito y que se le coloque modelo ajeno | nada del todo hoy: la firma solo prueba **quién** afirmó, no **cuánto** (§2, intercambio). Acotado por: reto de un solo uso + caducidad, `peer_id` atado a su clave, `capacity_is_intact` (el planner descarta capacidad reescrita tras admitirla) y el crédito por uptime observado. **Sin slashing**: detectarlo es trivial, sancionarlo no está implementado |
+| A7 | **Replay de una afirmación antigua** | Capturó un informe de capacidad válido de otro momento | Reclamar capacidad/inferencia con un informe viejo | intercambio: nonce de un solo uso (se quema al admitir), reto e informe caducan, `peer_id` no se re-apunta a otra clave |
+| A8 | **Quien lee la clave de identidad del nodo** | Acceso de lectura a `config/mesh_identity.json` (o al fichero equivalente en el exchange de BSV) | Firmar como ese nodo y reclamar su capacidad y su crédito | nada criptográfico lo frena (es la clave); sí lo marca el diseño: `chmod 600`, se **rechaza persistir una clave HMAC**, y el binding de identidad hace que suplantarla sea visible en la cadena |
+| A9 | **Reemplazo en mempool** (Fase 1 del anclaje) | Ha visto la transacción del nodo antes de que se mine | Sustituirla por otra con el mismo input y un alias distinto, y reescribir la historia | `timechain.rebroadcast()` (mientras no esté confirmada) + la cadena, que es el tercero de confianza |
 
 Activos: (i) el **contexto compartido** `C`; (ii) la **cadena de
 proveniencia** (digest + firma) de cada gist; (iii) la **identidad** de los
@@ -567,7 +571,25 @@ en CI sin red ni modelo:
 - convergencia de la malla (in-memory, QUIC y Nostr) → `test_mesh.py`,
   `test_demo_multihost.py`;
 - puerta ACP (`smcp-serve`: helpers, ciclo de vida, que un prompt corre el
-  pipeline, los no-ops honestos y el smoke stdio slow) → `test_serve.py`.
+  pipeline, los no-ops honestos, **el contrato de firmas de los overrides contra
+  `acp.Agent`**, y el smoke stdio slow) → `test_serve.py`;
+- intercambio (reto de un solo uso y caducidad, firma que ata los números,
+  `peer_id` ligado a su clave, cadena con rechazos persistentes, crédito por
+  uptime observado, gasto que se niega, metered client) →
+  `test_contrib.py`, y la cadena completa de la tesis
+  (contribuir → crédito → plan → cobro) → `test_exchange_thesis.py`;
+- reparto (rechazo accionable, capacidad no admitida o sin crédito excluida,
+  exclusividad del greedy, suma exacta de stages, capas que teselan
+  `[0, n-1]`, determinismo, replay) → `test_placement.py`;
+- que la CLI y la web sean la misma malla, y que el plan no crece sobre
+  capacidad manipulada → `test_api_mesh.py`, `test_mesh_cli.py`;
+- dimensionado por hardware y su veredicto → `test_llmfit.py`, `test_api_fit.py`;
+- bytes canónicos del ledger (v1/v2, y por qué v1 no era reproducible) →
+  `test_ledger_canon.py`; identidad secp256k1, reloj del nodo y rebroadcast →
+  `test_bsv_anchor.py`; wallet SPV (BRC-75/42/43) → `test_spv_wallet.py`;
+- discovery, mDNS, control-plane, modo estricto y adaptador Harness →
+  `test_deployment.py`, `test_mdns.py`, `test_provenance_strict.py`,
+  `test_harness_adapter.py`; métricas y expansión → `test_mejoras.py`.
 
 ## 6. Resumen de no-garantías (la lista corta)
 

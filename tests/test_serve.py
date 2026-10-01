@@ -276,7 +276,8 @@ def test_unsupported_session_knobs_are_noops():
     agent, _ = _agent()
     sid = asyncio.run(agent.new_session(cwd="/tmp")).session_id
     # no hay modos/modelos declarados: pedir cambiarlos no es un error
-    assert asyncio.run(agent.set_session_mode("x", sid)) is None
+    # Orden del contrato ACP: (session_id, mode_id), no (mode_id, session_id).
+    assert asyncio.run(agent.set_session_mode(sid, "x")) is None
     assert asyncio.run(agent.set_session_model("y", sid)) is None
     assert asyncio.run(agent.set_config_option("z", sid, True)) is None
     assert asyncio.run(agent.authenticate("any")) is None
@@ -294,9 +295,57 @@ def test_unknown_extension_method_is_method_not_found():
 def test_fork_and_resume_are_accepted():
     agent, _ = _agent()
     sid = asyncio.run(agent.new_session(cwd="/tmp")).session_id
-    fork = asyncio.run(agent.fork_session("/tmp", sid))
+    # Contrato ACP: fork_session(session_id, cwd).
+    fork = asyncio.run(agent.fork_session(sid, "/tmp"))
     assert fork.session_id
-    assert asyncio.run(agent.resume_session("/tmp", sid)) is not None
+    assert asyncio.run(agent.resume_session(sid, "/tmp")) is not None
+
+
+def test_overrides_match_the_acp_contract():
+    """Our overrides must accept the base class's parameter names, in order.
+
+    This is the check pyright does (`reportIncompatibleMethodOverride`) and the
+    one that was **not** in CI, so it drifted: the signatures had
+    ``(cwd, session_id)`` / ``(prompt, session_id)`` instead of the ACP
+    ``(session_id, cwd)`` / ``(session_id, prompt)``. It went unnoticed because
+    the SDK's router dispatches by keyword (`func(**params)`), so runtime was
+    fine — but the tests called them *positionally* in the wrong order, encoding
+    the bug as if it were the contract. A positional caller (or an SDK that
+    dispatches positionally) would have bound ``cwd`` where ``session_id``
+    belongs, silently.
+
+    So the contract is pinned here in the terms that matter: same names, same
+    order, for every method SMCP overrides.
+    """
+    import inspect
+
+    from acp import Agent as AcpAgent
+
+    agent, _ = _agent()
+    overridden = [
+        "new_session", "load_session", "close_session", "list_sessions",
+        "fork_session", "resume_session", "authenticate", "set_session_mode",
+        "set_session_model", "set_config_option", "prompt", "cancel",
+    ]
+    checked = []
+    for name in overridden:
+        base_attr = getattr(AcpAgent, name, None)
+        if base_attr is None:
+            # Método nuestro que no está en la clase base (extensión): no hay
+            # contrato ACP que respetar, solo que se llame bien.
+            continue
+        base = inspect.signature(base_attr)
+        ours = inspect.signature(getattr(type(agent), name))
+        # `self` is bound on the class; compare the declared params after it.
+        base_names = [p for p in base.parameters if p != "self"]
+        our_names = [p for p in ours.parameters if p != "self"]
+        assert our_names[:len(base_names)] == base_names, (
+            f"{name}: firma {our_names} no respeta el orden/nombre del "
+            f"contrato ACP {base_names}")
+        checked.append(name)
+    # Si el SDK perdiera un método, el test no debe pasar en verde por no
+    # haber comprobado nada.
+    assert len(checked) >= 10, f"solo se comprobaron {checked}"
 
 
 # ------------------------------------------------- smoke real por stdio

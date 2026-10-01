@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from delm.web import REPO_ROOT, STATIC
+from delm.web.api import router as smcp_router
 
 app = FastAPI(title="DeLM/SMCP API")
 # Localhost-only UI: do not open CORS to arbitrary origins.
@@ -49,8 +50,10 @@ app.add_middleware(
 )
 
 # Interactive session API (runs, context, ledger, demos, health).
-from delm.web.api import router as smcp_router
-
+# El import vive arriba del todo: no hay ciclo (`api.py` no importa `app.py`).
+# Antes estaba a mitad de fichero con una excepcion de ruff para E402 que se
+# perdio al mover la capa web dentro del paquete, y ruff solo lo ha vuelto a ver
+# al dejar de excluir este directorio.
 app.include_router(smcp_router)
 
 # ------------------------------------------------------------------ funciones
@@ -91,8 +94,12 @@ FUNCTIONS = [
     {
         "id": "tests",
         "label": "Suite de tests",
-        "desc": "Suite por defecto (-m 'not slow'). 297 tests; los slow "
-                "se corren aparte. La API resume el resultado.",
+        # Sin el numero del conteo a proposito: se envejecio (decía 297
+        # cuando eran 603) y esta cadena la ve el usuario en la UI. El total
+        # vive en el README y lo verifica scripts/check_readme_count.py.
+        "desc": "Suite por defecto (-m 'not slow'); los tests lentos se "
+                "corren aparte con 'delm test --slow'. La API resume el "
+                "resultado.",
         # Sin -q: pytest emite la línea final "N passed …" (con -q se omite
         # si no hay warnings y el parser de resumen no tendría qué leer).
         "cmd": [sys.executable, "-m", "pytest", "tests/", "-m", "not slow", "--no-header", "-p", "no:cacheprovider"],
@@ -115,7 +122,7 @@ _DOC_RE = re.compile(r"^-- Docs:\s+https?://\S+\s*$", re.M)
 def _parse_pytest(stdout: str, stderr: str) -> dict:
     """Resumen estructurado de la salida de pytest (para la UI).
 
-    Separa: headline (`297 passed · 0 failed`), cuerpo limpio (sin puntos de
+    Separa: headline (`N passed · 0 failed`), cuerpo limpio (sin puntos de
     progreso ni bloque de warnings) y el texto de warnings aparte.
     """
     text = (stdout or "") + ("\n" + stderr if stderr else "")
