@@ -765,7 +765,44 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver = sub.add_parser("version", help="muestra la version")
     p_ver.set_defaults(func=_cmd_version)
 
+    # --- gates
+    p_gates = sub.add_parser(
+        "gates",
+        help="corre los gates de calidad (readme, ruff, pyright, pytest, slow)")
+    p_gates.add_argument(
+        "names", nargs="*",
+        help="gates concretos: readme, ruff, pyright, tests, slow "
+             "(por defecto, todos)")
+    p_gates.add_argument(
+        "--blocking", action="store_true",
+        help="solo los que bloquean el commit (excluye `slow`)")
+    p_gates.add_argument("--timeout", type=int, default=None,
+                         help="timeout por gate, en segundos")
+    p_gates.add_argument("--list", action="store_true", dest="list",
+                         help="lista los gates y sale")
+    p_gates.set_defaults(func=_cmd_gates)
+
     return ap
+
+
+def _cmd_gates(args: argparse.Namespace) -> int:
+    """Run the project's quality gates.
+
+    The list lives in :mod:`delm.core.gates` and nowhere else, so the CI
+    workflow and this command cannot disagree about what a gate is. The same
+    module exposes :func:`~delm.core.gates.ci_argv` for the workflow to call,
+    which is the point: one list, two callers.
+    """
+    from delm.core import gates
+
+    if getattr(args, "list", False):
+        for gate in gates.BLOCKING if args.blocking else gates.ALL:
+            mark = " (bloqueante)" if gate in gates.BLOCKING else ""
+            state = "" if gate.available() else "  [no instalado]"
+            print(f"  {gate.name:8} {gate.why}{mark}{state}")
+        return 0
+    return gates.check_all(args.names, only_blocking=args.blocking,
+                           timeout=args.timeout)
 
 
 def _version() -> str:

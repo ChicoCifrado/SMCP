@@ -214,11 +214,13 @@ delm config-check               # resuelve la config de modelo (key oculta)
 delm fit                        # qué modelos caben en ESTA máquina (llmfit)
 delm fit --check                # ¿el modelo de la config cabe aquí? (2 si no)
 delm test                       # la suite; --slow para los tests lentos
+delm gates                      # los gates de calidad (ver abajo)
 delm demo                       # demo principal (pipeline, sin API key)
 delm demo --list                # lista las demos
 ```
 
-Los seis subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh` y `version`.
+Los siete subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh`,
+`gates` y `version`.
 
 `config-check` resuelve la config con la **misma** precedencia que
 `run_real_demo --dry-run` (entorno > YAML > default) y muestra la API key
@@ -724,6 +726,38 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 
 ---
 
+### Los gates, en un comando
+
+Los gates de calidad estaban en cuatro sitios que había que recordar y mantener
+por separado: el workflow del CI, `delm test`, un
+`scripts/check_readme_count.py` invocado por ruta, y el README. Una lista de
+gates duplicada es una lista que **se puede encoger sin que nada falle**: el
+build se debilita en silencio.
+
+Ahora la lista vive una sola vez, en `delm/core/gates.py`, y tanto la CLI como
+el CI la llaman:
+
+```bash
+delm gates                    # todos: readme, ruff, pyright, tests, slow
+delm gates --blocking         # los que bloquean el commit (sin `slow`)
+delm gates ruff pyright       # gates concretos
+delm gates --list             # qué hay, y si está instalado
+make help                     # los mismos, como atajos
+```
+
+Se para en el primer fallo: un lint roto no debería costar 50 s de suite para
+descubrirlo. Y un gate cuya herramienta no está se reporta como **omitido**, con
+nombre y qué instalar — nunca como verde, porque un linter ausente que se
+reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
+
+| Gate      | Qué comprueba                                            |
+| --------- | -------------------------------------------------------- |
+| `readme`  | el conteo de tests del README cuadra con la suite         |
+| `ruff`    | lint                                                     |
+| `pyright` | type-check                                               |
+| `tests`   | suite completa (el default de pyproject excluye `slow`)  |
+| `slow`    | tests marcados `slow` (handshake QUIC, subprocess)       |
+
 ## Progreso actual
 
 **Hecho y verificado:**
@@ -735,7 +769,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **616 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **633 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -974,6 +1008,7 @@ delm/
     bsv_keys.py        ECDSA-secp256k1 (la firma que ancla a BSV)
     timechain.py       el reloj del nodo: qué publicó, reenvía y no ha probado
     spv.py             la wallet del nodo: maestro, derivación BRC-42 y dirección
+    gates.py           los gates de calidad, en una lista, en un solo sitio
   demo/
     run_demo.py        demo end-to-end (sin API key)
     run_real_demo.py   demo contra un modelo real (config-driven)
@@ -986,7 +1021,9 @@ docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa
 scripts/
-  check_readme_count.py   gate de conciliación README ↔ pytest
+  check_readme_count.py   gate de conciliación README ↔ pytest (`delm gates readme`)
+Makefile
+  make help / gates / lint / types / test / coverage — delega en `delm gates`
 ```
 
 ---

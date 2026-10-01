@@ -99,44 +99,19 @@ jobs:
             pyproject.toml
       - name: Instalar delm[all] + deps de test
         run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
-      - name: "ruff (config en pyproject.toml: select + ignore justificado)"
-        run: python -m ruff check .
-      # pyright ES gate (0 errores hoy). Durante meses su configuración estuvo
-      # en pyproject.toml sin que nada lo ejecutara, y la deriva se acumuló: los
-      # overrides de ACP en serve.py tenían el orden de parámetros invertido
-      # respecto a acp.Agent. No rompía en runtime porque el router del SDK
-      # despacha por keyword, así que ni la suite ni una revisión a ojo lo
-      # detectaban. Ejecutarlo aquí es lo que convierte la config en gate de
-      # verdad.
-      - name: "pyright (type-check, config en pyproject.toml)"
-        run: python -m pyright
-      # `ruff format --check` NO es gate todavia, a proposito: 81 de 92
-      # archivos se reformatearian, y aplicarlo aqui mezclaria un cambio
-      # cosmetico sobre 12.100 lineas con los hallazgos reales del
-      # type-checker, escondiendo justamente lo que el gate debe revelar.
-      # Formatear es un commit propio (sin logica) y despues se activa.
-      # El umbral (`fail_under`) vive en [tool.coverage.report]. Es un gate
-      # real, no un informe: baja de cobertura y rompe el build.
-      - name: Suite + cobertura
-        run: python -m pytest --cov=delm --cov-report=term:skip-covered
+      # Los gates viven en delm/core/gates.py y el CI llama al mismo runner
+      # que `delm gates`. `readme` esta aqui porque el README declara un conteo
+      # de tests que debe cuadrar con `pytest --collect-only -q`; el job
+      # readme-check que lo hacia por su cuenta fue eliminado, porque dos
+      # copias de un gate es una que se puede encoger sin que nada falle.
+      # que `delm gates`. Una lista de gates duplicada en el workflow es una
+      # lista que se encoge sin que nada falle: el build se debilita en
+      # silencio. `ruff format --check` NO es gate todavia, a proposito:
+      # reformatear 81 de 92 archivos mezclaria un cambio cosmetico sobre
+      # 12.100 lineas con los hallazgos reales del type-checker. Formatear
+      # es un commit propio (sin logica) y despues se activa.
+      - name: Gates (readme, ruff, pyright, tests)
+        run: python -m delm gates --blocking
+      - name: Cobertura
+        run: python -m pytest --cov=delm --cov-report=term:skip-covered -q
 
-  # Check de conciliación README: el conteo declarado en el README debe cuadrar
-  # con `pytest --collect-only -q`. Si no cuadra, rompe el CI (fuerza la
-  # convención de actualizar el README al añadir/quitar tests).
-  readme-check:
-    name: readme-conciliacion
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: 'pip'
-          cache-dependency-path: |
-            requirements.txt
-            pyproject.toml
-      - name: Instalar delm[all] + deps de test
-        run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
-      - name: Check de conciliación README
-        run: python scripts/check_readme_count.py
