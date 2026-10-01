@@ -424,6 +424,50 @@ confirme es lo que cierra esa ventana.
   admitieron; sí el patrón de actividad. Eso se acepta explícitamente y no se
   considera un detalle de implementación.
 
+### Las reglas de firma de la malla (`mesh_node.py`, `secure_context.py`) — fuera de capa
+
+**La regla que estas cuatro reglas cierran.** Antes, `handle_gist()` hacia
+`register_key(author_id, pub_key)` **antes** de verificar nada, con la clave
+que venía en el propio mensaje. La firma del gist verificaba — contra la clave
+que el atacante acababa de instalar. Autenticación circular: demostraba que
+quien firmó poseía la clave, no que la clave fuera de ese autor. `author_id`
+era una etiqueta.
+
+**Las cuatro reglas, según las fijó el dueño:**
+
+1. **Una clave escuchando por nodo, a la vez, con idempotencia.**
+   `register_key` con la misma clave es no-op (el gossip reentrega anuncios
+   constantemente, y un rebind que cambiara estado en cada repetición haría que
+   el keyring mintiera sobre lo que ha visto). Una clave *distinta* lanza
+   `KeyRotationDenied`. La rotación es un acto explícito (`rotate_key`) que
+   queda en el ledger con huellas, nunca las claves. Sin ese rastro, una
+   rotación es indistinguible de un nodo comprometido.
+
+2. **La clave firma, no cifra.** C sigue siendo legible; si no, no habría nada
+   que renderizarle a un agente. La firma aporta autenticidad e integridad, no
+   confidencialidad — y no se promete.
+
+3. **El contexto viaja firmado siempre.** El digest canónico se recalcula del
+   contenido recibido y tiene que coincidir con el firmado, así que una
+   manipulación en tránsito se detecta aunque la firma sea válida sobre otra
+   cosa. La clave viaja en el **anuncio** (handshake), nunca en el gist: una
+   clave junto al contenido que firma solo prueba que ambos concuerdan entre sí.
+
+4. **La red solo confía en nodos con contexto firmado.** `signed_only()` es la
+   vista que la malla da por buena; `untrusted_labels()` dice qué hay en C que
+   el nodo no puede respaldar. Contenido sin firma no es evidencia débil, es
+   **ninguna** evidencia, y se rechaza aunque la política se abra.
+
+**Threshold signatures después, sin cambiar esto.** Una atestación umbral
+sustituye la prueba de clave única por una combinada; la forma de las reglas no
+cambia. Lo que hoy es `is_attributed()` pasa a ser "k de n" y el resto igual.
+
+**Lo que esto NO arregla.** La clave se liga al `peer_id` que el par declara en
+su anuncio. Un par que se presenta con un `peer_id` distinto al de ayer es un
+par nuevo, no una rotación: el keyring los distingue, pero nada impide que un
+nodo se anuncie como quien quiera. Atar identidad a un nombre estable es
+identidad fuera de la malla, y es lo que `spv.py` podría aportar después.
+
 ### La identidad del nodo (`spv.py`) — fuera de capa, en construcción
 
 La atribución no la da la cadena, la da la clave, y **antes de este módulo no

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -34,6 +35,8 @@ from delm.core.provenance import KeyPair
 from delm.core.requirements import AdmissionEvaluator, MeshRequirements
 from delm.core.secure_context import SecureSharedContext
 from delm.core.transport import MeshTransport
+
+logger = logging.getLogger(__name__)
 
 # Tipos de mensaje (plano de control)
 MSG_ANNOUNCE = 0x01
@@ -68,6 +71,12 @@ def _ann_to_json(ann: PeerAnnouncement) -> str:
         "first_joined_mesh_ts": ann.first_joined_mesh_ts,
         "mesh_id": ann.mesh_id,
         "mesh_policy_hash": ann.mesh_policy_hash,
+        # The listening key travels in the handshake announcement, never in a
+        # gist. A key announced alongside the content it signs proves only
+        # self-consistency; a key announced by a peer we have already seen
+        # announces is the peer *declaring* its identity.
+        "pub_key": ann.pub_key,
+        "sig_kind": ann.sig_kind,
     }, sort_keys=True)
 
 
@@ -81,6 +90,8 @@ def _json_to_ann(d: dict) -> PeerAnnouncement:
         first_joined_mesh_ts=d.get("first_joined_mesh_ts"),
         mesh_id=d.get("mesh_id", ""),
         mesh_policy_hash=d.get("mesh_policy_hash", ""),
+        pub_key=d.get("pub_key", ""),
+        sig_kind=d.get("sig_kind", "ed25519"),
     )
 
 
@@ -116,6 +127,10 @@ class MeshNode:
         self.policy_hash = req.policy_hash()
         self._now = 0
         self._neighbors: set[str] = set()
+        # Neighbours already told about our listening key. The announce is a
+        # one-time handshake, not a periodic beacon; re-sending it forever
+        # turns the gossip into a self-feeding loop on redelivering transports.
+        self._announced: set[str] = set()
         # Registra la propia key en el contexto (el par puede admitir).
         self.ctx.register_key(self.peer_id, key.public_key, key.kind)
 
@@ -139,6 +154,10 @@ class MeshNode:
             first_joined_mesh_ts=self._now,
             mesh_id=self.mesh_id,
             mesh_policy_hash=self.policy_hash,
+            # The one key this node is listening with, declared in the
+            # handshake. Peers bind it once and refuse any later change.
+            pub_key=base64.b64encode(self.key.public_key).decode(),
+            sig_kind=self.key.kind,
         )
 
     # -- firma / publicación de gists ---------------------------------------
@@ -167,7 +186,10 @@ class MeshNode:
             "digest": gist.digest,
             "signature": base64.b64encode(gist.signature).decode(),
             "sig_kind": gist.sig_kind,
-            "pub_key": base64.b64encode(self.key.public_key).decode(),
+            # No pub_key here on purpose: the author binding already exists
+            # from the handshake. Shipping it again would invite a peer to
+            # trust a key update that arrives with content instead of through
+            # the announce path.
         }, sort_keys=True).encode()
         return encode_msg(MSG_GIST, payload)
 
@@ -190,32 +212,63 @@ class MeshNode:
 
     # -- despachadores -------------------------------------------------------
     def handle_announce(self, from_id: str, ann: PeerAnnouncement) -> None:
-        """Recibe un anuncio de un par (directo o re-difundido)."""
+        """Recibe un anuncio de un par (directo o re-difundido).
+
+        This is where a peer's key becomes a trust anchor: the peer declares
+        the key it is listening with, and only then are its gists admissible.
+        The declaration arrives from a peer we already talk to, not from the
+        packet that needs the trust.
+
+        A changed key is a rotation: refused here and recorded nowhere. If it
+        should be accepted, the operator rotates it explicitly, and the change
+        is visible in the ledger. Silently rebinding on announce would let a
+        node that was compromised yesterday re-key itself into every peer
+        today, with nothing to review afterwards.
+        """
         # El par anunciante se registra como vecino y en la tabla.
         self._neighbors.add(from_id)
         # Admite el par en la tabla (con floor de versión).
         self.table.ingest_transitive(ann, bridge=from_id, now=self._now)
+        if ann.pub_key:
+            try:
+                self.ctx.register_key(
+                    ann.peer_id, base64.b64decode(ann.pub_key), ann.sig_kind)
+            except Exception as exc:
+                logger.warning("anuncio con clave invalida de %s: %s",
+                               ann.peer_id, exc)
+        else:
+            logger.warning(
+                "anuncio de %s sin clave declarada: sus gists no seran "
+                "atribuibles hasta que la declare", ann.peer_id)
 
     def handle_gist(self, from_id: str, d: dict) -> None:
         """Recibe un gist firmado: verifica la firma y lo admite en su ctx.
 
-        Registra la key pública del autor en el contexto y admite el gist; si
-        la firma no verifica, el gist **no** entra (el ctx lo rechaza).
+        The author's key is **not** taken from the gist. It must already be
+        bound, which happens in :meth:`handle_announce`. Binding a key on the
+        strength of the message that uses it is circular: the signature would
+        only prove that whoever sent this packet held the key they just
+        installed. A gist whose author has no bound key is discarded.
+
+        A node with an unsigned context contributes nothing the mesh trusts.
         """
         from delm.core.gist import Gist, GistKind
+        author_id = d.get("author_id", "")
+        # The trust anchor must pre-exist. No self-registration.
+        if author_id not in self.ctx.keyring:
+            logger.warning(
+                "gist de autor sin clave registrada, descartado: %s (de %s)",
+                author_id, from_id)
+            return
         # Reconstruye el gist.
         kind = GistKind(d["kind"]) if d["kind"] in {k.value for k in GistKind} else GistKind.FACT
         gist = Gist(label=d["label"], gist=d["gist"], kind=kind)
         gist.raw = d.get("raw")
-        # Key pública del autor (la registra para verificar).
-        pub = base64.b64decode(d["pub_key"])
-        self.ctx.register_key(d["author_id"], pub, d["sig_kind"])
-        # Firma del gist.
-        gist.author_id = d["author_id"]
+        gist.author_id = author_id
         gist.digest = d["digest"]
         gist.signature = base64.b64decode(d["signature"])
         gist.sig_kind = d["sig_kind"]
-        # Admite en el contexto (verifica la firma contra la key registrada).
+        # Admite en el contexto (verifica la firma contra la clave ya ligado).
         try:
             self.ctx.admit(gist)
         except Exception:
@@ -274,9 +327,17 @@ class MeshNode:
             incoming = self.transport.poll()
         for from_id, payload in incoming:
             self.on_datagram(from_id, payload)
-        # 2. Envía su anuncio a los vecinos (gossip) y su heartbeat.
+        # 2. Heartbeat to neighbours, but the announce only to peers that have
+        # not heard our key yet. Re-announcing to *every* neighbour on every
+        # tick fed announce -> handle_announce -> _neighbors -> announce: on a
+        # transport that redelivers (Nostr) that loop never reaches a quiet
+        # tick, and `MeshNetwork.drain` waits for one forever. The key is a
+        # one-time handshake, so announcing once is not just an optimisation,
+        # it is what makes the mesh terminate.
         for nbr in list(self._neighbors):
-            self.send_announce(nbr)
+            if nbr not in self._announced:
+                self.send_announce(nbr)
+                self._announced.add(nbr)
             self.send_heartbeat(nbr)
             sent.append((nbr, b"tick"))
         # 3. Avanza el reloj.

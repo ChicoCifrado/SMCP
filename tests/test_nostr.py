@@ -396,9 +396,19 @@ def test_nostr_mesh_two_nodes_converge(relay_server):
     n1, c1 = _node()
     n2, c2 = _node()
     try:
+        # Handshake first: the key is declared in the announce, not carried by
+        # the gist. A node that gossips content before announcing has no bound
+        # key on its peers, so its gists are correctly discarded as
+        # unattributable.
+        n1.send_announce(n2.peer_id)
+        n2.send_announce(n1.peer_id)
+        for _ in range(4):
+            n1.run_tick()
+            n2.run_tick()
+            time.sleep(0.05)
         # Cada nodo firma su gist con su KeyPair y se lo envía al otro
-        # (el relay hace el fan-out). Al recibirlo, el otro registra la
-        # key pública del autor y lo admite (verificando la firma).
+        # (el relay hace el fan-out). Al recibirlo, el otro ya tiene la
+        # clave del autor y lo admite verificando la firma.
         raw1 = n1.publish_gist(Gist(label="g1", gist="gist A", kind=GistKind.FACT))
         raw2 = n2.publish_gist(Gist(label="g2", gist="gist B", kind=GistKind.FACT))
         n1.transport.send(n2.peer_id, raw1)

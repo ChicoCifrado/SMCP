@@ -49,6 +49,12 @@ class PeerAnnouncement:
     first_joined_mesh_ts: Optional[int] = None
     mesh_id: str = ""
     mesh_policy_hash: str = ""
+    #: Listening key declared by the announcing peer, base64. Travels in the
+    #: handshake, not inside gists: a key arriving alongside the content it
+    #: signs only proves the two agree with each other. One key per peer at a
+    #: time — changing it is a visible rotation, never a silent rebind.
+    pub_key: str = ""
+    sig_kind: str = "ed25519"
 
     def richness(self) -> int:
         """Riqueza de la dirección: número de direcciones anunciadas."""

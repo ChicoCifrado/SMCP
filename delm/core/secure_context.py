@@ -21,6 +21,7 @@ plane instead of the transport plane.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from delm.core.gist import Gist
@@ -36,12 +37,27 @@ class AdmissionDenied(Exception):
     """Raised when an admission is refused by the secure context."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class _AuthorPub:
-    """A peer's public verification material (author_id -> key)."""
+    """A peer's public verification material (author_id -> key).
+
+    ``frozen`` because this is a trust anchor: once a key is bound to an
+    author, mutating it in place would silently rewrite history. Replacing it
+    is a visible act (:meth:`SecureSharedContext.rotate_key`).
+    """
     author_id: str
     public_key: bytes
     kind: str
+
+
+class KeyRotationDenied(Exception):
+    """An author tried to change its listening key.
+
+    The rule is one listening key per node at a time, so a rotation is not a
+    silent overwrite but an explicit, visible state change. Swapping quietly
+    would let a compromised node re-key itself into every peer's keyring and
+    re-sign its whole backlog under the new identity.
+    """
 
 
 class SecureSharedContext(SharedContext):
@@ -83,8 +99,69 @@ class SecureSharedContext(SharedContext):
     # ----------------------------------------------------------- keyring
     def register_key(self, author_id: str, public_key: bytes,
                      kind: str = "ed25519") -> None:
-        """Register a peer's public key (the trust anchor)."""
+        """Bind a peer's public key to ``author_id`` (the trust anchor).
+
+        Idempotent by design: registering the *same* key again is a no-op and
+        returns ``False``. That matters because gossip re-delivers
+        announcements constantly, and a binding that changed state on every
+        repeat would make the keyring lie about what it has seen.
+
+        A *different* key for a known author is refused (:class:`KeyRotationDenied`).
+        One listening key per node at a time means a rotation is a visible
+        event, reached through :meth:`rotate_key` — never a quiet overwrite.
+        Silently rebinding would let a compromised node install a fresh key in
+        every peer's keyring and re-sign its entire backlog under it.
+        """
+        existing = self.keyring.get(author_id)
+        if existing is None:
+            self.keyring[author_id] = _AuthorPub(author_id, public_key, kind)
+            return
+        if existing.public_key == public_key and existing.kind == kind:
+            return  # idempotent re-announcement
+        raise KeyRotationDenied(
+            f"{author_id!r} ya tiene una clave escuchando "
+            f"({existing.kind}, {len(existing.public_key)}B); "
+            f"llegó otra ({kind}, {len(public_key)}B). "
+            "Una rotacion exige rotate_key() y es un acto visible.")
+
+    def rotate_key(self, author_id: str, public_key: bytes,
+                   kind: str = "ed25519") -> None:
+        """Explicitly move ``author_id`` onto a new listening key.
+
+        Rotation is recorded in the ledger: the old and new keys are hashed,
+        never stored raw, and the record says *which* author rotated. Without
+        that trail, a rotation is indistinguishable from a compromise — which
+        is the only reason rotation is ever legitimate.
+        """
+        previous = self.keyring.get(author_id)
+        old_fp = (hashlib.sha256(previous.public_key).hexdigest()[:16]
+                  if previous else None)
+        new_fp = hashlib.sha256(public_key).hexdigest()[:16]
         self.keyring[author_id] = _AuthorPub(author_id, public_key, kind)
+        self.ledger.append(
+            author_id=author_id,
+            label=f"key-rotation:{author_id}",
+            digest=new_fp,
+            signature=b"",
+            sig_kind=kind,
+            accepted=True,
+            reason=(f"rotacion {old_fp or 'none'} -> {new_fp}"),
+        )
+
+    def key_status(self) -> dict[str, dict[str, object]]:
+        """One listening key per author, with a fingerprint for humans.
+
+        The fingerprint is the first 16 hex of ``sha256(public_key)``. The key
+        itself is not exposed: this is for logging and audit, not for reuse.
+        """
+        return {
+            author: {
+                "kind": pub.kind,
+                "bytes": len(pub.public_key),
+                "fingerprint": hashlib.sha256(pub.public_key).hexdigest()[:16],
+            }
+            for author, pub in sorted(self.keyring.items())
+        }
 
     # ----------------------------------------------------------- admit
     def admit(self, gist: Gist) -> Gist:  # type: ignore[override]
@@ -104,6 +181,17 @@ class SecureSharedContext(SharedContext):
         if self.require_signature and not has_sig:
             self._record(gist, accepted=False, reason="missing signature")
             raise AdmissionDenied(f"author {author!r} must sign")
+
+        # The mesh trusts only signed contexts: an unsigned gist is not
+        # weaker evidence, it is *no* evidence. Refusing it here keeps C
+        # honest for everyone who reads it, rather than leaving every reader
+        # to decide whether an unsigned entry counts.
+        if not has_sig:
+            self._record(gist, accepted=False,
+                         reason="unsigned: the mesh trusts signed contexts only")
+            raise AdmissionDenied(
+                f"author {author!r} submitted unsigned content; "
+                "the network only trusts signed contexts")
 
         # 2) signature: valid over the digest?
         pub = self.keyring.get(author)
@@ -189,6 +277,51 @@ class SecureSharedContext(SharedContext):
         """Map label -> effective taint level (for audit)."""
         return {g.label: int(self.taint.derived_level(g.label))
                 for g in self.snapshot()}
+
+    # ----------------------------------------------------------- render
+    def signed_only(self) -> "SharedContext":
+        """C restricted to what is **provably** attributed.
+
+        This is the view the mesh trusts: only entries whose signature
+        verified against a key already bound to their author. A node whose
+        context is not signed contributes nothing here — it may hold gists
+        locally, but the network does not treat them as evidence.
+
+        The mesh carries one rule that this implements: only signed contexts
+        are trusted. Threshold signatures can tighten "one key per author"
+        into "k of n keys" without changing this method: a threshold
+        attestation would replace the single-key proof with a combined one.
+        """
+        out = SharedContext()
+        out.bind(self._task)
+        for g in self.snapshot():
+            if self.is_attributed(g):
+                out.admit(g)
+        return out
+
+    def is_attributed(self, gist: Gist) -> bool:
+        """True when ``gist``'s signature verified and is still current.
+
+        The key must *still* be the one bound to the author. If a node
+        rotated its key, gists signed by the old one stop counting: the
+        rotation is exactly the moment where "who signed this" becomes
+        ambiguous, and an old signature must not outlive it.
+        """
+        pub = self.keyring.get(gist.author_id)
+        if pub is None or not gist.signature:
+            return False
+        if not verify_public(pub.kind, pub.public_key, gist.digest or "",
+                             gist.signature):
+            return False
+        return True
+
+    def untrusted_labels(self) -> list[str]:
+        """Labels in C that are *not* provably attributed.
+
+        Anything listed here is held locally but carries no weight for the
+        network. Non-empty means the node holds gists it cannot vouch for.
+        """
+        return [g.label for g in self.snapshot() if not self.is_attributed(g)]
 
     # ----------------------------------------------------------- render
     def render(self) -> str:

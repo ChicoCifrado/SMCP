@@ -81,6 +81,14 @@ def _node(peer_id: str, bus: _Bus) -> MeshNode:
     )
 
 
+def _handshake(sender, receiver) -> None:
+    """Deliver ``sender``'s announce to ``receiver`` (binds its key)."""
+    from delm.core.mesh_node import _ann_to_json, encode_msg
+    receiver.on_datagram(sender.peer_id,
+                         encode_msg(MSG_ANNOUNCE,
+                                    _ann_to_json(sender.self_announcement()).encode()))
+
+
 def test_node_publish_gist_signs_and_encodes():
     bus = _Bus()
     n = _node("n1", bus)
@@ -98,20 +106,15 @@ def test_node_receives_gist_and_admits():
     bus = _Bus()
     n1 = _node("n1", bus)
     n2 = _node("n2", bus)
-    # n1 publica y n2 recibe.
-    g = Gist(label="g1", gist="un gist", kind=GistKind.FACT)
-    n1.publish_gist(g)
-    # n2 recibe el datagrama (lo emite n1 por el bus).
-    for from_id, payload in n1.transport.poll() if False else []:
-        pass
-    # Envia el datagrama de n1 a n2 directamente.
+    # Handshake first: n2 must bind n1's declared listening key before any
+    # of n1's gists are admissible. A key that arrives inside the gist would
+    # only prove self-consistency, which is what handle_gist now refuses.
+    _handshake(n1, n2)
     raw = n1.publish_gist(Gist(label="g2", gist="otro", kind=GistKind.FACT))
     n2.on_datagram("n1", raw)
     # El gist admitido aparece en el ctx de n2.
     assert len(n2.ctx) == 1
     assert n2.ctx.get("g2") is not None
-
-
 def test_node_heartbeat_marks_down():
     bus = _Bus()
     n = _node("n1", bus)

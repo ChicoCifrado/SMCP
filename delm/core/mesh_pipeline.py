@@ -126,6 +126,17 @@ class MeshPipeline:
             )
             for i in range(self.n_workers)
         ]
+        # Handshake before any content: each node declares the key it is
+        # listening with, so peers bind it before a single gist travels. A
+        # peer that never announced has no bound key, so its gists are not
+        # attributable and the mesh discards them — which is the rule, not a
+        # failure. Announce is idempotent on the receiving side, so peers that
+        # were already bound keep their binding.
+        for node in self._nodes:
+            for other in self.mesh.other_peers(node.peer_id):
+                node.send_announce(other)
+        self.mesh.drain()
+
         rounds = 0
         while rounds < max_rounds:
             # Todos los workers corren en paralelo sobre la malla.
