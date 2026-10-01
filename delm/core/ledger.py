@@ -28,7 +28,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-#: Versión del formato de línea de ``LedgerFile`` (un JSON por entrada).
+from delm.core import ledger_canon as canon
+
+#: Versión por defecto del formato de línea de ``LedgerFile`` (un JSON por
+#: entrada). 1 = el hash original sobre ``json.dumps``; 2 = bytes canónicos
+#: con prefijo de longitud (:mod:`delm.core.ledger_canon`). Los ledgers ya
+#: emitidos siguen en 1 y se siguen verificando con su hash original.
 LEDGER_FORMAT_VERSION = 1
 
 
@@ -51,6 +56,10 @@ class LedgerEntry:
     reason: str
     prev_hash: str
     entry_hash: str
+    #: Formato con el que se calculó ``entry_hash``. Viaja con la entrada para
+    #: que un fichero mixto (líneas v1 junto a líneas v2) se verifique
+    #: entrada por entrada en vez de rechazarse entero por estar "corrupto".
+    version: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,10 +72,30 @@ class LedgerEntry:
 
 
 class AdmissionLedger:
-    """Append-only, hash-chained admission log."""
+    """Append-only, hash-chained admission log.
 
-    def __init__(self) -> None:
+    ``version`` selects the canonical byte encoding of ``entry_hash``
+    (see :mod:`delm.core.ledger_canon`):
+
+    * ``1`` — the original ``sha256(json.dumps(sort_keys) + "|" + prev)``.
+      Still supported byte for byte, because ledgers already on disk carry
+      these hashes; recomputing them "cleanly" would invalidate every audit
+      trail in the field.
+    * ``2`` — length-prefixed binary, specified and reproducible outside this
+      repo. Required before a BSV anchor is worth anything, since the anchor
+      commits to this digest.
+
+    A ledger is single-version for its whole life: a chain cannot mix
+    encodings, because every entry links to the previous one. Reading is
+    version-agnostic — :meth:`from_file` takes each line's own ``v``.
+    """
+
+    def __init__(self, version: int = 1) -> None:
+        if version not in (1, 2):
+            raise ValueError(
+                f"formato de ledger {version} no implementado (solo 1 y 2)")
         self._entries: list[LedgerEntry] = []
+        self.version = version
 
     # -- append ------------------------------------------------------------
     def append(self, author_id: str, label: str, digest: str,
@@ -77,26 +106,20 @@ class AdmissionLedger:
             seq=len(self._entries), ts=time.time(), author_id=author_id,
             label=label, digest=digest, signature=signature, sig_kind=sig_kind,
             accepted=accepted, reason=reason, prev_hash=prev, entry_hash="",
+            version=self.version,
         )
         entry.entry_hash = self._hash(entry)
         self._entries.append(entry)
         return entry
 
     @classmethod
-    def _hash_from_parts(cls, to_dict: dict, prev: str) -> str:
-        """Hash de una entrada a partir de su ``to_dict`` y ``prev_hash``.
-
-        Es el cálculo real del ``entry_hash``: ``sha256(canonical(to_dict) +
-        "|" + prev)``. Se extrae para reutilizarlo en :class:`LedgerFile`
-        (la persistencia) sin re-derivar el formato.
-        """
-        blob = json.dumps(to_dict, sort_keys=True, separators=(",", ":"))
-        blob = blob + "|" + prev
-        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    def _hash_for(cls, to_dict: dict, version: int) -> str:
+        """The ``entry_hash`` of ``to_dict`` under format ``version``."""
+        return canon.digest_for_version(to_dict, version)
 
     @classmethod
     def _hash(cls, e: "LedgerEntry") -> str:
-        return cls._hash_from_parts(e.to_dict(), e.prev_hash)
+        return cls._hash_for(e.to_dict(), e.version)
 
     # -- read / verify ------------------------------------------------------
     def entries(self) -> list[LedgerEntry]:
@@ -106,12 +129,17 @@ class AdmissionLedger:
         return [e for e in self._entries if e.label == label]
 
     def verify_chain(self) -> bool:
-        """Re-compute every link; return False on any tamper."""
+        """Re-compute every link; return False on any tamper.
+
+        Uses *each entry's own* version rather than the ledger's, so a mixed
+        file still verifies per-entry — a v1 line replayed next to v2 lines
+        keeps its original hash instead of being rejected as corrupt.
+        """
         prev = "0" * 64
         for e in self._entries:
             if e.prev_hash != prev:
                 return False
-            if AdmissionLedger._hash(e) != e.entry_hash:
+            if AdmissionLedger._hash_for(e.to_dict(), e.version) != e.entry_hash:
                 return False
             prev = e.entry_hash
         return True
@@ -129,7 +157,7 @@ class AdmissionLedger:
         el mismo cálculo de hash que la cadena en memoria.
         """
         text = "\n".join(
-            json.dumps({"v": LEDGER_FORMAT_VERSION, "d": e.to_dict(),
+            json.dumps({"v": e.version, "d": e.to_dict(),
                         "h": e.entry_hash}, sort_keys=True)
             for e in self._entries
         )
@@ -143,6 +171,12 @@ class AdmissionLedger:
 
         Verifica la cadena al reconstruir (``verify_chain``); si el archivo
         está corrupto o truncado, lanza ``ValueError`` (no se silencia).
+
+        Cada línea lleva su propio ``v``, así que un fichero escrito a mitad en v1
+        y luego en v2 se lee correctamente: es la razón de que la versión
+        viaje *en la entrada* y no solo en el ledger. Una versión desconocida
+        se rechaza en vez de asumir la más nueva — dar por bueno un formato
+        que no se conoce es exactamente cómo se acepta una cadena manipulada.
         """
         ledger = cls()
         with open(path, encoding="utf-8") as f:
@@ -152,12 +186,20 @@ class AdmissionLedger:
                     continue
                 rec = json.loads(line)
                 d, h = rec["d"], rec["h"]
+                v = int(rec.get("v", LEDGER_FORMAT_VERSION))
+                if v not in (1, 2):
+                    raise ValueError(
+                        f"formato de ledger {v} desconocido: no se puede "
+                        "verificar, y asumir otro sería aceptar una cadena "
+                        "sin comprobarla")
                 prev = "0" * 64 if not ledger._entries else \
                     ledger._entries[-1].entry_hash
-                # Re-verificar el entry_hash contra el contenido.
-                if AdmissionLedger._hash_from_parts(d, d["prev_hash"]) != h:
+                # Re-verificar el entry_hash contra el contenido, con el
+                # formato que la propia línea declara.
+                if AdmissionLedger._hash_for(d, v) != h:
                     raise ValueError(
-                        "entry_hash no coincide con el contenido (corrupto)"
+                        f"entry_hash no coincide con el contenido (corrupto) "
+                        f"[formato v{v}]"
                     )
                 if d["prev_hash"] != prev:
                     raise ValueError(
@@ -168,7 +210,7 @@ class AdmissionLedger:
                     label=d["label"], digest=d["digest"],
                     signature=bytes.fromhex(d["sig"]), sig_kind=d["sig_kind"],
                     accepted=d["accepted"], reason=d["reason"],
-                    prev_hash=d["prev_hash"], entry_hash=h,
+                    prev_hash=d["prev_hash"], entry_hash=h, version=v,
                 ))
         return ledger
 
@@ -185,9 +227,9 @@ class LedgerFile:
     Un archivo corrupto se rechaza (``load`` lanza), no se reescribe.
     """
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, version: int = LEDGER_FORMAT_VERSION) -> None:
         self.path = path
-        self.ledger = AdmissionLedger()
+        self.ledger = AdmissionLedger(version=version)
 
     def append(self, author_id: str, label: str, digest: str,
                signature: bytes, sig_kind: str, accepted: bool,

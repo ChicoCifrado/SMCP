@@ -735,7 +735,7 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **577 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **603 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 28 mejoras +
@@ -935,6 +935,7 @@ delm/
     pipeline.py        Worker, DelmPipeline              (el bucle descentralizado)
     provenance.py      digest canónico + firma ed25519/HMAC
     ledger.py          AdmissionLedger + TrustGate       (auditoría + gate)
+    ledger_canon.py    bytes canónicos v1/v2: el digest que se ancla a BSV
     injection.py       detector de prompt-injection
     injection_hardened.py  detector endurecido (+ tests)
     taint.py           TaintRegistry (niveles + cierre transitivo)

@@ -460,6 +460,48 @@ observador no puede enlazarlas.
 - **El ledger local sigue sin anclarse y las admisiones siguen con ed25519.**
   `spv.py` da la identidad; no está conectado a `provenance.py` ni a
   `contrib.py`. Esa conexión es un paso aparte.
+- **El anclaje sigue sin existir, pero el digest que se anclaría ya es
+  portable** (ver la seccion siguiente, `ledger_canon.py`). Lo que falta es la transacción
+  `OP_FALSE OP_RETURN` de BRC-220, el certificado y la prueba SPV. Publicar
+  hoy es imposible no porque falte el formato, sino porque nadie construye
+  la transacción: la diferencia importa, porque el formato es la parte que
+  cuesta más cara de arreglar más adelante.
+
+### Los bytes canónicos del ledger (`ledger_canon.py`) — fuera de capa, groundwork
+
+**Qué es.** `entry_hash` es lo que un ancla BSV comprometería. Antes se
+calculaba como `sha256(json.dumps(to_dict, sort_keys=True) + "|" + prev)`:
+correcto, pero reproducible solo por una implementación concreta de Python.
+`ledger_canon.py` define dos formatos y hace que cada entrada declare el suyo.
+
+- **v1**, intacto byte a byte. Los ledgers ya escritos llevan esos digests;
+  "limpiarlos" invalidaría cada rastro de auditoría existente. Se conserva
+  también su `ensure_ascii=True`, que parece un detalle y no lo es: con texto
+  no-ASCII, las dos grafías dan digests distintos, así que un refactor
+  aparentemente inocuo re-digere los ficheros en disco.
+- **v2**, bytes canónicos con prefijo de longitud `lp(x) = u32be(len) || x`,
+  UTF-8 sin escapes, `prev_hash` delimitado y presente una sola vez, y `ts` como
+  IEEE-754 de 64 bits en vez del texto `"1.0"`. Un verificador en cualquier
+  lenguaje reproduce el digest sin decidir una política de escapado.
+
+**Lo que v2 rechaza, y por qué importa.** Un formato canónico que acepta
+campos desconocidos no es canónico: si `kind` se ignorara en silencio, una
+admisión y una observación del HCI pre-hashearían igual y un lote podría
+relabearse sin invalidar su digest. Por eso sobran campos, hex no minúsculo,
+longitudes fuera de rango y `accepted` que no sea `bool` lanzan `ValueError`.
+
+**Corrección a una afirmación previa.** Se afirmo que el separador `"|"` de v1
+era ambiguo porque `reason` es texto libre y puede contener una barra. **No es
+cierto**: `prev_hash` ya está dentro del JSON con su nombre de campo, así que
+la concatenación es redundante, no ambigua. El fallo real de v1 es la
+reproducibilidad (y `float`/`ensure_ascii`), no una colisión.
+
+**Lo que no da.** Los bytes canónicos no dan inmediatez ni inmutabilidad. Solo
+hacen que, *cuando* exista el ancla, el digest sea comprobable por un tercero
+sin este repositorio. Sigue faltando el `kind` por lote como campo de primera
+clase (hoy un `kind` añadido es un error, por diseño), la transacción BRC-220,
+la prueba de inclusión contra cabeceras y la cadena de confianza completa.
+
 
 ## 3. No-garantías transversales (el resumen honesto)
 
