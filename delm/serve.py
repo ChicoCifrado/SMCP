@@ -63,7 +63,7 @@ import argparse
 import asyncio
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # ACP is an OPTIONAL dependency: importing this module must not break the base
 # install or the test suite. The import happens in ``_require_acp()``.
@@ -73,6 +73,34 @@ ACP_HINT = (
 )
 
 logger = logging.getLogger("delm.acp")
+
+# Type-only imports of the ACP schema. The SDK is an optional extra, so these
+# must not run at import time — but the annotations on the Agent overrides
+# below are string literals precisely so that a type checker can resolve them
+# against the real protocol types. Without this block pyright cannot see
+# ``NewSessionResponse`` and reports every override as incompatible, which is
+# the same error it reported for the *order* of the parameters before the
+# signatures were annotated at all.
+if TYPE_CHECKING:  # pragma: no cover
+    from acp.schema import (
+        AcpMcpServer,
+        ForkSessionResponse,
+        HttpMcpServer,
+        SseMcpServer,
+        McpServerStdio,
+        ListSessionsResponse,
+        NewSessionResponse,
+        PromptResponse,
+        ResumeSessionResponse,
+        SetSessionModeResponse,
+    )
+    from acp.schema import (
+        AudioContentBlock,
+        EmbeddedResourceContentBlock,
+        ImageContentBlock,
+        ResourceContentBlock,
+        TextContentBlock,
+    )
 
 #: Model id reported to ACP clients. SMCP is model-agnostic; this is the
 #: *backend* label, and the concrete model is resolved server-side.
@@ -214,8 +242,13 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
                 auth_methods=[],
             )
 
-        async def new_session(self, cwd, additional_directories=None,
-                              mcp_servers=None, **kwargs):
+        async def new_session(
+            self,
+            cwd: str,
+            additional_directories: list[str] | None = None,
+            mcp_servers: list[HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio] | None = None,
+            **kwargs: Any,
+        ) -> "NewSessionResponse":
             # `additional_directories` se acepta y se **ignora a propósito**:
             # SMCP no toca el filesystem (no es una herramienta de agente), así
             # que no hay directorio que abrir. Se declara explícitamente en vez
@@ -241,7 +274,12 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             self._sessions.pop(session_id, None)
             return None
 
-        async def list_sessions(self, cwd=None, cursor=None, **kwargs):
+        async def list_sessions(
+            self,
+            cwd: str | None = None,
+            cursor: str | None = None,
+            **kwargs: Any,
+        ) -> "ListSessionsResponse":
             """SMCP runs are ephemeral: there is nothing to enumerate.
 
             An empty list (not an error) is the honest answer — the shared
@@ -251,8 +289,14 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
 
             return ListSessionsResponse(sessions=[])
 
-        async def fork_session(self, session_id, cwd, additional_directories=None,
-                               mcp_servers=None, **kwargs):
+        async def fork_session(
+            self,
+            session_id: str,
+            cwd: str,
+            additional_directories: list[str] | None = None,
+            mcp_servers: list[HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio] | None = None,
+            **kwargs: Any,
+        ) -> "ForkSessionResponse":
             # Forking would mean cloning admitted state; SMCP's shared context
             # IS the fork mechanism (a new run reads the same C), so a forked
             # session is just a new session.
@@ -261,8 +305,14 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             self._sessions.pop(session_id, None)
             return ForkSessionResponse(session_id=str(uuid.uuid4()))
 
-        async def resume_session(self, session_id, cwd, additional_directories=None,
-                                mcp_servers=None, **kwargs):
+        async def resume_session(
+            self,
+            session_id: str,
+            cwd: str,
+            additional_directories: list[str] | None = None,
+            mcp_servers: list[HttpMcpServer | SseMcpServer | AcpMcpServer | McpServerStdio] | None = None,
+            **kwargs: Any,
+        ) -> "ResumeSessionResponse":
             from acp.schema import ResumeSessionResponse
 
             self._sessions[session_id] = cwd
@@ -272,7 +322,9 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             """No auth: SMCP's trust anchor is the owner's key, not a login."""
             return None
 
-        async def set_session_mode(self, session_id, mode_id, **kwargs):
+        async def set_session_mode(
+            self, session_id: str, mode_id: str, **kwargs: Any,
+        ) -> "SetSessionModeResponse | None":
             # No modes declared in new_session, so a mode set is a no-op.
             return None
 
@@ -303,7 +355,14 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             return None
 
         # -- the loop --------------------------------------------------
-        async def prompt(self, session_id, prompt, **kwargs):
+        async def prompt(
+            self,
+            session_id: str,
+            prompt: list[TextContentBlock | ImageContentBlock
+                         | AudioContentBlock | ResourceContentBlock
+                         | EmbeddedResourceContentBlock],
+            **kwargs: Any,
+        ) -> "PromptResponse":
             text = prompt_text(prompt)
             logger.info("ACP prompt: session=%s chars=%d tasks=%d",
                         session_id, len(text), len(split_tasks(text)))

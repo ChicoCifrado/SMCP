@@ -28,11 +28,14 @@ dependencies = [
 ]
 
 [project.scripts]
-# CLI unificada (issue #9): un solo binario `delm`. Los dos scripts
-# anteriores se conservan como alias deprecados (mismo comportamiento) para
-# no romper instalaciones existentes; `delm demo` y `delm demo real` los
-# reemplazan.
+# CLI unificada: un solo binario `delm`. Todo lo que se hacia con scripts
+# sueltos (`python -m pytest`, `ruff check .`, `pyright`,
+# `scripts/check_readme_count.py`) ahora es `delm gates <nombre>`, y las demos
+# son `delm demo <nombre>`. Ver `delm gates --list`.
 delm = "delm.cli:main"
+# Alias deprecados. Se conservan porque quitarlos rompe instalaciones
+# existentes; no aparece en la documentacion porque ya no son la via. Sus
+# equivalentes en la CLI unificada son `delm demo` y `delm demo real`.
 delm-demo = "delm.demo.run_demo:main"
 delm-real-demo = "delm.demo.run_real_demo:main"
 # SMCP como agente ACP por stdio (la via A de DESIGNCOMPAT.md): esto es lo
@@ -301,6 +304,21 @@ pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportMissingTypeStubs = false
 reportMissingModuleSource = false
+# Pyright must resolve imports against THIS project's interpreter, not
+# whichever python happens to be on PATH. `agent-client-protocol` is a
+# Protocol whose method signatures changed between 0.9 and 0.12 (0.9 has
+# `prompt(prompt, session_id, message_id)`; 0.12 has
+# `prompt(session_id, prompt)`), so resolving against the wrong venv makes
+# every ACP override look incompatible — including the ones that are
+# correct. That is not a type error to fix in the code; it is the checker
+# reading a different library.
+#
+# If this path is ever wrong the failure is loud and specific: pyright will
+# report the ACP overrides again with signatures that contradict the
+# installed version. Check `.venv/bin/python -c "import acp; help(acp.Agent)"`
+# before believing what the checker says.
+venvPath = "."
+venv = ".venv"
 # `reportPrivateImportUsage` marca los reexports de nivel superior de aioquic
 # (`from aioquic.asyncio import connect, serve`) como "privados" porque estan
 # definidos en los submodulos client/server. Son la API publica de alto nivel
