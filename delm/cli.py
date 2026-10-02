@@ -407,6 +407,8 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
         return _mesh_release(args)
     if action == "membership":
         return _mesh_membership(args)
+    if action == "tiers":
+        return _mesh_tiers(args)
     return 2
 
 
@@ -574,6 +576,66 @@ def _mesh_release(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 2
     print(f"reserva liberada: {args.reservation_id} ({out})")
+    return 0
+
+
+def _mesh_tiers(args: argparse.Namespace) -> int:
+    """Muestra los tres niveles, o presupuesta un plan.
+
+    El precio se decide una vez y se muestra, no se recalcula en cada cliente.
+    Un endpoint de precios que no existe es como cada quien se inventa el suyo.
+    """
+    from delm.core.tiers import levels, quote
+
+    if args.tiers_cmd == "levels":
+        data = levels()
+        if args.json:
+            print(json.dumps(data, indent=2, sort_keys=True))
+            return 0
+        print("=== niveles de la malla (BSV, satoshis) ===")
+        for name, t in data.items():
+            print(f"\n{name}: {t['description']}")
+            print(f"  entrada          : {t['join_satoshis']} sat")
+            print(f"  por inferencia   : {t['per_inference_sats']} sat")
+            print(f"  dedicada (unico) : {t['dedicated_satoshis']} sat")
+            print(f"  aporta VRAM      : {t['provides_vram']}")
+            print(f"  da pertenencia   : {t['grants_membership']}")
+            print(f"  x402 adecuado    : {t['x402_suitable']}")
+            if not t["x402_suitable"]:
+                print(f"                     {t['x402_note']}")
+        print("\nEl corte entre pago por uso y pago único son 1 000 inferencias "
+              "(100 000 / 100). En el empate gana el pago único: mismo precio, "
+              "capacidad reservada.")
+        return 0
+
+    # quote
+    try:
+        q = quote(inferences=args.inferences,
+                  wants_dedicated=args.dedicated,
+                  offers_vram=args.offers_vram)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(q.to_dict(), indent=2, sort_keys=True))
+        return 0
+    print(f"nivel    : {q.tier_name}")
+    print(f"total    : {q.total_satoshis} sat")
+    print(f"equivalente a pago por uso: {q.metered_equivalent_sats} sat")
+    delta = q.savings_vs_metered_sats
+    if delta > 0:
+        print(f"ahorro   : {delta} sat frente a pagar por uso")
+    elif delta < 0:
+        # Solo hay empate real cuando el nivel elegido ES el metered con el
+        # mismo numero. Con 0 inferencias, o cuando el nivel ya es el metered,
+        # el delta es 0 por construccion y no porque los precios empaten.
+        if q.tier_name == "metered":
+            print("coste extra: 0 (ya es el pago por uso)")
+        else:
+            print(f"coste extra: {-delta} sat frente a pagar por uso "
+                  f"(y da capacidad reservada)")
+    for r in q.reasons:
+        print(f"  - {r}")
     return 0
 
 
@@ -970,6 +1032,22 @@ def build_parser() -> argparse.ArgumentParser:
     _mesh_common(m_rl)
     m_rl.add_argument("--reservation-id", required=True)
     m_rl.add_argument("--json", action="store_true")
+
+    m_ti = msub.add_parser(
+        "tiers", help="los tres niveles de precio, y presupuestar un plan")
+    msub_t = m_ti.add_subparsers(dest="tiers_cmd", required=True)
+    m_tl = msub_t.add_parser("levels", help="mostrar los tres niveles")
+    _mesh_common(m_tl)
+    m_tl.add_argument("--json", action="store_true")
+    m_tq = msub_t.add_parser("quote", help="presupuestar un plan")
+    _mesh_common(m_tq)
+    m_tq.add_argument("--inferences", type=int, required=True,
+                      help="inferencias previstas")
+    m_tq.add_argument("--dedicated", action="store_true",
+                      help="quiere VRAM dedicada")
+    m_tq.add_argument("--offers-vram", action="store_true",
+                      help="el nodo publica VRAM propia")
+    m_tq.add_argument("--json", action="store_true")
 
     m_mb = msub.add_parser(
         "membership",
