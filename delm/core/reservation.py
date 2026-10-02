@@ -102,6 +102,35 @@ class Reservation:
                    generation=0, taken_at=0.0, held=False)
 
 
+def _same(a: "Reservation", b: "Reservation") -> bool:
+    """Dos reservas son la misma si dicen lo mismo.
+
+    La identidad de objeto no vale: una reserva recargada de disco es otro
+    objeto con el mismo contenido, y compararlas por identidad haria que
+    ``adopt`` creyera que todas son nuevas.
+    """
+    return (a.peer_id == b.peer_id
+            and a.reservation_id == b.reservation_id
+            and a.generation == b.generation)
+
+
+def _reservation_from(raw: dict[str, Any]) -> "Reservation":
+    """Reconstruye una reserva desde su ``to_dict()``.
+
+    Falla fuerte si faltan campos: un estado sin ``peer_id`` o sin
+    ``memory_gb`` no es una reserva, y fingir que lo es pondria en el libro una
+    promesa que nadie hizo.
+    """
+    return Reservation(
+        reservation_id=str(raw["reservation_id"]),
+        peer_id=str(raw["peer_id"]),
+        memory_gb=float(raw["memory_gb"]),
+        generation=int(raw["generation"]),
+        taken_at=float(raw.get("taken_at", 0.0)),
+        expires_at=float(raw.get("expires_at", 0.0)),
+    )
+
+
 @dataclass
 class _NodeBook:
     """Per-node accounting. Mutated only under the book's lock."""
@@ -363,6 +392,72 @@ class ReservationBook:
         with self._lock:
             out = [r for b in self._nodes.values() for r in b.reservations.values()]
         return tuple(sorted(out, key=lambda r: r.reservation_id))
+
+    # -- estado compartido entre procesos -----------------------------------
+    def state_of(self) -> "Any":
+        """La foto de lo *vivo*: generacion, secuencia y reservas.
+
+        Deliberadamente no incluye los snapshots de capacidad. Eso es lo que el
+        nodo **reporta**, y llega por su propio camino (el heartbeat, firmado).
+        Meterlo aqui seria una segunda fuente de verdad sobre cuanto tiene cada
+        nodo, y las dos discreparian justo cuando un nodo cambia de VRAM — que
+        es cuando importa.
+        """
+        with self._lock:
+            from delm.core.reservation_ipc import ReservationSnapshot
+            return ReservationSnapshot(
+                generation=self._generation,
+                seq=self._seq,
+                reservations=[r.to_dict() for node in self._nodes.values()
+                              for r in node.reservations.values()],
+            )
+
+    def adopt(self, state: Any) -> int:
+        """Carga una foto de otro proceso y devuelve cuantas se fusionaron.
+
+        Lo que se fusiona son las **vivas**, y una reserva que ya esta da lo
+        mismo, asi que el numero de vuelta es "cuantas entraron de verdad". Se
+        llama fusion y no carga porque una adopcion no debe crear ni destruir
+        nada: solo atestiguar lo que otro proceso ya decidio.
+
+        Falla suelta por fila: una entrada corrupta no puede invalidar el
+        resto del estado, porque el estado de un nodo sigue siendo util aunque
+        la fila de otro este corrupta.
+        """
+        with self._lock:
+            n = 0
+            for raw in getattr(state, "reservations", None) or []:
+                try:
+                    res = _reservation_from(raw)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                node = self._nodes.setdefault(res.peer_id,
+                                              _NodeBook(generation=0))
+                if res.reservation_id not in node.reservations:
+                    node.reservations[res.reservation_id] = res
+                    node.live_reserved_gb += res.memory_gb
+                    n += 1
+            return n
+
+    def merge(self, other: "ReservationBook") -> int:
+        """Fusiona el estado vivo de otro libro **del mismo proceso**.
+
+        El caso de un planificador con dos libros (por ejemplo uno por malla)
+        que necesita una vista comun. No atraviesa la frontera de proceso — para
+        eso esta :meth:`adopt` con un
+        :class:`~delm.core.reservation_ipc.InterprocessGuard`.
+        """
+        with self._lock, other._lock:
+            n = 0
+            for peer_id, src in other._nodes.items():
+                node = self._nodes.setdefault(peer_id,
+                                              _NodeBook(generation=0))
+                for rid, res in src.reservations.items():
+                    if rid not in node.reservations:
+                        node.reservations[rid] = res
+                        node.live_reserved_gb += res.memory_gb
+                        n += 1
+            return n
 
     def snapshot(self) -> dict[str, Any]:
         """Per-node view for the CLI and the web API."""

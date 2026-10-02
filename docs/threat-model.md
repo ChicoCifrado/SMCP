@@ -274,6 +274,57 @@ la conversion de outpoint. Duplicar la guarda es defensa en profundidad entre
 capas; la consecuencia aceptada es que la mutacion no puede distinguir esa
 duplicacion de la redundancia. Documentado en el test, no escondido.
 
+### El cerrojo entre procesos (`reservation_ipc.py`) — lo que hace vendible el tier 2
+
+`ReservationBook` protege con un `threading.Lock`. Dentro de un proceso es
+correcto, y entre dos es falso: dos procesos del Web API con su libro venderian
+la misma VRAM a dos clientes. Ese era el limite escrito que impedia vender el
+tier de pago unico en multi-proceso.
+
+**La eleccion: `flock` sobre un fichero de cerrojo, no de estado.** El estado
+se queda en memoria de cada proceso; lo que se comparte es la exclusion. Cuando
+un proceso entra: espera, recarga si el estado cambio, opera, vuelca, suelta.
+
+Se descarto persistir el libro entero por dos razones concretas: el estado
+recargado mantiene VRAM que nadie usa o libera VRAM que alguien prometyo (las
+dos cosas que el modulo original evita a proposito), y `reserve` es el camino
+caliente del planificador — pagarlo con una escritura por llamada no tiene
+sentido cuando lo que hace falta es exclusion, no estado compartido.
+
+**Lo que sigue sin arreglar:**
+
+* **No es transaccional con el trabajo real.** Si el proceso muere entre tomar
+  la reserva y despachar, la reserva vive hasta que expire el TTL. Es el mismo
+  limite que la version de un proceso.
+* **No coordina entre maquinas.** `flock` es local al sistema de ficheros. Dos
+  contenedores con ficheros distintos no se ven. La coordinacion entre
+  maquinas es OTRO problema, y no se disimule.
+* **Un NFS o un bind-mount sin bloqueo fiable no lo da.** Por eso
+  `interprocess_available()` dice explicitamente si el cerrojo es de fiar, en
+  vez de asumirlo. Un cerrojo que no cierra es peor que no tener cerrojo: da la
+  sensacion de seguridad sin darsela.
+* **El cerrojo hace correcto, no rapido.** Dos procesos se serializan, que es
+  justo lo que hace la garantia atomica; ahora atraviesa la frontera.
+
+**El fallo que un cerrojo bien puesto NO evita**, y que casi se introduce sin
+querer: recargar. Si el segundo proceso cierra el cerrojo pero opera sobre su
+vista vieja, vende lo mismo. Por eso la operacion es *cerrar -> recargar ->
+operar -> volcar*, y hay una trampa de mutacion que quita la recarga a proposito.
+
+**Lo que la mutacion encontro.** La primera trampa — sustituir el `flock` por un
+no-op — la detecta el test de dos procesos reales, que existe justamente porque
+la version de un solo proceso no puede tener este fallo: el GIL haria cada
+operacion simple atomica, y un test con threads daria verde con el cerrojo
+eliminado.
+
+**Y un error mio que el detector de capacidad calló en silencio:**
+`os.flock` no existe en Linux; la funcion vive en `fcntl.flock`, y las banderas
+tambien. La primera version de `interprocess_available()` decia "esta plataforma
+no expone os.flock" en un Linux que si soporta el cerrojo. Un detector que
+miente es peor que uno que no existe, porque desactiva la proteccion creyendo
+que la plataforma es incapaz. Ahora resuelve por `fcntl` y hay test que falla si
+vuelve a mirar en `os`.
+
 ### Las reservas dedicadas (`reservation.py`) — fuera de capa
 
 `plan_placement` **planifica**. Esto **retiene**. Un plan es JSON, y dos planes

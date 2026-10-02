@@ -691,3 +691,91 @@ def test_publish_snapshot_without_now_uses_wall_clock():
     gen = b.publish_snapshot({"n1": _peer()})
     assert gen == 1
     assert time.time() > 0
+
+# ------------------------------------------------ lo compartido entre procesos
+# Estos metodos son la pieza que hace el libro combinable, y por eso tienen su
+# propia seccion: `adopt` es lo que impide la sobreventa entre procesos, y su
+# fallo silencioso (fusionar sin sumar a `live_reserved_gb`) daria un libro que
+# dice tener reservas y no las descuenta.
+
+
+def test_state_of_then_adopt_round_trips_the_live_reservations():
+    """Lo que sale de un libro vuelve a entrar en otro sin invenciones."""
+    a = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    res = _must(a.reserve("n1", 3.0, now=100.0), RESERVED)
+    st = a.state_of()
+    b = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    assert b.adopt(state=st) == 1
+    assert b.reserved_gb("n1") == 3.0, "adopt tiene que sumar a lo reservado"
+    # el release se hace con la reserva RECONSTRUIDA por adopt, no con la
+    # original: si el id bastase, la generacion y el contenido no estarian
+    # atando nada y un release cruzaria reservas de libros distintos.
+    adopted = b.reservations_for("n1")[0]
+    assert b.release(adopted, now=100.0) == RELEASED
+    assert b.reserved_gb("n1") == 0.0
+
+
+def test_adopting_the_same_state_twice_does_not_double_count():
+    """Fusionar es idempotente: releer el estado no infla la reserva.
+
+    Sin la guarda por `reservation_id`, releer el fichero daria el doble de
+    reservado y el nodo pareceria lleno — que es como se cae un sistema de
+    reserva sin querer.
+    """
+    a = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    _must(a.reserve("n1", 2.0, now=100.0), RESERVED)
+    st = a.state_of()
+    b = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    assert b.adopt(state=st) == 1
+    assert b.adopt(state=st) == 0, "la segunda fusio no debe contar"
+    assert b.reserved_gb("n1") == 2.0
+
+
+def test_an_adopted_reservation_blocks_the_vram_it_holds():
+    """La garantia inter-proceso, en el libro: lo adoptado ocupa sitio."""
+    a = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    _must(a.reserve("n1", 6.0, now=100.0), RESERVED)
+    b = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    b.adopt(state=a.state_of())
+    res, why = b.reserve("n1", 3.0, now=100.0)
+    assert res is None and why == NOT_ENOUGH, "adoptado debe ocupar la VRAM"
+
+
+def test_adopt_skips_a_corrupt_row_and_keeps_the_good_ones():
+    """Una fila rota no invalida el resto: el estado de otro nodo sigue valiendo."""
+    a = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    _must(a.reserve("n1", 2.0, now=100.0), RESERVED)
+    st = a.state_of()
+    st.reservations.append({"reservation_id": "roto"})   # sin peer_id
+    b = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    assert b.adopt(state=st) == 1, "la fila buena debe entrar"
+
+
+def test_adopt_ignores_a_state_with_no_reservations_field():
+    a = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    b = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    assert b.adopt(state=object()) == 0
+
+
+def test_merge_combines_two_books_in_the_same_process():
+    """Dos libros de una misma malla: la vista comun, sin boundary de proceso."""
+    a = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    _must(a.reserve("n1", 4.0, now=100.0), RESERVED)
+    b = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    assert b.merge(a) == 1
+    assert b.reserved_gb("n1") == 4.0
+    res, why = b.reserve("n1", 5.0, now=100.0)
+    assert res is None and why == NOT_ENOUGH
+
+
+def test_state_of_carries_the_generation_and_the_sequence():
+    """La generacion viaja: es lo que decide si un release es valido.
+
+    Un release con generacion equivocada se descarta, y un estado compartido
+    sin generacion haria que cualquier release valiera contra cualquier libro.
+    """
+    a = _book(_peer("n1", vram=16.0, advertised=8.0), now=100.0)
+    _must(a.reserve("n1", 1.0, now=100.0), RESERVED)
+    st = a.state_of()
+    assert st.generation == a.generation
+    assert st.seq == 1, "la secuencia avanza con cada reserva, no con el snapshot"
