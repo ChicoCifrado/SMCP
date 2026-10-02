@@ -330,7 +330,7 @@ los agentes que razonan sobre lo que la malla ejecuta.
 
 ```bash
 delm mesh                                     # = status: quién aporta, cuánto debe
-delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12
+delm mesh contribute --vram-gb 16 --vram-advertised-gb 8   # 16 físicos, ofrezco 8
 delm mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva"
 delm mesh plan "Qwen/Qwen3-32B"              # lo dimensiona llmfit y lo reparte
 delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64   # sin llmfit
@@ -342,7 +342,7 @@ delm mesh --help
 El ciclo completo, en la misma máquina, es este:
 
 ```console
-$ delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12
+$ delm mesh contribute --vram-gb 16 --vram-advertised-gb 8   # 16 físicos, ofrezco 8
 === smcp mesh: contribución admitida ===
 nodo       : local
 firma      : ed25519 · digest 520427c288fce0fa…
@@ -355,11 +355,42 @@ modelo   : Qwen/Qwen3-32B
 memoria  : 40.0G requeridos · 48.0G verificados en la malla
 veredicto : ok · 3 nodo(s)
 
-  nodo                 memoria   vram    uso    layers   credits
-  nodo-b                 20.4G   24.0G   85%     0-31    0.256
-  nodo-a                 13.3G   16.0G   83%    32-52    0.167
-  nodo-c                  6.2G    8.0G   78%    53-63    0.078
+  nodo                 memoria  vmax  ofrece  usa  disp    uso    layers   credits
+  nodo-b                 20.4G    24G   24.0G  0.0G  24.0G   85%     0-31    0.256
+  nodo-a                 13.3G    16G   16.0G  0.0G  16.0G   83%    32-52    0.167
+  nodo-c                  6.2G     8G    8.0G  0.0G   8.0G   78%    53-63    0.078
 ```
+
+**Tres números de VRAM, porque son tres preguntas distintas:**
+
+| número | qué es | quién decide | firmado |
+|---|---|---|---|
+| `vram_gb` | el máximo físico del hardware | el nodo (afirmación) | sí |
+| `vram_advertised_gb` | lo que el dueño **ofrece** a la malla | el dueño | sí, anclado |
+| `vram_shared_gb` | lo que la malla está usando ahora | telemetría | **no, a propósito** |
+| `vram_available_gb` | `min(ofrecida, física) − usada` | derivado | derivado |
+
+El plan se calcula **contra `vram_available_gb`**, nunca contra `vram_gb`. Un nodo
+con 24 GB de los que ofrece 4 tiene 4 disponibles, y planificar contra la cifra
+de cabecera admite planes que no van a funcionar. La diferencia entre
+`total_vram_gb` y `total_advertised_gb` es la capacidad que los dueños están
+decidiendo no compartir — un número que antes la malla no podía ver.
+
+El crédito escala con lo **ofrecido**, no con el hardware. Antes inflar la
+cifra compraba enrutamiento *y* multiplicaba el pago: `credits_per_gib_hour`
+usaba el mismo número para las dos cosas. Ahora un nodo de 24 GB que ofrece 4
+gana 4 créditos/hora.
+
+`vram_shared_gb` está fuera del digest firmado a propósito: cambia en cada
+heartbeat, y anclarlo marcaría como manipulado a todo nodo honesto en menos de
+un minuto. `capacity_claim_status()` cruza la afirmación firmada con la
+detección local y señala `claim_exceeds_detected` **sin corregir** — detección y
+afirmación vienen del mismo host por el mismo canal sin autenticar, así que
+ninguna es evidencia.
+
+Y lo que sigue en pie: **la capacidad es una afirmación firmada, no una
+medición**. Quien quiera inflar de forma consistente solo tiene que mentir
+también en su detección local. Eso exige un testigo externo.
 
 Cuatro propiedades que hacen que esto no sea un registro de promesas:
 
@@ -769,7 +800,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **827 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **864 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +

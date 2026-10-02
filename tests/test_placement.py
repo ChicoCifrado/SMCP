@@ -52,6 +52,7 @@ def mesh(*peers: tuple[str, float], observe_s: float = 3600.0,
         key = KeyPair.new(peer_id)
         ch = led.issue_challenge(peer_id, now=NOW)
         rep = CapacityReport(mesh_id=mesh_id, peer_id=peer_id, vram_gb=vram,
+                           vram_advertised_gb=vram,
                              ram_gb=32.0, cpu_cores=8, backend="cuda",
                              nonce=ch.nonce, issued_at=NOW,
                              expires_at=NOW + 3600).sign(key)
@@ -129,7 +130,8 @@ def test_uncredited_nodes_are_excluded_from_the_mesh():
     led = ContributionLedger(MESH)
     key = KeyPair.new("a")
     ch = led.issue_challenge("a", now=NOW)
-    rep = CapacityReport(mesh_id=MESH, peer_id="a", vram_gb=64.0, ram_gb=32.0,
+    rep = CapacityReport(mesh_id=MESH, peer_id="a", vram_gb=64.0,
+                       vram_advertised_gb=64.0, ram_gb=32.0,
                          cpu_cores=8, nonce=ch.nonce, issued_at=NOW,
                          expires_at=NOW + 3600).sign(key)
     led.admit(rep, now=NOW)

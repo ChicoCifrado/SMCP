@@ -71,7 +71,8 @@ def admit_and_earn(led: ContributionLedger, peer_id: str, vram_gb: float, *,
     from delm.core.contrib import CapacityReport
 
     rep = CapacityReport(
-        mesh_id=led.mesh_id, peer_id=peer_id, vram_gb=vram_gb, ram_gb=64.0,
+        mesh_id=led.mesh_id, peer_id=peer_id, vram_gb=vram_gb,
+        vram_advertised_gb=vram_gb, ram_gb=64.0,
         cpu_cores=12, backend="cuda", nonce=ch.nonce, issued_at=now,
         expires_at=now + 600.0,
     ).sign(key)

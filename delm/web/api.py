@@ -1316,7 +1316,10 @@ def _mesh_view(led: Any, mesh_id: str, endpoint: str) -> dict[str, Any]:
         "vram_declared_gb": led.total_vram_gb(observed_only=False),
         "rejections": sum(1 for r in led.records if not r.accepted),
         "peers": [
-            {"peer_id": p.peer_id, "vram_gb": p.vram_gb, "ram_gb": p.ram_gb,
+            {"peer_id": p.peer_id, "vram_gb": p.vram_gb,
+        "vram_advertised_gb": p.vram_advertised_gb,
+        "vram_shared_gb": p.vram_shared_gb,
+        "vram_available_gb": p.vram_available_gb, "ram_gb": p.ram_gb,
              "cpu_cores": p.cpu_cores, "backend": p.backend,
              "alive": p.alive, "seconds_observed": p.seconds_observed,
              "credits": p.credits, "credits_spent": p.credits_spent,
@@ -1337,11 +1340,19 @@ def get_mesh(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
 
 class MeshContribute(BaseModel):
     peer_id: str = Field(default="local", min_length=1, max_length=80)
-    vram_gb: float = Field(ge=0.0, le=100_000.0)
+    #: physical maximum of the host. Optional now, so ``detect`` can fill it.
+    vram_gb: float = Field(default=0.0, ge=0.0, le=100_000.0)
+    #: what this node offers the mesh — the owner's policy, and the number
+    #: routing may plan against. Defaults to the physical maximum.
+    vram_advertised_gb: float | None = Field(default=None, ge=0.0, le=100_000.0)
+    #: what the mesh is using right now. Telemetry; unsigned by design.
+    vram_shared_gb: float = Field(default=0.0, ge=0.0, le=100_000.0)
     ram_gb: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
     cpu_cores: int = Field(default=0, ge=0, le=1024)
     backend: str = Field(default="cuda", max_length=32)
     ttl_s: float = Field(default=86400.0, gt=0.0, le=30 * 86400.0)
+    #: fill vram_gb from local hardware detection instead of trusting the caller
+    detect: bool = False
 
 
 @router.post("/mesh/contribute")
@@ -1368,8 +1379,27 @@ def post_mesh_contribute(body: MeshContribute,
         key.save(str(path))
     now = _time.time()
     challenge = led.issue_challenge(body.peer_id, now=now)
+    # Detection is opt-in and clearly labelled: a caller that sends its own
+    # number gets its own number signed, which is what a remote node must do.
+    # ``detect`` exists so a node standing on its own hardware does not have to
+    # type a figure it cannot check.
+    physical = body.vram_gb
+    detected = None
+    if body.detect or physical <= 0:
+        from delm.core.capability import local_report
+        detected = round(
+            local_report(body.peer_id).total_vram_bytes / (1024 ** 3), 3)
+        physical = detected or physical
+    advertised = (body.vram_advertised_gb
+                  if body.vram_advertised_gb is not None else physical)
+    if advertised > physical:
+        raise HTTPException(
+            status_code=422,
+            detail=("vram_advertised_gb exceeds vram_gb: offering more VRAM "
+                    "than the node reports is refused (capacity_overstated)"))
     report = CapacityReport(
-        mesh_id=mesh_id, peer_id=body.peer_id, vram_gb=body.vram_gb,
+        mesh_id=mesh_id, peer_id=body.peer_id, vram_gb=physical,
+        vram_advertised_gb=advertised, vram_shared_gb=body.vram_shared_gb,
         ram_gb=body.ram_gb, cpu_cores=body.cpu_cores, backend=body.backend,
         nonce=challenge.nonce, issued_at=now, expires_at=now + body.ttl_s,
     ).sign(key)

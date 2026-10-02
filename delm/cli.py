@@ -442,9 +442,22 @@ def _mesh_contribute(args: argparse.Namespace) -> int:
     key = _node_identity(ident, args.peer_id)
     now = time.time()
     challenge = led.issue_challenge(args.peer_id, now=now, ttl_s=args.challenge_ttl)
+    # The owner's decision, not a silent default: offering everything is a real
+    # choice and the one that gets overwritten by accident when the flag is
+    # forgotten. It is stated in the help and echoed in the output below.
+    advertised = (args.vram_advertised_gb if args.vram_advertised_gb is not None
+                  else args.vram_gb)
+    if advertised > args.vram_gb:
+        print(f"error: ofreces {advertised:.1f}G pero el nodo declara "
+              f"{args.vram_gb:.1f}G físicos. La malla rechazaría el informe "
+              f"(capacity_overstated); corrige uno de los dos números.",
+              file=sys.stderr)
+        return 2
     report = CapacityReport(
         mesh_id=args.mesh_id, peer_id=args.peer_id,
-        vram_gb=args.vram_gb, ram_gb=args.ram_gb, cpu_cores=args.cpu_cores,
+        vram_gb=args.vram_gb, vram_advertised_gb=advertised,
+        vram_shared_gb=max(0.0, args.vram_shared_gb),
+        ram_gb=args.ram_gb, cpu_cores=args.cpu_cores,
         backend=args.backend, nonce=challenge.nonce, issued_at=now,
         expires_at=now + args.ttl,
     ).sign(key)
@@ -460,8 +473,14 @@ def _mesh_contribute(args: argparse.Namespace) -> int:
     print(f"=== smcp mesh: contribución admitida ===")
     print(f"nodo       : {args.peer_id}")
     print(f"firma      : {report.sig_kind} · digest {report.digest[:16]}…")
-    print(f"capacidad  : {report.vram_gb:.1f}G VRAM · {report.ram_gb:.0f}G RAM · "
-          f"{report.cpu_cores} núcleos · {report.backend}")
+    print(f"capacidad  : {report.vram_gb:.1f}G VRAM físicos · "
+          f"{report.vram_advertised_gb:.1f}G ofrecidos · "
+          f"{report.vram_shared_gb:.1f}G ya usados por la malla")
+    print(f"            {report.ram_gb:.0f}G RAM · {report.cpu_cores} núcleos · "
+          f"{report.backend}")
+    if report.vram_advertised_gb < report.vram_gb:
+        print(f"retenido    : {report.vram_gb - report.vram_advertised_gb:.1f}G "
+              f"no se ofrecen a la malla (y no generan crédito)")
     print(f"cadena     : {len(led)} entradas")
     print(f"estado     : {state}")
     print("siguiente  : `delm mesh observe` (la malla te ve vivo) y luego "
@@ -716,7 +735,13 @@ def build_parser() -> argparse.ArgumentParser:
                       help="ruta de la clave de firma (default: "
                            "config/mesh_identity.json)")
     m_ct.add_argument("--vram-gb", type=float, required=True,
-                      help="VRAM que aportas")
+                      help="VRAM física total del nodo (el máximo del hardware)")
+    m_ct.add_argument("--vram-advertised-gb", type=float, default=None,
+                      help="cuánta VRAM ofreces a la malla (default: toda la "
+                           "física; es la política del dueño del nodo)")
+    m_ct.add_argument("--vram-shared-gb", type=float, default=0.0,
+                      help="VRAM que la malla ya te está usando ahora "
+                           "(telemetría; no va en la firma)")
     m_ct.add_argument("--ram-gb", type=float, default=0.0, help="RAM del nodo")
     m_ct.add_argument("--cpu-cores", type=int, default=0, help="núcleos")
     m_ct.add_argument("--backend", default="cuda",

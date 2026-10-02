@@ -327,6 +327,7 @@ def test_check_lists_rejections(state, tmp_path, capsys):
     from delm.core.contrib import CapacityReport
     led = ContributionLedger.load(str(state))
     led.admit(CapacityReport(mesh_id=MESH, peer_id="nodo-a", vram_gb=999.0,
+                     vram_advertised_gb=999.0,
                              nonce="nunca", issued_at=0.0, expires_at=9e9),
               now=1.0)
     led.save(str(state))

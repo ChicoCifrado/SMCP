@@ -70,6 +70,7 @@ __all__ = [
     "ExchangePolicy",
     "MeteredLLMClient",
     "capacity_is_intact",
+    "capacity_claim_status",
     "default_state_path",
     "default_identity_path",
     "EXCHANGE_FORMAT_VERSION",
@@ -133,6 +134,10 @@ class ContribReject(str, Enum):
     PEER_MISMATCH = "peer_mismatch"
     PEER_KEY_CHANGED = "peer_key_changed"
     NO_CAPACITY = "no_capacity"
+    #: the node offers more VRAM than it claims to physically have. Fail-closed:
+    #: the report is refused and the attempt is recorded, so the mesh never
+    #: plans against it and the owner finds out from a named reason.
+    CAPACITY_OVERSTATED = "capacity_overstated"
     # -- spend side
     UNKNOWN_PEER = "unknown_peer"
     INSUFFICIENT_CREDIT = "insufficient_credit"
@@ -212,6 +217,40 @@ def capacity_is_intact(peer: PeerContribution, mesh_id: str) -> bool:
     return peer.capacity_digest(mesh_id) == peer.admitted_digest
 
 
+# ------------------------------------------------------- detection cross-check
+def capacity_claim_status(peer: PeerContribution, *,
+                          detected_vram_gb: float | None) -> str:
+    """Compare a signed capacity claim against independently detected hardware.
+
+    Returns one of:
+
+    - ``"agree"`` — the node's claim is consistent with what was detected.
+    - ``"detected_only"`` — hardware was found and the node reported none, so
+      the cross-check has nothing to compare.
+    - ``"claim_exceeds_detected"`` — the node claims more than detection found.
+      The signed claim is what stays authoritative for planning (it is
+      attributable, and detection may be partial: a query timeout, a fallback
+      path, unified memory reported as RAM); this function is the flag, not a
+      correction.
+    - ``"unknown"`` — no detection available.
+
+    The asymmetry is deliberate. Refusing the claim would mean letting a
+    detection hiccup eject a real node from the mesh, and detection here is
+    exactly as trustworthy as the claim: it comes from the same host, over the
+    same unauthenticated channel. Neither number is evidence. What this buys
+    is *disagreement detection* — a node whose claim moves around between
+    observations is visible, which a single unsigned number could never do.
+    """
+    if detected_vram_gb is None or detected_vram_gb <= 0:
+        return "unknown"
+    if peer.vram_gb <= 0:
+        return "detected_only"
+    if peer.vram_gb > detected_vram_gb * 1.02:
+        # 2% tolerance: GiB vs GiB rounding in nvidia-smi vs sysfs is real.
+        return "claim_exceeds_detected"
+    return "agree"
+
+
 # ------------------------------------------------------------ capacity report
 @dataclass(frozen=True)
 class CapacityReport:
@@ -224,7 +263,14 @@ class CapacityReport:
 
     mesh_id: str
     peer_id: str
+    #: maximum *physical* VRAM of the host. The node's claim about hardware.
     vram_gb: float = 0.0
+    #: what the node *offers* the mesh. Its own policy decision, <= vram_gb.
+    #: This is the number routing is allowed to spend.
+    vram_advertised_gb: float = 0.0
+    #: what the mesh is using right now. Telemetry: changes every heartbeat, so
+    #: deliberately outside the signed capacity digest.
+    vram_shared_gb: float = 0.0
     ram_gb: float = 0.0
     cpu_cores: int = 0
     backend: str = ""
@@ -243,6 +289,7 @@ class CapacityReport:
             "mesh_id": self.mesh_id,
             "peer_id": self.peer_id,
             "vram_gb": round(float(self.vram_gb), 4),
+            "vram_advertised_gb": round(float(self.vram_advertised_gb), 4),
             "ram_gb": round(float(self.ram_gb), 4),
             "cpu_cores": int(self.cpu_cores),
             "backend": self.backend,
@@ -256,6 +303,7 @@ class CapacityReport:
 
     @staticmethod
     def capacity_digest(*, mesh_id: str, peer_id: str, vram_gb: float,
+                        vram_advertised_gb: float,
                         ram_gb: float, cpu_cores: int, backend: str) -> str:
         """Digest over **only** the capacity numbers, ignoring the nonce/dates.
 
@@ -273,6 +321,7 @@ class CapacityReport:
         return _digest({"mesh_id": mesh_id,
                         "peer_id": peer_id,
                         "vram_gb": round(float(vram_gb), 4),
+                        "vram_advertised_gb": round(float(vram_advertised_gb), 4),
                         "ram_gb": round(float(ram_gb), 4),
                         "cpu_cores": int(cpu_cores),
                         "backend": backend})
@@ -280,7 +329,13 @@ class CapacityReport:
     def sign(self, key: KeyPair) -> "CapacityReport":
         """Sign the canonical digest with *key*; returns a new report."""
         digest = self.compute_digest()
+        # payload() is what the signature covers, so it cannot also be what
+        # rebuilds the object: vram_shared_gb is telemetry and is deliberately
+        # absent from the signed set, yet it must survive signing. Passing
+        # payload() alone silently reset it to the field default — a node
+        # reporting real mesh usage would claim it had none.
         return CapacityReport(**{**self.payload(),
+                                 "vram_shared_gb": self.vram_shared_gb,
                                  "digest": digest,
                                  "signature": key.sign(digest),
                                  "sig_kind": key.kind,
@@ -299,7 +354,10 @@ class CapacityReport:
         return now > self.expires_at
 
     def to_dict(self) -> dict[str, Any]:
-        return {**self.payload(), "digest": self.digest,
+        # vram_shared_gb rides along unsigned: it is telemetry, and a caller
+        # reading this dict is reading a snapshot, not a commitment.
+        return {**self.payload(), "vram_shared_gb": round(self.vram_shared_gb, 4),
+                "digest": self.digest,
                 "signature": self.signature.hex(), "sig_kind": self.sig_kind,
                 "public_key": self.public_key.hex()}
 
@@ -314,6 +372,8 @@ class CapacityReport:
         return cls(mesh_id=str(d.get("mesh_id", "")),
                    peer_id=str(d.get("peer_id", "")),
                    vram_gb=float(d.get("vram_gb", 0.0) or 0.0),
+                   vram_advertised_gb=float(d.get("vram_advertised_gb", 0.0) or 0.0),
+                   vram_shared_gb=float(d.get("vram_shared_gb", 0.0) or 0.0),
                    ram_gb=float(d.get("ram_gb", 0.0) or 0.0),
                    cpu_cores=int(d.get("cpu_cores", 0) or 0),
                    backend=str(d.get("backend", "")),
@@ -363,7 +423,13 @@ class ContributionRecord:
 class PeerContribution:
     """What the mesh currently believes about one peer, and what it owes it.
 
-    ``vram_gb`` is the *admitted* number — never a raw claim. ``seconds_observed``
+    Three VRAM numbers, and using the wrong one is the bug this class exists
+    to prevent. ``vram_gb`` is the admitted *physical maximum*, ``vram_advertised_gb``
+    is what the node offers (its own decision, anchored to its signature), and
+    ``vram_shared_gb`` is what the mesh is using right now (telemetry, not
+    signed). Placement reads :attr:`vram_available_gb`, never ``vram_gb``.
+
+    ``seconds_observed``
     is the honest part: it only grows while :meth:`ContributionLedger.observe`
     is called, i.e. while the mesh can see the peer.
 
@@ -376,7 +442,12 @@ class PeerContribution:
     """
 
     peer_id: str
+    #: admitted physical maximum, straight from the node's signed claim
     vram_gb: float = 0.0
+    #: what the node offers the mesh; the only VRAM routing may plan against
+    vram_advertised_gb: float = 0.0
+    #: what the mesh is using at this instant; telemetry, unsigned
+    vram_shared_gb: float = 0.0
     ram_gb: float = 0.0
     cpu_cores: int = 0
     backend: str = ""
@@ -396,8 +467,35 @@ class PeerContribution:
         """The capacity-only digest for this record, under *mesh_id*."""
         return CapacityReport.capacity_digest(
             mesh_id=mesh_id, peer_id=self.peer_id,
-            vram_gb=self.vram_gb, ram_gb=self.ram_gb,
-            cpu_cores=self.cpu_cores, backend=self.backend)
+            vram_gb=self.vram_gb,
+            vram_advertised_gb=self.vram_advertised_gb,
+            ram_gb=self.ram_gb, cpu_cores=self.cpu_cores,
+            backend=self.backend)
+
+    @property
+    def vram_available_gb(self) -> float:
+        """What routing may actually plan against. Never negative.
+
+        ``min(offered, physical) - used``, floored at zero. Two independent
+        clamps, and the order matters:
+
+        - ``advertised <= physical``: offering more VRAM than exists is the
+          inflation attack. Clamping here means an inflated node is *capped*,
+          not rejected — the mesh simply never plans past the smaller number.
+          Whether it also deserves suspicion is a different question, answered
+          by :func:`capacity_claim_status`.
+        - the floor at zero: a node whose mesh usage exceeds what it offered is
+          over-committed. Reporting a negative would let
+          ``max(0.0, offered - reserve)`` become ``0 - reserve`` and produce
+          nonsensical negative usable memory, so the floor lives here where the
+          subtraction happens.
+
+        Unsigned telemetry can be wrong or hostile. Clamping is not trust: it
+        is the refusal to let a lie in this field propagate into a placement
+        that then fails at run time.
+        """
+        return max(0.0, min(self.vram_advertised_gb, self.vram_gb)
+                   - self.vram_shared_gb)
 
     @property
     def credits_available(self) -> float:
@@ -410,6 +508,8 @@ class PeerContribution:
 
     def to_dict(self) -> dict[str, Any]:
         return {"peer_id": self.peer_id, "vram_gb": self.vram_gb,
+                "vram_advertised_gb": self.vram_advertised_gb,
+                "vram_shared_gb": self.vram_shared_gb,
                 "ram_gb": self.ram_gb, "cpu_cores": self.cpu_cores,
                 "backend": self.backend,
                 "public_key": self.public_key.hex(), "sig_kind": self.sig_kind,
@@ -434,6 +534,8 @@ class PeerContribution:
 
         return cls(peer_id=str(d.get("peer_id", "")),
                    vram_gb=float(d.get("vram_gb", 0.0) or 0.0),
+                   vram_advertised_gb=float(d.get("vram_advertised_gb", 0.0) or 0.0),
+                   vram_shared_gb=float(d.get("vram_shared_gb", 0.0) or 0.0),
                    ram_gb=float(d.get("ram_gb", 0.0) or 0.0),
                    cpu_cores=int(d.get("cpu_cores", 0) or 0),
                    backend=str(d.get("backend", "")),
@@ -511,6 +613,15 @@ class ContributionLedger:
             self.peers[report.peer_id] = peer
         if accepted:
             peer.vram_gb = report.vram_gb
+            # The node's policy decision. The clamp is defence in depth, not
+            # the primary guard: _check already refuses advertised > vram_gb,
+            # so here it should always be a no-op. It stays because this state
+            # is also reachable from a rewritten ledger on disk, from an
+            # older build, and from a hand-constructed PeerContribution in a
+            # test — and in none of those paths did _check run.
+            peer.vram_advertised_gb = min(report.vram_advertised_gb,
+                                          report.vram_gb)
+            peer.vram_shared_gb = report.vram_shared_gb
             peer.ram_gb = report.ram_gb
             peer.cpu_cores = report.cpu_cores
             peer.backend = report.backend
@@ -553,6 +664,16 @@ class ContributionLedger:
             return ContribReject.PEER_MISMATCH
         if report.vram_gb <= 0 and report.ram_gb <= 0 and report.cpu_cores <= 0:
             return ContribReject.NO_CAPACITY
+        if report.vram_advertised_gb > report.vram_gb:
+            # Offering more VRAM than the node claims to physically have.
+            # Fail-closed on purpose. Silently capping would keep the node
+            # serving while hiding the dishonesty, and the owner of a
+            # misconfigured node would never learn about it. Rejecting records
+            # the attempt in the hash-chained trail and counts it, so the
+            # inflation is visible and countable instead of merely bounded.
+            # The cost is a legitimate node with a typo drops out — with a
+            # named reason, which is the actionable outcome.
+            return ContribReject.CAPACITY_OVERSTATED
         return ContribReject.OK
 
 
@@ -605,6 +726,21 @@ class ContributionLedger:
         if observed_only:
             peers = [p for p in peers if p.alive]
         return sorted(peers, key=lambda p: (-p.vram_gb, p.peer_id))
+
+    def total_advertised_gb(self, *, observed_only: bool = True) -> float:
+        """Sum of what peers *offer* — the honest mesh-wide planning total.
+
+        The counterpart to :meth:`total_vram_gb`, which sums the physical
+        maxima. Reporting both is the point: the gap between them is how much
+        hardware the owners are deliberately keeping to themselves.
+        """
+        return round(sum(p.vram_advertised_gb for p in
+                         self.admitted_peers(observed_only=observed_only)), 3)
+
+    def total_shared_gb(self, *, observed_only: bool = True) -> float:
+        """Sum of what the mesh is using right now. Telemetry, unsigned."""
+        return round(sum(p.vram_shared_gb for p in
+                         self.admitted_peers(observed_only=observed_only)), 3)
 
     def total_vram_gb(self, *, observed_only: bool = True) -> float:
         return round(sum(p.vram_gb for p in
@@ -697,12 +833,22 @@ class ExchangePolicy:
     max_credits_per_peer: float = 10_000.0
 
     def accrual(self, peer: PeerContribution, dt_s: float) -> float:
-        """Credit earned by *peer* for ``dt_s`` seconds of observed uptime."""
-        if dt_s <= 0 or peer.vram_gb <= 0:
+        """Credit earned by *peer* for ``dt_s`` seconds of observed uptime.
+
+        Scaled by **advertised** VRAM, not by the physical maximum. This is the
+        economic half of the split: a node with a 24 GiB card that offers 4 GiB
+        earns 4 credits/hour, not 24. Paying for hardware the mesh was not
+        allowed to use is how "share your GPU" turns into a free lunch.
+
+        The physical number still matters, and it matters more: a node that
+        raises its offer later needs the real thing to be there. But the *rate*
+        follows what was offered, because that is what the mesh could plan on.
+        """
+        if dt_s <= 0 or peer.vram_advertised_gb <= 0:
             return 0.0
         hours = dt_s / 3600.0
         return min(self.max_credits_per_peer,
-                   peer.vram_gb * self.credits_per_gib_hour * hours)
+                   peer.vram_advertised_gb * self.credits_per_gib_hour * hours)
 
     def request_cost(self, *, tokens_in: int = 0, tokens_out: int = 0) -> float:
         """What one completion costs: a floor plus a per-token rate."""

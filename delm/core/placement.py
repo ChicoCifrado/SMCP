@@ -125,7 +125,12 @@ class Stage:
 
     peer_id: str
     memory_gb: float
+    #: physical maximum, for display and the detection cross-check
     peer_vram_gb: float
+    #: what the node offers, and what this slice was planned against
+    peer_advertised_gb: float = 0.0
+    #: what the mesh is using right now
+    peer_shared_gb: float = 0.0
     peer_ram_gb: float = 0.0
     first_layer: int | None = None
     last_layer: int | None = None
@@ -138,9 +143,25 @@ class Stage:
             return 1.0
         return round(self.memory_gb / self.peer_vram_gb, 4)
 
+    @property
+    def peer_vram_available_gb(self) -> float:
+        """What was actually available to plan this slice against.
+
+        Mirrors :attr:`delm.core.contrib.PeerContribution.vram_available_gb`
+        rather than recomputing from placement's own numbers, so a stage can
+        never report a different figure than the peer it came from. Kept as a
+        property because the two must never drift apart.
+        """
+        return max(0.0, min(self.peer_advertised_gb, self.peer_vram_gb)
+                   - self.peer_shared_gb)
+
     def to_dict(self) -> dict[str, Any]:
         return {"peer_id": self.peer_id, "memory_gb": round(self.memory_gb, 3),
-                "peer_vram_gb": self.peer_vram_gb, "peer_ram_gb": self.peer_ram_gb,
+                "peer_vram_gb": self.peer_vram_gb,
+                "peer_advertised_gb": self.peer_advertised_gb,
+                "peer_shared_gb": self.peer_shared_gb,
+                "peer_vram_available_gb": self.peer_vram_available_gb,
+                "peer_ram_gb": self.peer_ram_gb,
                 "first_layer": self.first_layer, "last_layer": self.last_layer,
                 "credits_cost": round(self.credits_cost, 6),
                 "utilization": self.utilization}
@@ -192,12 +213,14 @@ class PlacementPlan:
             return "\n".join(out)
         out.append(f"veredicto : {self.reason} · {self.node_count} nodo(s)")
         out.append("")
-        out.append("  nodo                 memoria   vram    uso    layers   credits")
+        out.append("  nodo                 memoria  vmax  ofrece  usa  disp    uso    layers   credits")
         for s in self.stages:
             layers = ("-" if s.first_layer is None
                       else f"{s.first_layer}-{s.last_layer}")
             out.append(f"  {s.peer_id[:20]:<20} {s.memory_gb:>6.1f}G "
-                       f"{s.peer_vram_gb:>6.1f}G {s.utilization:>5.0%} "
+                       f"{s.peer_vram_gb:>5.0f}G {s.peer_advertised_gb:>5.1f}G "
+            f"{s.peer_shared_gb:>4.1f}G {s.peer_vram_available_gb:>5.1f}G "
+            f"{s.utilization:>5.0%} "
                        f"{layers:>8} {s.credits_cost:>8.3f}")
         for note in self.notes:
             out.append(f"  · {note}")
@@ -308,7 +331,13 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
             )
         return PlacementPlan(ok=False, reason=reason, notes=notes, **base)
 
-    usable = [(p, max(0.0, p.vram_gb - reserve_gb)) for p in candidates]
+    # The three VRAM numbers meet here. Routing plans against what is
+    # *available* — advertised minus what the mesh is already using — never
+    # against the physical maximum, which would be planning against hardware
+    # the owner never offered. reserve_gb then comes off the top, per node, as
+    # an operator-level keep-out rather than the node's own decision.
+    usable = [(p, max(0.0, p.vram_available_gb - reserve_gb))
+              for p in candidates]
     usable = [(p, v) for p, v in usable if v > 0]
     if not usable:
         return PlacementPlan(ok=False, reason=PlanReject.PEER_TOO_SMALL.value,
@@ -367,6 +396,8 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
             peer_id=peer.peer_id,
             memory_gb=memory,
             peer_vram_gb=peer.vram_gb,
+            peer_advertised_gb=peer.vram_advertised_gb,
+            peer_shared_gb=peer.vram_shared_gb,
             peer_ram_gb=peer.ram_gb,
             credits_cost=(round(policy.request_cost() * memory
                                 / max(spec.memory_required_gb, 1e-9), 6)
@@ -417,6 +448,8 @@ def plan_from_dict(d: dict[str, Any]) -> PlacementPlan:
             peer_id=str(s.get("peer_id", "")),
             memory_gb=float(s.get("memory_gb", 0.0) or 0.0),
             peer_vram_gb=float(s.get("peer_vram_gb", 0.0) or 0.0),
+            peer_advertised_gb=float(s.get("peer_advertised_gb", 0.0) or 0.0),
+            peer_shared_gb=float(s.get("peer_shared_gb", 0.0) or 0.0),
             peer_ram_gb=float(s.get("peer_ram_gb", 0.0) or 0.0),
             first_layer=s.get("first_layer"), last_layer=s.get("last_layer"),
             credits_cost=float(s.get("credits_cost", 0.0) or 0.0))

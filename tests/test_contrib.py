@@ -56,7 +56,10 @@ def make_report(led: ContributionLedger, key: KeyPair, peer_id: str, *,
     ch = led.issue_challenge(challenge_peer or peer_id, now=now,
                              ttl_s=challenge_ttl)
     return CapacityReport(
-        mesh_id=led.mesh_id, peer_id=peer_id, vram_gb=vram_gb, ram_gb=ram_gb,
+        mesh_id=led.mesh_id, peer_id=peer_id, vram_gb=vram_gb,
+        # la oferta es una decision distinta del maximo fisico; estos tests
+        # narran "comparto todo lo que tengo", asi que se dice explicitamente.
+        vram_advertised_gb=vram_gb, ram_gb=ram_gb,
         cpu_cores=cpu_cores, backend=backend, nonce=ch.nonce, issued_at=now,
         expires_at=now + ttl,
     ).sign(key)
@@ -89,6 +92,7 @@ def test_report_for_an_unknown_nonce_is_refused():
     led = ContributionLedger(MESH)
     key = KeyPair.new("nodo-a")
     rep = CapacityReport(mesh_id=MESH, peer_id="nodo-a", vram_gb=16.0,
+                    vram_advertised_gb=16.0,
                          nonce="nunca-emitido", issued_at=NOW,
                          expires_at=NOW + 600).sign(key)
     assert led.admit(rep, now=NOW)[1] == ContribReject.NONCE_UNKNOWN.value
@@ -121,6 +125,7 @@ def test_report_for_another_mesh_is_refused():
     key = KeyPair.new("nodo-a")
     ch = led.issue_challenge("nodo-a", now=NOW)
     rep = CapacityReport(mesh_id="otra-malla", peer_id="nodo-a", vram_gb=16.0,
+                    vram_advertised_gb=16.0,
                          nonce=ch.nonce, issued_at=NOW,
                          expires_at=NOW + 600).sign(key)
     assert led.admit(rep, now=NOW)[1] == ContribReject.WRONG_MESH.value
@@ -152,6 +157,7 @@ def test_unsigned_report_is_refused():
     led = ContributionLedger(MESH)
     ch = led.issue_challenge("nodo-a", now=NOW)
     rep = CapacityReport(mesh_id=MESH, peer_id="nodo-a", vram_gb=16.0,
+                    vram_advertised_gb=16.0,
                          nonce=ch.nonce, issued_at=NOW, expires_at=NOW + 600)
     assert led.admit(rep, now=NOW)[1] == ContribReject.SIGNATURE_INVALID.value
 
@@ -209,6 +215,7 @@ def test_a_refusal_is_recorded_not_swallowed():
     # Firmado por la clave correcta (si no, el fallo sería de firma y no
     # probaríamos lo que queremos) pero con un nonce que la malla nunca emitió.
     bogus = CapacityReport(mesh_id=MESH, peer_id="a", vram_gb=1.0,
+        vram_advertised_gb=1.0,
                            nonce="nunca", issued_at=NOW,
                            expires_at=NOW + 1).sign(key)
     led.admit(bogus, now=NOW)
@@ -439,6 +446,7 @@ def test_a_refusal_survives_a_save_load_cycle(tmp_path):
     key = KeyPair.new("a")
     admit(led, "a", 8.0, key=key)
     bad = CapacityReport(mesh_id=MESH, peer_id="a", vram_gb=8.0,
+        vram_advertised_gb=8.0,
                          nonce="nunca", issued_at=NOW,
                          expires_at=NOW + 1).sign(key)
     led.admit(bad, now=NOW)

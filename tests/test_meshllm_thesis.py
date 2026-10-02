@@ -80,7 +80,8 @@ def _admit(led: ContributionLedger, peer: str, vram: float, key: KeyPair,
     """
     ch = led.issue_challenge(peer, now=now)
     rep = CapacityReport(
-        mesh_id=mesh, peer_id=peer, vram_gb=vram, ram_gb=vram * 2,
+        mesh_id=mesh, peer_id=peer, vram_gb=vram,
+        vram_advertised_gb=vram, ram_gb=vram * 2,
         cpu_cores=8, backend="cuda", nonce=ch.nonce,
         issued_at=now, expires_at=now + 3600.0,
     ).sign(key)
