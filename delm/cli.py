@@ -409,6 +409,8 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
         return _mesh_membership(args)
     if action == "tiers":
         return _mesh_tiers(args)
+    if action == "anchor":
+        return _mesh_anchor(args)
     return 2
 
 
@@ -577,6 +579,61 @@ def _mesh_release(args: argparse.Namespace) -> int:
         return 2
     print(f"reserva liberada: {args.reservation_id} ({out})")
     return 0
+
+
+def _mesh_anchor(args: argparse.Namespace) -> int:
+    """Verifica un ancla de inferencia.
+
+    Exige ``--header`` como entrada separada, por el mismo motivo que la
+    pertenencia: si el proof trajera su cabecera, se avalaria a si mismo.
+    """
+    from delm.core.anchor import AnchorRecord, ProtocolError
+    from delm.core.membership import BlockHeader, InclusionProof
+
+    try:
+        payload = json.loads(Path(args.anchor).read_text(encoding="utf-8"))
+        hdr_raw = json.loads(Path(args.header).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: no se pudo leer la entrada: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        header = (BlockHeader(merkle_root=str(hdr_raw["merkle_root"]),
+                              height=int(hdr_raw.get("height", 0)),
+                              raw=bytes.fromhex(hdr_raw["raw"]))
+                  if "raw" in hdr_raw
+                  else BlockHeader(merkle_root=str(hdr_raw["merkle_root"]),
+                                   height=int(hdr_raw.get("height", 0))))
+        rec = AnchorRecord.from_dict(payload["record"])
+        inc = InclusionProof(
+            txid=str(payload["inclusion"]["txid"]),
+            index=int(payload["inclusion"]["index"]),
+            path=[str(x) for x in payload["inclusion"]["path"]],
+            merkle_root=str(payload["inclusion"]["merkle_root"]),
+            height=int(payload["inclusion"]["height"]))
+        signature = str(payload["signature"])
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"error: ancla malformada: {exc}", file=sys.stderr)
+        return 2
+    except ProtocolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    ok, why = rec.verify(signature, inc, header)
+    result = {"valid": ok, "reason": why,
+              "membership_outpoint": rec.membership_outpoint,
+              "publishes_content": bool(rec.content_sha256),
+              "chain_validated": False}
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print("valido            :", ok)
+        print("motivo            :", why)
+        print("membresia         :", rec.membership_outpoint)
+        print("publica contenido :", bool(rec.content_sha256))
+        print("cadena validada   : False  (BRC-96: inclusion contra la cabecera "
+              "que diste, no validacion de cadena)")
+    return 0 if ok else 1
 
 
 def _mesh_tiers(args: argparse.Namespace) -> int:
@@ -1036,6 +1093,15 @@ def build_parser() -> argparse.ArgumentParser:
     _mesh_common(m_rl)
     m_rl.add_argument("--reservation-id", required=True)
     m_rl.add_argument("--json", action="store_true")
+
+    m_an = msub.add_parser(
+        "anchor", help="verificar el ancla de una inferencia")
+    _mesh_common(m_an)
+    m_an.add_argument("--anchor", required=True,
+                      help="fichero del ancla (record + inclusion + signature)")
+    m_an.add_argument("--header", required=True,
+                      help="cabecera del bloque, como entrada separada")
+    m_an.add_argument("--json", action="store_true")
 
     m_ti = msub.add_parser(
         "tiers", help="los tres niveles de precio, y presupuestar un plan")

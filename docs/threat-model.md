@@ -820,3 +820,60 @@ Para tenerla a mano — el threat model en una línea por punto:
   slashing**: detectarla es fácil, sancionarla no está implementado.
 - La **observación del uptime es del entorno**: un reloj desincronizado o un
   heartbeat falsificado mueven el saldo de crédito.
+
+
+### El ancla de inferencias (`anchor.py`) — una transaccion por inferencia, sin contenido
+
+La decision tiene dos mitades, y solo una es mecanismo.
+
+**Una transaccion por inferencia.** La propia transaccion es la verificacion: su
+existencia prueba que ocurrio, y el txid compromete a quien la firmo. No hay un
+registro paralelo que pueda desincronizarse del grafo. La atribucion sale de que
+el output se paga a la clave de membresia del nodo — el grafo ya lo dice, ningun
+indice tiene que decirlo.
+
+**No se hashea el contenido.** Ni el prompt, ni la respuesta, ni nada derivado.
+La entrada lleva los datos del nodo y nada mas.
+
+Lo que eso compra y lo que cuesta:
+
+- Con hash del contenido: se verifica que ocurrio **y** que decia eso; un
+  observador puede confirmar una conversacion; una disputa se resuelve.
+- Sin hash (decidido): se verifica que ocurrio; **no** que decia eso; ningun
+  observador confirma nada; una disputa de contenido **no** se resuelve.
+
+La fila que no se va: **una disputa sobre el contenido de una inferencia no la
+resuelve la cadena.** Nadie, ni el nodo, puede demostrar despues que inferencia
+fue; solo que hubo una. Es coherente con lo decidido — resolverlo exigiria el
+hash del contenido — y es irreversible para ese caso. Por eso el campo
+`content_sha256` existe y **no se puede rellenar**: falla al construir, con el
+motivo escrito, para que rellenarlo sea una decision y no un `dict.update`.
+
+**No hay retroactividad.** Una inferencia tiene que estar en un bloque posterior
+al de la membresia que la autoriza, y sin altura no se acepta.
+El reloj declarado (`occurred_at`) no ordena nada: un reloj hostil pone lo que
+quiera. Ordena la altura, que es del verificador.
+
+**Inclusion antes que firma.** Si la transaccion no esta en un bloque, no hay
+nada que firmar; al reves se gasta ECDSA de un atacante antes de comprobar lo
+barato.
+
+**Y la inclusion tiene que ser de la membresia declarada.** Dos cosas reales que
+no van juntas siguen siendo dos cosas reales: sin esa comprobacion, un nodo
+presenta una membresia verdadera y la inclusion de una transaccion cualquiera.
+
+#### Lo que sigue sin resolver
+
+* **BRC-96.** `chain_validated` es `False` siempre. La inclusion se comprueba
+  contra la cabecera que entrega el verificador, y el CLI exige `--header` como
+  entrada separada para que el proof no se avale a si mismo. Dos cabeceras de un
+  atacante se validan mutuamente.
+* **El importe del output no es un precio.** `satoshis` es el valor que lleva el
+  output, elegido por el nodo, y no se verifica contra nada. El resumen lo expone
+  como `satoshis_anchored`, que es un **conteo**; no hay ningun campo que lo
+  llame pagado, y hay test de que no se pueda usar como si lo fuera.
+* **No hay emision de la transaccion.** El modulo construye y verifica el ancla;
+  la|`inscription**|
+
+* **No hay emision de la transaccion.** El modulo construye y verifica el ancla;
+  la que la publica es otra capa.
