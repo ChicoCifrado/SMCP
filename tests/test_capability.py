@@ -90,10 +90,17 @@ def test_blank_and_short_lines_are_skipped():
     assert [g.uuid for g in gpus] == ["GPU-a"]
 
 
-def test_missing_binary_is_not_an_error():
-    """No NVIDIA data must degrade, not raise: the mesh still needs a reply."""
+def test_missing_binary_is_not_an_error(monkeypatch):
+    """No NVIDIA data must degrade, not raise: the mesh still needs a reply.
+
+    `monkeypatch.setenv("PATH", "")` y no `runner=None` a secas: el test
+    anterior depended de que la maquina **no** tuviera nvidia-smi, asi que en
+    cualquier host con GPU (es decir, casi todos los que ejecutan este repo)
+    fallaba. Un test que depende del hardware del que lo ejecuta no es un test.
+    """
+    monkeypatch.setenv("PATH", "")
     with pytest.raises(FileNotFoundError):
-        nvidia_smi_csv("uuid,name,memory.total", runner=None)
+        nvidia_smi_csv("uuid,name,memory.total")
 
 
 def test_free_bytes_never_goes_negative():
