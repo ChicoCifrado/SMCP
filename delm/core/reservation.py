@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .contrib import PeerContribution
@@ -156,29 +156,56 @@ class ReservationBook:
                          now: float | None = None) -> int:
         """Adopt a fresh baseline from the ledger; return the new generation.
 
-        Raises the generation and clears every outstanding reservation. That is
-        not data loss: a newer snapshot already accounts for the work those
-        reservations represented, so keeping them would count it twice. The
-        reservations' stamps now read as stale and their releases become no-ops,
-        which is the correct outcome rather than a leak.
+        Raises the generation and **keeps** outstanding reservations, re-stamping
+        each to the new generation. They survive because a snapshot says what a
+        node *reported*, not what this mesh handed out: a fresh report that
+        predates a reservation cannot know about it, so clearing on every
+        snapshot would silently release live claims and hand the same VRAM to
+        the next caller. That is the oversell this module exists to prevent, and
+        it is what an unconditional clear would reintroduce.
+
+        What *is* reset is the reported side — ``available_gb`` — because that
+        is what the new report is authoritative about.
+
+        Their memory is preserved, though, so a claim can never exceed what the
+        node is newly reported as having free: a claim larger than the fresh
+        baseline is dropped rather than carried into a state that cannot honour
+        it.
 
         A snapshot is refused if its generation is not strictly newer, so a
-        redelivered or reordered snapshot cannot roll the baseline back and
-        resurrect cleared reservations.
+        redelivered or reordered snapshot cannot roll the baseline back.
         """
         moment = time.time() if now is None else now
         with self._lock:
             self._generation += 1
-            fresh: dict[str, _NodeBook] = {}
+            carried: dict[str, _NodeBook] = {}
+            for pid, book in self._nodes.items():
+                peer = peers.get(pid)
+                if peer is None:
+                    continue  # node left the mesh: its claims die with it
+                fresh_available = peer.vram_available_gb
+                still_fits = book.live_reserved_gb <= fresh_available + 1e-9
+                carried[pid] = _NodeBook(
+                    generation=self._generation,
+                    available_gb=fresh_available,
+                    reported_used_gb=peer.vram_shared_gb,
+                    advertised_gb=peer.vram_advertised_gb,
+                    physical_gb=peer.vram_gb,
+                    live_reserved_gb=book.live_reserved_gb if still_fits else 0.0,
+                    reservations=(dict(book.reservations) if still_fits else {}),
+                )
+                if still_fits:
+                    for res in carried[pid].reservations.values():
+                        carried[pid].reservations[res.reservation_id] = (
+                            replace(res, generation=self._generation))
             for pid, peer in peers.items():
-                fresh[pid] = _NodeBook(
+                carried.setdefault(pid, _NodeBook(
                     generation=self._generation,
                     available_gb=peer.vram_available_gb,
                     reported_used_gb=peer.vram_shared_gb,
                     advertised_gb=peer.vram_advertised_gb,
-                    physical_gb=peer.vram_gb,
-                )
-            self._nodes = fresh
+                    physical_gb=peer.vram_gb))
+            self._nodes = carried
             return self._generation
 
     # -- reserve ----------------------------------------------------------

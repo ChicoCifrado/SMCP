@@ -215,6 +215,42 @@ un *adversario económico* (mentir sale rentable), así que su no-garantía cent
     lee ese fichero, puede firmar como ese nodo — la misma confianza que en
     cualquier esquema de identidad por clave.
 
+### Las reservas dedicadas (`reservation.py`) — fuera de capa
+
+`plan_placement` **planifica**. Esto **retiene**. Un plan es JSON, y dos planes
+pueden nombrar el mismo nodo y los mismos GiB y ser ambos individualmente
+válidos: nada en un plan impide que el segundo despierte. Esa es la razón de que
+el módulo exista.
+
+- **Adversario**: el propio llamador legítimo, dos peticiones simultáneas. No
+  hace falta un atacante — dos clientes honestos bastan.
+- **Garantía**: la comprobación de hueco y la cuenta ocurren en la misma sección
+  crítica, así que no hay ventana entre «hay sitio» y «lo he cogido». Un test
+  lanza dieciséis hilos pidiendo 1 GiB contra 8 GiB y exige exactamente ocho.
+- **La generación va en cada reserva.** Un snapshot es lo que un nodo *reporta*,
+  no lo que esta malla repartió. Las reservas **sobreviven** al snapshot y se
+  re-marcan; limpiarlas en cada uno liberaba reclamaciones en vivo y entregaba
+  la misma VRAM dos veces. Solo se descarta una reserva que ya no cabe en la
+  línea base fresca, o cuyo nodo salió de la malla.
+- **`release` no es idempotente por diseño, es idempotente por resultado**:
+  liberar dos veces la misma reserva devuelve `not_held` y no devuelve la
+  memoria dos veces. Un id fabricado por el llamador no libera la memoria de
+  otro: se busca dentro del libro del nodo.
+- **`move` es el failover**: la carga pasa del origen al destino, y si el
+  destino no tiene sitio la reserva **vuelve al origen**. Perderla en silencio
+  dejaría al origen verse libre sin estarlo — la sobreventa exacta que el módulo
+  evita.
+- **Lo que NO arregla**: `ReservationBook` **no se persiste**, así que un
+  reinicio pierde las reservas. Es deliberado — una promesa sobre los próximos
+  minutos de scheduling local no sobrevive a un proceso nuevo — pero significa
+  que un reinicio *durante* una Inferencia dedicada libera la VRAM prometida sin
+  avisar. No hay recuperación de reservas. Tampoco hay un TTL
+  obligatorio: con `ttl_s=0` la reserva se mantiene hasta que se libere, así que
+  un cliente que muere y nunca libera la tiene para siempre dentro de ese
+  proceso. Y un `ReservationBook` es **por proceso**: dos procesos del Web API
+  no comparten libro y podrían vender la misma VRAM. Eso exige el POSIX
+  coordinator de múltiples procesos que la capa 4 ya tiene como zona abierta.
+
 ### Capa 4 — Despliegue multi-proceso
 
 - **Adversario**: A1 (suplantar al owner en el bootstrap/control-plane), A5

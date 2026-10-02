@@ -51,6 +51,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from delm.core.contrib import ContributionLedger
     from delm.core.llmfit import ModelFitVerdict
     from delm.core.provenance import KeyPair
+    from delm.core.reservation import ReservationBook
 
 # ``placement`` is stdlib-only (it imports contrib, which imports provenance),
 # so importing the endpoint constant here costs nothing and keeps
@@ -400,6 +401,10 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
         return _mesh_plan(args)
     if action == "check":
         return _mesh_check(args)
+    if action == "reserve":
+        return _mesh_reserve(args)
+    if action == "release":
+        return _mesh_release(args)
     return 2
 
 
@@ -485,6 +490,88 @@ def _mesh_contribute(args: argparse.Namespace) -> int:
     print(f"estado     : {state}")
     print("siguiente  : `delm mesh observe` (la malla te ve vivo) y luego "
           "`delm mesh plan <modelo>`")
+    return 0
+
+
+def _mesh_book(args: argparse.Namespace) -> "ReservationBook":
+    """Build a book from the ledger on disk.
+
+    Recreated per invocation, which is exactly the process-local scope
+    :class:`delm.core.reservation.ReservationBook` documents. The CLI therefore
+    shows what a fresh mesh could reserve and releases nothing across commands —
+    the real holder is whatever dispatches work, and it keeps one book for its
+    lifetime.
+    """
+    from delm.core.reservation import ReservationBook
+
+    state, _ = _mesh_paths(args)
+    led = _load_exchange(state, args.mesh_id)
+    book = ReservationBook()
+    book.publish_snapshot(led.peers)
+    return book
+
+
+def _mesh_reserve(args: argparse.Namespace) -> int:
+    from delm.core.reservation import NOT_ENOUGH, RESERVED, UNKNOWN_PEER
+
+    book = _mesh_book(args)
+    peer = book.snapshot()["nodes"].get(args.peer_id)
+    res, why = book.reserve(args.peer_id, args.memory_gb, ttl_s=args.ttl_s)
+    if args.json:
+        print(json.dumps({"reason": why, "reservation": res.to_dict()
+                          if res else None}, indent=2, sort_keys=True))
+        return 0 if why == RESERVED else 2
+    if why != RESERVED or res is None:
+        print(f"error: no se pudo reservar {args.memory_gb:.1f}G en "
+              f"{args.peer_id} ({why})", file=sys.stderr)
+        if peer is not None:
+            print(f"        disponible: {peer['free_gb']:.1f}G "
+                  f"(físico {peer['physical_gb']:.1f}G · "
+                  f"ofrece {peer['advertised_gb']:.1f}G · "
+                  f"en uso {peer['reported_used_gb']:.1f}G)",
+                  file=sys.stderr)
+        elif why == UNKNOWN_PEER:
+            print("        ese nodo no está admitido en la malla; "
+                  "`delm mesh status` para ver quién está.", file=sys.stderr)
+        elif why == NOT_ENOUGH:
+            print("        sube `--vram-advertised-gb` en el nodo, o reserva "
+                  "menos. La malla no puede prometer lo que no se ofreció.",
+                  file=sys.stderr)
+        return 2
+    print(f"=== smcp mesh: reserva tomada ===")
+    print(f"reserva    : {res.reservation_id}")
+    print(f"nodo       : {res.peer_id}")
+    print(f"memoria    : {res.memory_gb:.1f}G dedicados")
+    print(f"generación : {res.generation}")
+    print(f"caducidad  : "
+          f"{'sin TTL (hasta liberar)' if not res.expires_at else f'{res.expires_at:.0f}'}")
+    print(f"libre tras : {book.free_gb(res.peer_id):.1f}G")
+    print("nota: las reservas viven en memoria de este proceso. Un reinicio "
+          "las pierde a propósito — un disco con VRAM prometida a nadie es peor "
+          "que empezar vacío.")
+    return 0
+
+
+def _mesh_release(args: argparse.Namespace) -> int:
+    from delm.core.reservation import NOT_HELD_ALIAS, RELEASED, Reservation
+
+    book = _mesh_book(args)
+    # ``release`` matches on the reservation id within a node's book, so the
+    # caller needs to say which node. Accepting "peer#seq" keeps the id it
+    # printed as the single handle.
+    node = args.reservation_id.split("#", 1)[0]
+    res = Reservation(reservation_id=args.reservation_id, peer_id=node,
+                      memory_gb=0.0, generation=book.generation, taken_at=0.0)
+    out = book.release(res)
+    if args.json:
+        print(json.dumps({"reason": out}, indent=2, sort_keys=True))
+        return 0 if out == RELEASED else 2
+    if out == NOT_HELD_ALIAS:
+        print(f"error: {args.reservation_id} no está en este libro "
+              f"(o ya se liberó). Las reservas no sobreviven a un reinicio.",
+              file=sys.stderr)
+        return 2
+    print(f"reserva liberada: {args.reservation_id} ({out})")
     return 0
 
 
@@ -783,6 +870,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     m_ck = msub.add_parser("check", help="auditar cadena y saldos")
     _mesh_common(m_ck)
+
+    # Reservas dedicadas (tier de pago único). Un libro de reservas es
+    # deliberadamente efímero — no se persiste — así que estos comandos
+    # trabajan contra el estado en memoria de este proceso; sirven para
+    # inspeccionar y para probar la aritmética, no para coordinar dispatched
+    # work entre procesos. Ver reservation.ReservationBook.
+    m_rs = msub.add_parser(
+        "reserve", help="reservar VRAM dedicada (tier de pago único)")
+    _mesh_common(m_rs)
+    m_rs.add_argument("--peer-id", required=True, help="nodo a reservar")
+    m_rs.add_argument("--memory-gb", type=float, required=True,
+                      help="GiB dedicados a reservar")
+    m_rs.add_argument("--ttl-s", type=float, default=0.0,
+                      help="duración en segundos (0 = hasta liberar)")
+    m_rs.add_argument("--json", action="store_true", help="reserva en JSON")
+
+    m_rl = msub.add_parser("release", help="liberar una reserva")
+    _mesh_common(m_rl)
+    m_rl.add_argument("--reservation-id", required=True)
+    m_rl.add_argument("--json", action="store_true")
 
     p_mesh.set_defaults(func=_cmd_mesh)
 

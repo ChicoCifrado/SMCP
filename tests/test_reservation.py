@@ -13,6 +13,8 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from delm.core.contrib import PeerContribution
 from delm.core.reservation import (
     ALREADY_HELD,
@@ -159,44 +161,110 @@ def test_releasing_a_foreign_id_never_frees_someone_elses_memory():
 
 
 # ---------------------------------------------------------------- generation
-def test_a_new_snapshot_clears_outstanding_reservations():
-    """The snapshot already accounts for the work, so keeping the claims would
-    count it twice.
+def test_a_new_snapshot_keeps_outstanding_reservations():
+    """Reversed after finding the oversell it caused.
+
+    A snapshot says what a node *reported*, not what this mesh handed out. A
+    report that predates a reservation cannot know about it, so clearing on
+    every snapshot released live claims and handed the same VRAM to the next
+    caller — the exact oversell this module exists to prevent. This is why the
+    reservation side survives a snapshot and only the reported side is reset.
     """
     b = _book(_peer(advertised=8.0))
-    b.reserve("n1", 4.0, now=100.0)
-    assert b.reserved_gb("n1") == 4.0
+    res = _must(*b.reserve("n1", 4.0, now=100.0))
     b.publish_snapshot({"n1": _peer(advertised=8.0)}, now=101.0)
-    assert b.all_reservations() == ()
+    assert b.reserved_gb("n1") == 4.0
+    assert [r.reservation_id for r in b.all_reservations()] == \
+        [res.reservation_id]
+    assert b.free_gb("n1", now=101.0) == 4.0
+
+
+def test_a_surviving_reservation_is_re_stamped_to_the_new_generation():
+    """So its release is honoured rather than discarded as stale."""
+    b = _book(_peer(advertised=8.0))
+    res = _must(*b.reserve("n1", 4.0, now=100.0))
+    old_gen = res.generation
+    b.publish_snapshot({"n1": _peer(advertised=8.0)}, now=101.0)
+    kept = b.all_reservations()[0]
+    assert kept.generation == b.generation > old_gen
+    assert b.release(kept, now=101.0) == RELEASED
+    assert b.free_gb("n1", now=101.0) == 8.0
+
+
+def test_a_claim_larger_than_the_fresh_baseline_is_dropped():
+    """A node that shrank. Carrying the claim would let the mesh promise memory
+    the node no longer reports as free.
+    """
+    b = _book(_peer(vram=16.0, advertised=8.0))
+    b.reserve("n1", 6.0, now=100.0)
+    assert b.reserved_gb("n1") == 6.0
+    # Same peer, now only 2 GiB free: the 6 GiB claim cannot be honoured.
+    b.publish_snapshot({"n1": _peer(vram=16.0, advertised=4.0, used=2.0)},
+                       now=101.0)
     assert b.reserved_gb("n1") == 0.0
-    assert b.free_gb("n1", now=101.0) == 8.0
+    assert b.all_reservations() == ()
+    assert b.free_gb("n1", now=101.0) == 2.0
 
 
-def test_releasing_a_reservation_from_the_previous_generation_is_ignored():
-    """This is the subtle one, and the reason ``generation`` exists.
+def test_a_claim_that_still_fits_the_fresh_baseline_survives():
+    b = _book(_peer(vram=16.0, advertised=10.0))
+    b.reserve("n1", 3.0, now=100.0)
+    b.publish_snapshot({"n1": _peer(vram=16.0, advertised=10.0)}, now=101.0)
+    assert b.reserved_gb("n1") == 3.0
 
-    A reservation taken against snapshot N is still in hand when snapshot N+1
-    arrives and clears it. If the late release decremented anyway it would free
-    memory that a *different*, newer reservation now holds — the node looks
-    idle while it is committed.
+
+def test_a_node_that_leaves_the_mesh_loses_its_claims():
+    b = _book(_peer(), _peer("n2"))
+    b.reserve("n2", 2.0, now=100.0)
+    b.publish_snapshot({"n1": _peer()}, now=101.0)
+    assert b.all_reservations() == ()
+    assert b.reserved_gb("n2") == 0.0
+
+
+def test_releasing_after_a_snapshot_is_honoured_not_discarded():
+    """The counterpart to re-stamping: a live claim released after a snapshot
+    really gives the memory back. The old behaviour returned ``stale_generation``
+    here, which stranded every live claim as soon as any snapshot arrived.
     """
     b = _book(_peer(advertised=8.0))
-    stale = _must(*b.reserve("n1", 4.0, now=100.0))
+    res = _must(*b.reserve("n1", 4.0, now=100.0))
     b.publish_snapshot({"n1": _peer(advertised=8.0)}, now=101.0)
-    assert b.release(stale, now=101.0) == STALE_GENERATION
-    # Nothing was double-freed.
+    reissued = Reservation(reservation_id=res.reservation_id, peer_id="n1",
+                           memory_gb=4.0, generation=b.generation,
+                           taken_at=100.0)
+    assert b.release(reissued, now=101.0) == RELEASED
     assert b.free_gb("n1", now=101.0) == 8.0
 
 
-def test_a_stale_release_cannot_free_a_newer_reservation():
+def test_a_genuinely_stale_stamp_is_still_refused():
+    """Stale means "belongs to a generation the book has moved past", which
+    after re-stamping only happens for a claim whose id no longer exists or
+    whose node was replaced. The guard stays; it is what stops a double release
+    from a caller that kept a pre-snapshot copy of the handle.
+    """
     b = _book(_peer(advertised=8.0))
-    stale = _must(*b.reserve("n1", 4.0, now=100.0))
-    b.publish_snapshot({"n1": _peer(advertised=8.0)}, now=101.0)
-    fresh = _must(*b.reserve("n1", 4.0, now=101.0))
-    b.release(stale, now=101.0)
-    assert b.reserved_gb("n1") == 4.0
-    assert [r.reservation_id for r in b.reservations_for("n1")] == \
-        [fresh.reservation_id]
+    res = _must(*b.reserve("n1", 4.0, now=100.0))
+    b.publish_snapshot({"n1": _peer(vram=16.0, advertised=4.0, used=4.0)},
+                       now=101.0)  # 0 free: claim dropped
+    assert b.release(res, now=101.0) == STALE_GENERATION
+    assert b.free_gb("n1", now=101.0) == 0.0
+
+
+def test_two_reservations_before_and_after_a_snapshot_both_count():
+    """The oversell this reversal prevents: 4 GiB reserved, snapshot arrives,
+    another 4 GiB is taken. If the first were cleared the node would show 8 GiB
+    free and hand out 12 GiB in total.
+    """
+    b = _book(_peer(advertised=12.0))
+    first = _must(*b.reserve("n1", 4.0, now=100.0))
+    b.publish_snapshot({"n1": _peer(advertised=12.0)}, now=101.0)
+    second = _must(*b.reserve("n1", 4.0, now=101.0))
+    assert b.reserved_gb("n1") == 8.0
+    assert b.free_gb("n1", now=101.0) == 4.0
+    third, why = b.reserve("n1", 5.0, now=101.0)
+    assert third is None and why == NOT_ENOUGH
+    assert {first.reservation_id, second.reservation_id} == \
+        {r.reservation_id for r in b.all_reservations()}
 
 
 def test_the_generation_increases_monotonically():
@@ -313,37 +381,124 @@ def test_the_old_claim_must_not_be_released_after_a_move():
     assert b.reserved_gb("n2") == 4.0
 
 
-# ------------------------------------------------------------- concurrency
-def test_concurrent_reservations_never_oversubscribe():
-    """The reason the check and the increment share a lock.
+@pytest.fixture()
+def stalled_free_gb():
+    """Widen the gap between reading the free figure and recording the claim.
 
-    Sixteen threads each ask for 1 GiB against an 8 GiB node. Exactly eight may
-    succeed. With a check-then-act race the number is not reliably eight — it
-    is often higher, and it is the oversell that makes the paid tier
-    unsellable.
+    ``_NodeBook.free_gb`` is what ``reserve()`` checks and it is a *property*;
+    patching ``ReservationBook.free_gb`` misses it, which is why an earlier
+    version of this test happily passed with the lock removed. Replacing the
+    property puts every reader inside the would-be critical section, so whether
+    the code reads it inline or caches it in a local first, the threads all sit
+    in the same window. Restored afterwards.
     """
-    b = _book(_peer(advertised=8.0))
-    winners: list[Reservation] = []
-    lock = threading.Lock()
-    barrier = threading.Barrier(16)
+    from delm.core import reservation as rs
 
-    def attempt():
-        barrier.wait()
-        res, why = b.reserve("n1", 1.0, now=100.0)
+    original = rs._NodeBook.free_gb
+
+    def slow(self: object) -> float:
+        time.sleep(0.004)
+        return max(0.0, self.available_gb - self.live_reserved_gb)  # type: ignore[attr-defined]
+
+    rs._NodeBook.free_gb = property(slow)  # type: ignore[assignment]
+    yield
+    rs._NodeBook.free_gb = original  # type: ignore[assignment]
+
+
+def _race(book: ReservationBook, threads: int = 16) -> list[Reservation]:
+    """Fire *threads* simultaneous 1 GiB claims; return the ones that landed."""
+    winners: list[Reservation] = []
+    guard = threading.Lock()
+    start = threading.Barrier(threads)
+
+    def attempt() -> None:
+        start.wait()
+        res, why = book.reserve("n1", 1.0, now=100.0)
         if why == RESERVED and res is not None:
-            with lock:
+            with guard:
                 winners.append(res)
 
-    threads = [threading.Thread(target=attempt) for _ in range(16)]
-    for t in threads:
+    ts = [threading.Thread(target=attempt) for _ in range(threads)]
+    for t in ts:
         t.start()
-    for t in threads:
+    for t in ts:
         t.join()
+    return winners
 
-    assert len(winners) == 8
+
+def test_the_lock_is_what_prevents_the_oversell_not_good_timing(
+        stalled_free_gb: None) -> None:
+    """Sixteen threads, 1 GiB each, an 8 GiB node, window forced open.
+
+    Exactly eight may land, and the book accounts for exactly eight.
+
+    Recorded honestly, because mutation testing says so: this test does **not**
+    fail when the lock is removed, and it does not fail when the check and the
+    record are split apart with a sleep in between. Measured, not assumed: with
+    ``_NodeBook.free_gb`` replaced by a 4 ms stall, the split version still
+    returns eight winners and ``live_reserved_gb == 8.0``. On CPython the
+    remaining steps between them are single bytecode operations that do not
+    release the GIL, so the interleaving the mutation needs does not occur.
+
+    So what this test actually pins is the *guarantee* rather than the
+    interleaving — which is the right thing to hold, and is not the same claim as
+    "removing the lock breaks a test". The lock stays because it is the
+    guarantee; a suite that asserted otherwise would be asserting a scheduling
+    accident of this interpreter.
+    """
+    b = _book(_peer(advertised=8.0))
+    winners = _race(b)
+    assert len(winners) == 8, (
+        f"se vendieron {len(winners)} de 8 GiB: el modulo se oversell")
     assert b.reserved_gb("n1") == 8.0
     assert b.free_gb("n1", now=100.0) == 0.0
-    assert len(b.all_reservations()) == 8
+
+
+def test_the_oversell_recurs_under_repetition(stalled_free_gb: None) -> None:
+    """Repeated rounds, because a single passing race proves little.
+
+    Each round releases everything before the next starts, so the book is
+    genuinely empty at the start of each one.
+    """
+    b = _book(_peer(advertised=8.0))
+    for _ in range(15):
+        winners = _race(b)
+        assert len(winners) == 8, f"se vendieron {len(winners)} de 8"
+        for res in winners:
+            b.release(res, now=100.0)
+    assert b.reserved_gb("n1") == 0.0
+
+
+def test_the_free_figure_is_read_once_per_claim(stalled_free_gb: None) -> None:
+    """A claim must not consult the book twice and act on a stale reading.
+
+    Counts reads: one per attempt means the code takes the figure, decides, and
+    records without a second look. More than one read per attempt is the shape
+    that makes check-then-act possible.
+    """
+    from delm.core import reservation as rs
+
+    reads = 0
+    counter_guard = threading.Lock()
+    original = rs._NodeBook.free_gb
+
+    def counting(self: object) -> float:
+        nonlocal reads
+        with counter_guard:
+            reads += 1
+        time.sleep(0.001)
+        return max(0.0, self.available_gb - self.live_reserved_gb)  # type: ignore[attr-defined]
+
+    rs._NodeBook.free_gb = property(counting)  # type: ignore[assignment]
+    try:
+        b = _book(_peer(advertised=8.0))
+        _race(b, threads=8)
+    finally:
+        rs._NodeBook.free_gb = original  # type: ignore[assignment]
+
+    # Eight attempts: the seven that fit read once and are recorded, and the
+    # ones refused still read once to learn they do not fit.
+    assert reads == 8, f"free_gb se consulted {reads} veces para 8 intentos"
 
 
 def test_concurrent_release_and_reserve_stay_consistent():
@@ -493,18 +648,33 @@ def test_a_book_with_no_snapshot_reserves_nothing():
     assert b.snapshot()["nodes"] == {}
 
 
-def test_free_uses_the_snapshots_reported_usage_and_the_book_separately():
-    """Reservation and telemetry move independently and both subtract.
-
-    A node running someone else's work reports it as usage; this mesh's own
+def test_reservation_and_telemetry_both_subtract():
+    """A node running someone else's work reports it as usage; this mesh's own
     reservations are separate. Missing either one oversubscribes.
+
+    The node is told about its mesh reservations, so it *could* fold them into
+    the figure it reports. If it does, they are subtracted twice: once inside
+    ``available_gb`` and once as a live reservation. That is the pessimistic
+    direction — the mesh under-promises rather than overselling — and the test
+    pins it as the known behaviour rather than leaving it to arithmetic.
     """
     b = _book(_peer(vram=16.0, advertised=10.0, used=4.0))
     assert b.free_gb("n1", now=100.0) == 6.0
-    b.reserve("n1", 2.0, now=100.0)
+    _must(*b.reserve("n1", 2.0, now=100.0))
     assert b.free_gb("n1", now=100.0) == 4.0
-    # A new snapshot folds the mesh's work back into the node's own usage.
+    # Reported usage now includes the mesh's own 2 GiB: 10 - 6 - 2 = 2.
     b.publish_snapshot({"n1": _peer(vram=16.0, advertised=10.0, used=6.0)},
+                       now=101.0)
+    assert b.free_gb("n1", now=101.0) == 2.0
+
+
+def test_a_node_that_omits_its_mesh_reservations_is_not_double_counted():
+    """The common case: the node reports only third-party usage. Then the two
+    figures are genuinely independent and the arithmetic is exact.
+    """
+    b = _book(_peer(vram=16.0, advertised=10.0, used=4.0))
+    _must(*b.reserve("n1", 2.0, now=100.0))
+    b.publish_snapshot({"n1": _peer(vram=16.0, advertised=10.0, used=4.0)},
                        now=101.0)
     assert b.free_gb("n1", now=101.0) == 4.0
 

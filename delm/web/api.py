@@ -1330,12 +1330,114 @@ def _mesh_view(led: Any, mesh_id: str, endpoint: str) -> dict[str, Any]:
     }
 
 
+
+# ------------------------------------------------------- reservations (tier 2)
+#: One book per mesh, held for the process lifetime. Deliberately module-level
+#: and *not* persisted, mirroring :class:`delm.core.reservation.ReservationBook`:
+#: a reservation is a promise about the next few minutes of local scheduling.
+#: Building one per request would make the endpoint meaningless — every call
+#: would see an empty book and could take the same GiB twice, which is the exact
+#: oversubscription the module exists to prevent.
+_RESERVATION_BOOKS: dict[str, Any] = {}
+
+
+def _reservation_book(led: Any, mesh_id: str) -> Any:
+    """The mesh's book, freshly baselined from the ledger.
+
+    The snapshot is taken on every call because the ledger's available figures
+    move as peers report usage, and a book baselined once would keep promoting
+    memory that is already committed.
+    """
+    from delm.core.reservation import ReservationBook
+
+    book = _RESERVATION_BOOKS.get(mesh_id)
+    if book is None:
+        book = ReservationBook()
+        _RESERVATION_BOOKS[mesh_id] = book
+    book.publish_snapshot(led.peers)
+    return book
+
+
 @router.get("/mesh")
 def get_mesh(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
              endpoint: str = Query(default=DEFAULT_MESH_ENDPOINT, max_length=200),
              ) -> dict[str, Any]:
     """Exchange state: who contributes verified VRAM, and what they are owed."""
     return _mesh_view(_load_mesh(mesh_id), mesh_id, endpoint)
+
+
+
+class MeshReserve(BaseModel):
+    peer_id: str = Field(min_length=1, max_length=80)
+    memory_gb: float = Field(gt=0.0, le=100_000.0)
+    ttl_s: float = Field(default=0.0, ge=0.0, le=30 * 86400.0)
+    tier: str = Field(default="paid", max_length=32)
+    order_id: str = Field(default="", max_length=200)
+
+
+@router.post("/mesh/reserve")
+def post_mesh_reserve(body: MeshReserve,
+                      mesh_id: str = Query(default=DEFAULT_MESH_ID,
+                                           max_length=80)) -> dict[str, Any]:
+    """Hold dedicated VRAM on one node (the paid single-shot tier).
+
+    Atomic under the book's lock: the check and the accounting happen together,
+    so two callers cannot be told the same GiB is free. That is the whole reason
+    this endpoint is not a read-modify-write over the mesh view.
+    """
+    from delm.core.reservation import NOT_ENOUGH, RESERVED, UNKNOWN_PEER
+
+    led = _load_mesh(mesh_id)
+    book = _reservation_book(led, mesh_id)
+    res, why = book.reserve(body.peer_id, body.memory_gb, ttl_s=body.ttl_s,
+                            tier=body.tier,
+                            meta={"order_id": body.order_id} if body.order_id
+                            else None)
+    view = book.snapshot()
+    node = view["nodes"].get(body.peer_id, {})
+    if why != RESERVED or res is None:
+        status = 404 if why == UNKNOWN_PEER else 409
+        raise HTTPException(
+            status_code=status,
+            detail={"reason": why, "free_gb": node.get("free_gb", 0.0),
+                    "requested_gb": body.memory_gb, "peer_id": body.peer_id})
+    return {"reason": why, "reservation": res.to_dict(),
+            "free_gb_after": book.free_gb(body.peer_id),
+            "generation": view["generation"]}
+
+
+@router.post("/mesh/release")
+def post_mesh_release(reservation_id: str = Query(min_length=1, max_length=200),
+                      mesh_id: str = Query(default=DEFAULT_MESH_ID,
+                                           max_length=80)) -> dict[str, Any]:
+    """Give back a reservation. Idempotent by outcome, never by silent success."""
+    from delm.core.reservation import NOT_HELD_ALIAS, RELEASED, Reservation
+
+    led = _load_mesh(mesh_id)
+    book = _reservation_book(led, mesh_id)
+    peer_id = reservation_id.split("#", 1)[0]
+    res = Reservation(reservation_id=reservation_id, peer_id=peer_id,
+                      memory_gb=0.0, generation=book.generation, taken_at=0.0)
+    out = book.release(res)
+    if out == NOT_HELD_ALIAS:
+        raise HTTPException(status_code=404,
+                            detail={"reason": out, "reservation_id": reservation_id})
+    return {"reason": out, "reservation_id": reservation_id,
+            "released": out == RELEASED}
+
+
+@router.get("/mesh/reservations")
+def get_mesh_reservations(
+        mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
+) -> dict[str, Any]:
+    """Per-node reservation state: what is promised, and what is still free."""
+    led = _load_mesh(mesh_id)
+    book = _reservation_book(led, mesh_id)
+    view = book.snapshot()
+    return {**view,
+            "reservations": [r.to_dict() for r in book.all_reservations()],
+            "note": ("las reservas son en memoria de este proceso; un "
+                     "reinicio las pierde a propósito")}
 
 
 class MeshContribute(BaseModel):

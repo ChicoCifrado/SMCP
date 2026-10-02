@@ -335,6 +335,8 @@ delm mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva"
 delm mesh plan "Qwen/Qwen3-32B"              # lo dimensiona llmfit y lo reparte
 delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64   # sin llmfit
 delm mesh plan "Qwen/Qwen3-32B" --memory-gb 400; echo $?     # 2 = no cabe
+delm mesh reserve --peer-id nodo-b --memory-gb 6     # tier de pago único
+delm mesh release  --reservation-id nodo-b#1
 delm mesh check                               # audita cadena y saldos
 delm mesh --help
 ```
@@ -391,6 +393,47 @@ ninguna es evidencia.
 Y lo que sigue en pie: **la capacidad es una afirmación firmada, no una
 medición**. Quien quiera inflar de forma consistente solo tiene que mentir
 también en su detección local. Eso exige un testigo externo.
+
+### Reservas dedicadas (tier de pago único)
+
+Un plan es JSON, y dos planes pueden nombrar el mismo nodo y los mismos GiB y
+ser ambos válidos. Nada en un plan impide que el segundo despierte. Así que la
+reserva es una reclamación mutable, bajo lock, sobre lo **disponible**:
+
+```python
+from delm.core.reservation import ReservationBook
+book = ReservationBook()
+book.publish_snapshot(led.peers)              # línea base desde el ledger
+
+res, why = book.reserve("nodo-b", 6.0, ttl_s=900.0)
+# → ('nodo-b#1', 'reserved')   u   (None, 'not_enough_available')
+book.move(res, "nodo-c")                      # failover: la carga cambia de nodo
+book.release(res)
+```
+
+Tres cosas que no son obvias:
+
+**Comprobación y cuenta en la misma sección crítica.** Leer el hueco libre y
+luego incrementar es una doble venta esperando un tick de scheduler. Con
+dieciséis hilos pidiendo 1 GiB contra 8 GiB, exactamente ocho ganan.
+
+**La generación va en cada reserva.** Un snapshot es lo que un nodo *reporta*,
+no lo que esta malla repartió: un informe anterior a una reserva no puede
+conocerla. Por eso las reservas **sobreviven** a un snapshot — limpiarlas en
+cada uno las liberaba en vivo y entregaba la misma VRAM al siguiente llamador.
+Se re-marcan a la generación nueva y solo se descarta lo que ya no cabe.
+
+**Reserva ≠ telemetría.** `vram_shared_gb` es lo que el nodo dice que usa;
+`book.reservations` es lo que esta malla ha entregado. Son independientes y las
+dos restan. Si el nodo informa de las reservas de la malla, se restan dos
+veces: pesimista, que es la dirección correcta — la malla promete menos en
+lugar de sobrevender.
+
+`ReservationBook` **no se persiste**, a propósito. Una reserva es una promesa
+sobre los próximos minutos de scheduling local; recargarla tras un reinicio
+mantendría VRAM que nadie usa o liberaría VRAM que alguien prometió. Empezar
+vacío es mejor que las dos cosas, y por eso una reserva no es un recibo de pago:
+el lado del pago es un ledger, esto es un scheduler.
 
 Cuatro propiedades que hacen que esto no sea un registro de promesas:
 
@@ -800,7 +843,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **864 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **926 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
