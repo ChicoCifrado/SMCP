@@ -37,8 +37,19 @@ las mismas tres primitivas: un modelo de datos (`Gist`), una firma
     injection · injection_hardened · taint   → cuarentena en render/unfold
   ──────────────────────────────────────────────────────────────────────────
   CAPA 6 — intercambio + anclaje           (la tesis: VRAM ⇄ inferencia)
-    contrib    Challenge/CapacityReport + ContributionLedger + créditos +
-               ExchangePolicy + MeteredLLMClient
+    contrib    Challenge/CapacityReport + ContributionLedger
+               (admisión con motivo + el historial: record_inference)
+    reputation ranking de inferencias servidas (contador, no saldo)
+    tiers      los tres precios, en satoshis (y dónde encaja x402)
+    x402       verificador de challenge/proof, offline y sin estado
+    anchor     una tx por inferencia, sin hashear el contenido
+    membership membresía por avales firmados, anclada en BSV
+    capability · telemetry · roster · backend
+               lo que un nodo dice que puede, con qué prueba, y quién
+               lo avala (capa de descubrimiento de la malla)
+    reservation · reservation_ipc · wiring
+               reserva atómica de VRAM dedicada, su cerrojo entre
+               procesos, y el camino de admisión que los une
     placement  ModelSpec/Stage/PlacementPlan  (el binario trae, SMCP estrecha)
     llmfit     adaptador de la dimensionadora externa (stdlib-only)
     bsv_keys   identidad secp256k1 (BRC-220) — Fase 1 del anclaje
@@ -345,11 +356,11 @@ dependencias es la parte del diseño que conviene tener en la cabeza:
                                           │                     │
                         contrib.py ◀────────┘                     │
                    (capacidad firmada,                            │
-                    créditos, cadena) ──▶ placement.py ───────────┘
+                     historial, cadena) ──▶ placement.py ───────────┘
                                           (plan de reparto)
                                                 │
                                                 ▼
-                                    LLMClient / MeteredLLMClient
+                                    LLMClient (OpenAI-compatible)
 ```
 
 - **`llmfit` → `placement`**: `ModelSpec.from_fit_row` reutiliza la memoria que
@@ -357,12 +368,14 @@ dependencias es la parte del diseño que conviene tener en la cabeza:
   cubrir entre todos. Es el punto exacto donde "no cabe aquí" se convierte en
   "cabe en la malla".
 - **`contrib` → `placement`**: el plan solo lee cifras **admitidas** (firmadas,
-  ligadas a un reto, encadenadas) y solo reparte a pares **observados vivos** con
-  crédito. La admisión va antes que la topología: no hay nada que repartir si
-  no hay nada admitido.
+  ligadas a un reto, encadenadas) y solo reparte a pares **observados vivos que
+  ofrezcan VRAM** (la puerta de proveedores). La admisión va antes que la
+  topología: no hay nada que repartir si no hay nada admitido.
 - **`placement` → `LLMClient`**: el plan termina en un endpoint
-  OpenAI-compatible (el de MeshLLM por defecto) y, si el pipeline debe medir ese
-  consumo, en un `MeteredLLMClient` que lo paga con crédito del par.
+  OpenAI-compatible (el de MeshLLM por defecto). El plan no cobra nada por sí
+  mismo: el pago entre pares va por la cadena (`tiers` fija el precio, `x402`
+  verifica el pago, `anchor` demuestra la inferencia), y lo que vuelve a
+  `contrib` es el historial que alimenta a `reputation`.
 - **`C` sigue siendo de DeLM**: la malla cambia *dónde* se ejecuta el modelo,
   no *qué* se comparte entre agentes. Un `MeshPipeline` publica por la malla el
   mismo gist verificado que un `DelmPipeline` publicaría en local.

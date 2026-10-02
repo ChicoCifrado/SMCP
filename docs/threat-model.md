@@ -144,7 +144,7 @@ pares (`peer_id` ↔ cert); (iv) la **disponibilidad** del canal de gossip.
 ### El intercambio de la malla (`contrib.py`, `placement.py`) — fuera de capa
 
 Esta es la superficie que convierte la malla en un **intercambio**: los nodos
-aportan VRAM y reciben crédito de inferencia. Es la única parte del proyecto con
+aportan VRAM verificada y sirven inferencia por satoshis. Es la única parte del proyecto con
 un *adversario económico* (mentir sale rentable), así que su no-garantía central
 —que la capacidad declarada sea cierta— es la primera línea del documento.
 
@@ -163,11 +163,11 @@ un *adversario económico* (mentir sale rentable), así que su no-garantía cent
   - **No es replayable**: la malla emite un reto de un solo uso
     (`Challenge.nonce`) y admitir un informe **quema** el nonce; además reto e
     informe caducan. Reenviar el "tengo 64G" de ayer no vale.
-  - **`peer_id` es su clave, no una etiqueta**: la primera clave vista para un
+    `peer_id` es su clave, no una etiqueta: la primera clave vista para un
     `peer_id` queda ligada a él para siempre; otro informe del mismo nombre
     firmado por otra clave se rechaza (`peer_key_changed`) y no se roba el
-    crédito ya acumulado. Sin esta regla, editar el fichero de identidad local
-    sería robar el saldo de otro.
+    historial ya acumulado. Sin esta regla, editar el fichero de identidad local
+    sería suplantar el ranking de otro.
   - **La contabilidad es auditable y los rechazos también**: cada admisión —
     incluida cada **rechazo**, con su motivo— entra en una cadena de hashes
     (`verify_chain`) que sobrevive a un save/load; alterar una entrada previa
@@ -207,11 +207,12 @@ un *adversario económico* (mentir sale rentable), así que su no-garantía cent
     una decisión de política económica que este proyecto no toma**: no hay
     depósito que confiscar ni reputación que perder. Es la pieza
     siguiente, no una forgetting.
-  - **La observación es del entorno, no delClaim**: `observe` acredita lo que el
-    *observador* vio. Un clockskew, un reloj que salta o un heartbeat
-    falsificado (por un par que ya controla la máquina) inflan o vacían el
-    saldo. El heartbeat de la Capa 3 sigue siendo detección de caída, no de
-    compromiso.
+  - **La observación es del entorno, no del claim**: `observe` anota lo que el
+    *observador* vio, y eso es todo lo que mueve (uptime, procedencia). Un
+    clockskew, un reloj que salta o un heartbeat falsificado (por un par que ya
+    controla la máquina) inflan o vacían esa cifra de procedencia — pero no el
+    historial, que solo mueve una inferencia anclada. El heartbeat de la Capa 3
+    sigue siendo detección de caída, no de compromiso.
   - **El intercambio no se propaga por la red todavía**: la cadena de
     contribuciones es local al estado de cada vista. Dos vistas de la misma red
     pueden llevar contabilidad distinta hasta que exista el datagrama que la
@@ -518,13 +519,14 @@ número y lo tome por una medición verificada.
     `@dataclass` en memoria; `aggregate()` es una vista, y perder el proceso
     pierde las métricas. No es un log de auditoría (para eso está el ledger).
   - **El endpoint al que se cobra es responsabilidad de quien lo opera.**
-    `MeteredLLMClient` debita el crédito **antes** del `await` — es lo que
-    impide que un par sin crédito gaste GPU ajena — así que una inferencia
-    que falla (timeout, 404, modelo no cargado) **también se cobra**. El
-    sistema no reembolsa: `served` cuenta lo que se recibió, `failed` lo que
-    se cobró sin recibir, y `served + failed` es lo que se facturó. La
-    discrepancia es responsabilidad del nodo que opera el endpoint, y solo él
-    puede resolverla (reintentar, o dejar la petición sin cobrar).
+    Ya no hay cliente medido: el pago va por la cadena y el ancla
+    registra el importe que el nodo **declara** (`satoshis`, firmado),
+    verificado contra la inclusión pero **no contra el pago** — el grafo
+    demuestra que alguien pidió, no que pagara (ver A10). Una inferencia
+    que falla (timeout, 404, modelo no cargado) igual queda en el
+    historial si su ancla verifica: la discrepancia entre "servido" y
+    "anclado" es responsabilidad del nodo que opera el endpoint, y solo
+    él puede resolverla (reintentar, o no anclar la petición).
   - **La interacción RSI ↔ HCI no está verificada.** Aunque mañana se conecten
     (una regla retenida → una medida), el gate de retención sigue siendo
     *consistencia de la evidencia* (`RuleVerifier`), no "la mejora funcionó":
@@ -774,13 +776,17 @@ en CI sin red ni modelo:
   pipeline, los no-ops honestos, **el contrato de firmas de los overrides contra
   `acp.Agent`**, y el smoke stdio slow) → `test_serve.py`;
 - intercambio (reto de un solo uso y caducidad, firma que ata los números,
-  `peer_id` ligado a su clave, cadena con rechazos persistentes, crédito por
-  uptime observado, gasto que se niega, metered client) →
-  `test_contrib.py`, y la cadena completa de la tesis
-  (contribuir → crédito → plan → cobro) → `test_exchange_thesis.py`;
-- reparto (rechazo accionable, capacidad no admitida o sin crédito excluida,
-  exclusividad del greedy, suma exacta de stages, capas que teselan
-  `[0, n-1]`, determinismo, replay) → `test_placement.py`;
+  `peer_id` ligado a su clave, cadena con rechazos persistentes, y el
+  historial: solo cuenta una inferencia con txid, la misma transacción no
+  cuenta dos veces, un nodo sin VRAM ofrecida no cuenta, y `observe` no
+  acredita nada) → `test_contrib.py`; el ranking (orden por inferencias,
+  satoshis en su columna, board verificado contra cabecera) →
+  `test_reputation.py`; y la cadena completa de la tesis (publicar capacidad
+  firmada → plan → inferencia real → ancla que verifica → historial) →
+  `test_exchange_thesis.py`;
+- reparto (rechazo accionable, capacidad no admitida o sin VRAM
+  ofrecida excluida, exclusividad del greedy, suma exacta de stages,
+  capas que teselan `[0, n-1]`, determinismo, replay) → `test_placement.py`;
 - que la CLI y la web sean la misma malla, y que el plan no crece sobre
   capacidad manipulada → `test_api_mesh.py`, `test_mesh_cli.py`;
 - dimensionado por hardware y su veredicto → `test_llmfit.py`, `test_api_fit.py`;
@@ -837,7 +843,7 @@ Para tenerla a mano — el threat model en una línea por punto:
   ranking de otro sin gastar; para cerrarlo haría falta que el solicitante
   también publicara algo (un output, una firma) en su propia transacción.
 - La **observación del uptime es del entorno**: un reloj desincronizado o un
-  heartbeat falsificado mueven el saldo de crédito.
+  heartbeat falsificado mueven el uptime observado (procedencia, no historial).
 
 
 ### El ancla de inferencias (`anchor.py`) — una transaccion por inferencia, sin contenido

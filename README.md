@@ -605,7 +605,7 @@ Equivale a `python -m pytest` (los `addopts` por defecto son `-m 'not slow'`).
 `delm test --slow` añade `-m slow`, que **pisa** el `-m 'not slow'` de los
 addopts (pytest aplica el último `-m`).
 
-El suite está repartido en treinta y ocho archivos, todos deterministas:
+El suite está repartido en sesenta archivos, todos deterministas:
 
 - `test_delm.py` — el núcleo: cola, contexto, admisión, despliegue, pipeline.
 - `test_security.py` — Capas 1+2: digest, firma, gate, ledger, y que el pipeline
@@ -1128,9 +1128,20 @@ delm/
     hci.py             Headroom-Closed Index             (métrica de mejora)
     rsi.py             RSILoop + Successor               (loop RSI L1)
     llmfit.py          LlmfitRunner + FitReport/veredicto (dimensionar el modelo local)
-    contrib.py         Challenge/CapacityReport + ContributionLedger
-    reputation.py      ReputationBoard: el ranking de inferencias servidas
-    placement.py       ModelSpec/Stage/PlacementPlan (reparto entre nodos)
+     contrib.py         Challenge/CapacityReport + ContributionLedger
+     reputation.py      ReputationBoard: el ranking de inferencias servidas
+     tiers.py           los tres precios (satoshis) y donde encaja x402
+     x402.py            verificador de challenge/proof, offline y sin estado
+     anchor.py          una tx por inferencia, sin hashear el contenido
+     membership.py      membresia anclada en BSV, verificada por el grafo
+     reservation.py     reserva atomica de VRAM dedicada (tier de pago unico)
+     reservation_ipc.py el cerrojo entre procesos de la reserva
+     wiring.py          el camino de admision que une reserva y ledger
+     capability.py      lo que un nodo dice que puede, y con que prueba
+     telemetry.py       la evidencia de que lo esta haciendo
+     roster.py          membresia explicita por avales firmados
+     backend.py         que expone un nodo, por descubrimiento y con firma
+     placement.py       ModelSpec/Stage/PlacementPlan (reparto entre nodos)
     bsv_keys.py        ECDSA-secp256k1 (la firma que ancla a BSV)
     timechain.py       el reloj del nodo: qué publicó, reenvía y no ha probado
     spv.py             la wallet del nodo: maestro, derivación BRC-42 y dirección
@@ -1142,7 +1153,7 @@ delm/
     run_taint_demo.py      demo Capa 5
     run_multihost_demo.py  demo multi-host (QUIC / Nostr)
     run_rsi_demo.py        demo RSI L1 (mide HCI)
-  tests/   (38 archivos — ver lista arriba)
+  tests/   (60 archivos — ver lista arriba)
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa
