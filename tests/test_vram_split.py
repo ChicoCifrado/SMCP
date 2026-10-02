@@ -3,9 +3,8 @@ mesh is using.
 
 Before this, one field did three incompatible jobs. A node's physical maximum
 was also its offer to the mesh and also what placement planned against, so
-inflating the claim bought more routing *and* proportionally more credit
-(``credits_per_gib_hour`` scaled by the same number). The tests below pin the
-separation. They are mostly hostile: the interesting cases are the ones where
+inflating the claim bought more routing *and*, antes, proporcionalmente mas
+credito. Los tests fijan la separacion en los dos ejes que quedan. They are mostly hostile: the interesting cases are the ones where
 a node lies about itself, because that is what the split has to survive.
 """
 
@@ -22,7 +21,6 @@ from delm.core.contrib import (
     CapacityReport,
     ContribReject,
     ContributionLedger,
-    ExchangePolicy,
     PeerContribution,
     capacity_claim_status,
     capacity_is_intact,
@@ -237,36 +235,74 @@ def test_offering_a_share_is_allowed():
     assert led.peers["local"].vram_available_gb == 1.0
 
 
-# ---------------------------------------------------------------- economics
-def test_credit_follows_the_offer_not_the_hardware():
-    """The inflation fix, stated as an economic assertion.
+# ------------------------------------------------------- reputation: la oferta
+# Antes estos tres tests afirmaban que el credito seguía a la oferta y no al
+# hardware, porque `accrual` multiplicaba por `vram_advertised_gb`. Ese
+# multiplicador ya no existe (se elimino con la moneda interna), pero el
+# argumento sigue vivo y de otra forma: **el historial solo lo generan nodos que
+# ofrecen capacidad**, y la oferta es la que cuenta, no el maximo fisico.
 
-    A node with a 24 GiB card offering 4 GiB earns for 4 GiB. Paying the 24
-    would mean the mesh pays for hardware it was never allowed to use.
+def _ledger_with(peer_id: str, vram_gb: float, advertised_gb: float,
+                 key=None) -> ContributionLedger:
+    from delm.core.provenance import KeyPair
+
+    led = ContributionLedger("malla-test")
+    key = key or KeyPair.new(peer_id)
+    ch = led.issue_challenge(peer_id, now=1000.0)
+    rep = CapacityReport(mesh_id="malla-test", peer_id=peer_id,
+                         vram_gb=vram_gb, vram_advertised_gb=advertised_gb,
+                         ram_gb=32.0, cpu_cores=8, nonce=ch.nonce,
+                         issued_at=1000.0, expires_at=1000.0 + 600).sign(key)
+    assert led.admit(rep, now=1000.0)[0]
+    led.observe(peer_id, 1000.0, dt_s=3600)
+    return led
+
+
+def test_a_node_that_offers_nothing_earns_no_history():
+    """24 GiB en la caja y 0 ofrecidos a la malla = consumidor.
+
+    Es el caso de un nodo en el nivel de pago por uso: esta en la malla, pero
+    no ofrece nada a cambio. Su historial se queda a cero, porque el ranking
+    debe mostrar quien **sirve**.
     """
-    pol = ExchangePolicy(credits_per_gib_hour=1.0)
-    big_offer = PeerContribution(peer_id="a", vram_gb=24.0,
-                                 vram_advertised_gb=4.0)
-    small_offer = PeerContribution(peer_id="b", vram_gb=24.0,
-                                   vram_advertised_gb=24.0)
-    c1 = pol.accrual(big_offer, 3600.0)
-    c2 = pol.accrual(small_offer, 3600.0)
-    assert c1 == pytest.approx(4.0)
-    assert c2 == pytest.approx(24.0)
-    assert c1 < c2
+    led = _ledger_with("a", vram_gb=24.0, advertised_gb=0.0)
+    ok, reason = led.record_inference("a", txid="ab" * 32, satoshis=100)
+    assert (ok, reason) == (False, "not_a_provider")
+    assert led.peers["a"].inferences_served == 0
 
 
-def test_a_node_that_offers_nothing_earns_nothing():
-    pol = ExchangePolicy()
-    p = PeerContribution(peer_id="a", vram_gb=24.0, vram_advertised_gb=0.0)
-    assert pol.accrual(p, 3600.0) == 0.0
+def test_the_offer_not_the_hardware_decides_who_is_a_provider():
+    """La mitad fisica no hace a nadie proveedor; la oferta si.
+
+    Un nodo con 24 GiB que ofrece 4 GiB es proveedor (y con razon: es lo que
+    esta dispuesto a compartir). El planning ya se apoyaba en `available`
+    (= oferta menos lo compartido); ahora tambien la reputacion.
+    """
+    led = _ledger_with("a", vram_gb=24.0, advertised_gb=4.0)
+    assert led.record_inference("a", txid="cd" * 32, satoshis=100)[0] is True
+    peer = led.peers["a"]
+    assert peer.vram_gb == 24.0 and peer.vram_advertised_gb == 4.0
+    assert peer.inferences_served == 1
 
 
-def test_halving_the_offer_halves_the_credit():
-    pol = ExchangePolicy(credits_per_gib_hour=1.0)
-    full = PeerContribution(peer_id="a", vram_gb=8.0, vram_advertised_gb=8.0)
-    half = PeerContribution(peer_id="b", vram_gb=8.0, vram_advertised_gb=4.0)
-    assert pol.accrual(half, 7200.0) == pytest.approx(pol.accrual(full, 3600.0))
+def test_an_inflated_claim_no_longer_buys_anything_extra():
+    """La inflacion ya no compra: ni routing, ni historial, ni ingresos.
+
+    Con el credito proportional era el bug con mas recorrido — declararse mas
+    grande rendia proporcionalmente mas—. Ahora no queda nada que
+    multiplicar: la reputacion cuenta inferencias, y esas no dependen de
+    cuanto hardware se anuncie.
+    """
+    modesto = _ledger_with("a", vram_gb=8.0, advertised_gb=8.0)
+    inflado = _ledger_with("b", vram_gb=64.0, advertised_gb=64.0)
+    for led, tx in ((modesto, "aa" * 32), (inflado, "bb" * 32)):
+        assert led.record_inference(led.peers and next(iter(led.peers)),
+                                    txid=tx, satoshis=100)[0] is True
+    # Mismo numero de inferencias sirve igual a los dos; lo que differ es lo
+    # que el plan puede colocar encima, y eso lo limita el advertised, que ya
+    # esta acotado por la firma.
+    assert modesto.peers["a"].inferences_served == \
+        inflado.peers["b"].inferences_served == 1
 
 
 # ------------------------------------------------------------------- totals
@@ -462,7 +498,7 @@ def test_planning_never_uses_the_physical_headline():
     led.observe("local", now, dt_s=3600.0)
 
     spec = ModelSpec(name="grande", memory_required_gb=20.0)
-    plan = plan_placement(spec, led, policy=ExchangePolicy(), reserve_gb=0.0)
+    plan = plan_placement(spec, led, reserve_gb=0.0)
     if plan.ok and plan.stages:
         for stage in plan.stages:
             assert stage.memory_gb <= stage.peer_vram_available_gb + 1e-9, \

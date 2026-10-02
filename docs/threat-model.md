@@ -48,9 +48,10 @@ un threat model que solo dice "esto es seguro" es peor que ninguno.
 | A3 | **Fuente envenenada** (documento malicioso que un agente lee) | Solo controla el texto que entra | Que un agente siga sus instrucciones (prompt-injection) | 5 (detector + taint + cuarentena) |
 | A4 | **Fuente envenenada con linaje limpio** (A3, pero el gist derivado lo "lava") | Escribe un gist que parece legítimo pero viene del texto envenenado | Propagar la inyección bajo otras etiquetas | 5 (cierre transitivo del taint) |
 | A5 | **Relay/transport jamming** (saturación, spam) | Controla o afloja la ruta de announce/gossip | Inundar el canal, agotar recursos | 4 (guardia de relay: rate-limit/dedup/tamaño) |
-| A6 | **Nodo que miente sobre su capacidad** (el adversario con incentivo económico) | Es un par legítimo y posee su clave | Declarar más VRAM de la que tiene: inflar su crédito y que se le coloque modelo ajeno | Parcial. La firma solo prueba **quién** afirmó, no **cuánto** (§2, intercambio). Ahora la cifra se parte en tres, y dos de ellas no dependen de que el nodo diga la verdad: `vram_gb` es el máximo físico, `vram_advertised_gb` lo que el dueño **ofrece** (su decisión, firmada y anclada), y `vram_shared_gb` es la telemetría de uso. El plan se calcula sobre `min(ofrecida, física) − usada`, nunca sobre la cifra de cabecera, así que **inflar deja de comprar enrutamiento**. El crédito escala con lo *ofrecido*, no con el hardware: ya no multiplica el pago. Ofrecer más de lo declarado es `capacity_overstated`, fail-closed y encadenado en el hash-chain, así que el intento queda contado y el dueño recibe un motivo con nombre. `capacity_claim_status` cruza la afirmación firmada con la detección local y señala `claim_exceeds_detected` **sin corregir**: detección y afirmación vienen del mismo host por el mismo canal sin autenticar, así que ninguna es evidencia y una corrección por detección expulsaría a un nodo real ante un fallo de `nvidia-smi`. **Lo que sigue sin resolver**: la capacidad sigue siendo una afirmación firmada. Quien quiera inflar de forma consistente solo tiene que mentir igualmente en su detección local, y eso exige un testigo externo ( attestation de hardware o un tercero). **Sin slashing**: detectar la contradicción es trivial; sancionarla no está implementado |
+| A6 | **Nodo que miente sobre su capacidad** (el adversario con incentivo económico) | Es un par legítimo y posee su clave | Declarar más VRAM de la que tiene: que se le coloque modelo ajeno y aparentar más historial del que tiene | Parcial. La firma solo prueba **quién** afirmó, no **cuánto** (§2, intercambio). La cifra se parte en tres, y dos no dependen de que el nodo diga la verdad: `vram_gb` es el máximo físico, `vram_advertised_gb` lo que el dueño **ofrece** (su decisión, firmada) y `vram_shared_gb` es la telemetría de uso. El plan se calcula sobre `min(ofrecida, física) − usada`, nunca sobre la cifra de cabecera, así que **inflar deja de comprar enrutamiento**. Y el historial ya **no** escala con nada que el nodo declare: cuenta inferencias, y cada una necesita una transacción incluida. Ofrecer más de lo declarado es `capacity_overstated`, fail-closed y encadenado. `capacity_claim_status` cruza la afirmación firmada con la detección local y señala `claim_exceeds_detected` **sin corregir**: detección y afirmación vienen del mismo host por el mismo canal sin autenticar, así que ninguna es evidencia y una corrección por detección expulsaría a un nodo real ante un fallo de `nvidia-smi`. **Lo que sigue sin resolver**: la capacidad sigue siendo una afirmación firmada. Quien quiera inflar de forma consistente solo tiene que mentir igualmente en su detección local, y eso exige un testigo externo ( attestation de hardware o un tercero). **Sin slashing**: detectar la contradicción es trivial; sancionarla no está implementado |
 | A7 | **Replay de una afirmación antigua** | Capturó un informe de capacidad válido de otro momento | Reclamar capacidad/inferencia con un informe viejo | intercambio: nonce de un solo uso (se quema al admitir), reto e informe caducan, `peer_id` no se re-apunta a otra clave |
-| A8 | **Quien lee la clave de identidad del nodo** | Acceso de lectura a `config/mesh_identity.json` (o al fichero equivalente en el exchange de BSV) | Firmar como ese nodo y reclamar su capacidad y su crédito | nada criptográfico lo frena (es la clave); sí lo marca el diseño: `chmod 600`, se **rechaza persistir una clave HMAC**, y el binding de identidad hace que suplantarla sea visible en la cadena |
+| A8 | **Quien lee la clave de identidad del nodo** | Acceso de lectura a `config/mesh_identity.json` (o al fichero equivalente en el exchange de BSV) | Firmar como ese nodo: reclamar su capacidad y su lugar en el ranking | nada criptográfico lo frena (es la clave); sí lo marca el diseño: `chmod 600`, se **rechaza persistir una clave HMAC**, y el binding de identidad hace que suplantarla sea visible en la cadena |
+| A10 | **Nodo que se infla el historial con inferencia local** | Es un par legítimo, publica capacidad y ejecuta inferencias | Contar inferencias que **nadie pidió**: el ranking es su única recompensa y subir de puesto no cuesta si nadie te lo comprueba | el ancla exige `requester_pubkey` distinto del nodo y **no se construye** en autoacreditación (§2, intercambio); el mismo txid no cuenta dos veces. **Lo que sigue abierto**: el solicitante tampoco está atado a una transacción —el grafo demuestra que *alguien* pidió, no que pagara—, así que un par coludido podría inflar el ranking de otro sin gastar. El **importe** del ancla sí está firmado (`test_a_tampered_amount_invalidates_the_signature`), lo que fija la atribución pero no prueba el pago |
 | A9 | **Reemplazo en mempool** (Fase 1 del anclaje) | Ha visto la transacción del nodo antes de que se mine | Sustituirla por otra con el mismo input y un alias distinto, y reescribir la historia | `timechain.rebroadcast()` (mientras no esté confirmada) + la cadena, que es el tercero de confianza |
 
 Activos: (i) el **contexto compartido** `C`; (ii) la **cadena de
@@ -147,8 +148,9 @@ aportan VRAM y reciben crédito de inferencia. Es la única parte del proyecto c
 un *adversario económico* (mentir sale rentable), así que su no-garantía central
 —que la capacidad declarada sea cierta— es la primera línea del documento.
 
-- **Adversario**: A6 (**nodo que miente sobre su capacidad**), A1 (par que
-  quiere crédito sin aportar), A7 (replay de una afirmación antigua).
+- **Adversario**: A6 (**nodo que miente sobre su capacidad**), A10
+  (**nodo que se infla el historial con inferencia local**), A1 (par que quiere
+  servicio sin aportar), A7 (replay de una afirmación antigua).
 - **Supuestos**: el reloj del observador es aproximadamente honesto; la clave
   ed25519 de un nodo no se la roban (si se la roban, roban su identidad); el
   estado de la malla (`config/mesh_exchange.json`) es local y por tanto está en
@@ -171,13 +173,21 @@ un *adversario económico* (mentir sale rentable), así que su no-garantía cent
     (`verify_chain`) que sobrevive a un save/load; alterar una entrada previa
     rompe la cadena. Un rechazo que no se registrara sería indistinguible de un
     intento que nunca ocurrió.
-  - **El crédito se gana con *uptime observado*, no con declaraciones**: el
-    único camino al crédito es `observe`, y el saldo no se acredita mientras el
-    nodo no está vivo (`require_alive_to_spend`). Un nodo que desaparece
-    forfeita el crédito y la inferencia en el acto.
-  - **La inferencia se paga, no se regala**: `MeteredLLMClient` niego el
-    servicio con `PermissionError` cuando el saldo no cubre, y nunca deja la
-    cuenta en negativo.
+  - **El historial solo crece con prueba de cadena**: el único camino es
+    `record_inference`, que exige un txid, no admite dos veces la misma
+    transacción, y rechaza a quien no ofrece VRAM. **No hay saldo** que gastar,
+    transferir ni prometer: `ContributionLedger` no tiene método de cobro, y
+    `tests/test_contrib.py::test_history_is_not_a_balance` lo fija por ausencia
+    de API para que reintroducirlo no pase desapercibido.
+  - **Una inferencia local no se ancla**: el `AnchorRecord` lleva el
+    solicitante (`requester_pubkey`, formato v2) y **se niega a construirse** si
+    es el propio nodo. Ejecutar inferencia contra uno mismo —lo más barato y lo
+    más fácil de multiplicar— no deja registro, así que el ranking no se puede
+    inflar sin salir a la red. Y como el solicitante está en el payload firmado,
+    reescribirlo después invalida la firma.
+  - **Estar vivo no cuenta para nada**: `observe` anota uptime (procedencia) y
+    no acredita. Antes sí lo hacía (VRAM × horas), que era un incentivo a no
+    hacer nada.
   - **El reparto solo usa capacidad admitida**: `plan_placement` lee los números
     ya admitidos, nunca un announce, y rechaza con un motivo accionable
     (`insufficient_mesh_vram` dice *cuánta* VRAM falta). El plan es
@@ -816,8 +826,16 @@ Para tenerla a mano — el threat model en una línea por punto:
 - La **capacidad de un nodo es una afirmación firmada, no una medición**: no hay
   atestación de hardware, así que un nodo puede mentir sobre su VRAM. Lo que se
   garantiza es que la mentira queda atribuida, encadenada y sin poder
-  disfrazarse de otro `peer_id` ni sobrevivir a la desconexión. **No hay
-  slashing**: detectarla es fácil, sancionarla no está implementado.
+  disfrazarse de otro `peer_id`. **No hay slashing**: detectarla es fácil,
+  sancionarla no está implementado.
+- El **ranking es historial, no un saldo**, y no se puede gastar ni transferir:
+  eso lo hace immune a la mayoría de los sueños de economía interna (emitir,
+  prestarse, prometer), pero no lo hace verificable por sí solo — depende de
+  que las anclas verifican contra una cabecera.
+- El **solicitante de una inferencia no está atado a un pago**: la cadena
+  demuestra que alguien pidió, no que pagara. Un par coludido podría inflar el
+  ranking de otro sin gastar; para cerrarlo haría falta que el solicitante
+  también publicara algo (un output, una firma) en su propia transacción.
 - La **observación del uptime es del entorno**: un reloj desincronizado o un
   heartbeat falsificado mueven el saldo de crédito.
 

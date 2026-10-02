@@ -1,9 +1,9 @@
-"""The mesh exchange: verified VRAM in, free inference out.
+"""The mesh exchange: verified VRAM in, satoshis for serving out.
 
 This module is the *economic* layer of SMCP: the part that makes "share your
-VRAM, get free inference" a verifiable protocol instead of a promise. It has
-three pieces, all deterministic and in-memory (persistence is opt-in, like
-:mod:`delm.core.ledger`):
+VRAM, earn for serving the mesh" a verifiable protocol instead of a promise.
+It has two pieces, both deterministic and in-memory (persistence is opt-in,
+like :mod:`delm.core.ledger`):
 
 * :class:`Challenge` / :class:`CapacityReport` — how a node states what it
   contributes. The mesh issues a nonce; the node answers with a report **signed
@@ -13,9 +13,20 @@ three pieces, all deterministic and in-memory (persistence is opt-in, like
   report is admitted or refused with a machine reason, and admissions are
   appended to a **hash chain** (:meth:`ContributionLedger.verify_chain`), so
   "who contributed what, and when" is replayable and tamper-evident.
-* :class:`ExchangePolicy` — the exchange rate and the meter. Credit accrues
-  from *verified* capacity **only while the node is observed alive**
-  (:meth:`ContributionLedger.observe`), and inference spends it.
+
+There is deliberately **no currency here**. The only money is the satoshi, and
+it moves on the chain (:mod:`delm.core.tiers` prices what a seat or an
+inference costs, :mod:`delm.core.anchor` proves that an inference happened).
+An earlier version of this module carried its own unit — a float "credit"
+that a node accrued per GiB per hour and spent per request. It was removed,
+and the reason is worth keeping: **a node that earns by existing has no reason
+to serve anyone.** VRAM x time rewarded a 16-GiB box for sitting still, which is
+exactly backwards from "a cambio reciben acceso a inferencia" and an invitation
+to run a fleet of idle machines on somebody else's tab. What is left where the
+balance was is a **counter** (:attr:`PeerContribution.inferences_served`): how
+many network requests this node has actually served, evidenced by an anchor.
+It is reputation — something a node shows the others — and it cannot be spent,
+transferred, or bought.
 
 What this does and does not prove
 ---------------------------------
@@ -24,27 +35,20 @@ What this does and does not prove
 replayed — the nonce is single-use, both challenge and report expire, and a
 ``peer_id`` is permanently bound to the key first seen for it
 (:attr:`ContribReject.PEER_KEY_CHANGED`), so a name cannot be re-pointed at a
-new key to inherit someone else's credits;
+new key to inherit another node's standing;
 (2) the accounting is auditable — hash-chained, and refusing a claim is
-recorded with a reason, not silently dropped; (3) credit accrues only during
-*observed* uptime, so a node that disappears stops earning immediately rather
-than banking credit it never delivered.
+recorded with a reason, not silently dropped.
 
 **Does not:** prove the claim is *true*. There is no hardware attestation here
 — no TPM, no SGX, no measured boot. A node can lie about its VRAM, exactly as
 :mod:`delm.core.requirements` already states for build provenance ("proves the
 binary was published by a trusted signer, not that the remote process was not
-modified"). What honesty buys is therefore **bounded, not absolute**: a liar can
-inflate its own credit, but it inflates it against a ledger anyone can audit,
-it cannot mint credit for a peer it does not control, it cannot replay a stale
-claim, and it forfeits everything the moment it stops being observed. Slashing
-/ staking — the economic answer to a caught liar — is explicitly out of scope
-(YAGNI), and this module says so rather than pretending otherwise.
-
-The reason this is worth building anyway: the alternative is a mesh where
-capacity is a self-reported string. Here it is a signed, expiring, auditable
-claim, and every downstream decision (placement, entitlement) reads only
-*admitted* numbers — so the trust model is legible instead of implicit.
+modified"). What honesty buys is therefore **bounded, not absolute**: the lie is
+attributable and auditable, it cannot be replayed, and it cannot be cashed —
+because the satoshis only move if :mod:`delm.core.anchor` verifies an
+inclusion proof. Slashing is explicitly out of scope (YAGNI); the mechanism
+that makes lying expensive is that earning requires a transaction on the chain,
+which costs a fee to produce and nothing at all to fake.
 """
 
 from __future__ import annotations
@@ -67,8 +71,6 @@ __all__ = [
     "ContributionRecord",
     "PeerContribution",
     "ContributionLedger",
-    "ExchangePolicy",
-    "MeteredLLMClient",
     "capacity_is_intact",
     "capacity_claim_status",
     "default_state_path",
@@ -81,7 +83,7 @@ EXCHANGE_FORMAT_VERSION = 1
 
 #: Floor on what a node may offer to be useful at all. A node with less than
 #: this is admitted (the ledger does not judge usefulness) but is never picked
-#: by placement, and never earns credit for a stage it cannot hold.
+#: by placement, and never appears in the ranking for a stage it cannot hold.
 MIN_USABLE_VRAM_GB = 0.5
 
 #: Where the exchange state and this node's signing key live by default. The
@@ -138,10 +140,18 @@ class ContribReject(str, Enum):
     #: the report is refused and the attempt is recorded, so the mesh never
     #: plans against it and the owner finds out from a named reason.
     CAPACITY_OVERSTATED = "capacity_overstated"
-    # -- spend side
+    # -- reputation side (contar inferencias servidas, no acreditar saldo)
     UNKNOWN_PEER = "unknown_peer"
-    INSUFFICIENT_CREDIT = "insufficient_credit"
-    PEER_NOT_OBSERVED = "peer_not_observed"
+    #: la inferencia no trae ancla verificada: no cuenta. Es el caso normal
+    #: mientras la cadena no este en uso, y por eso no es un error de la
+    #: aplicacion sino un estado del contador.
+    NO_ANCHOR = "no_anchor"
+    #: el nodo no publica VRAM a la malla, asi que no es proveedor y no
+    #: acumula historial de servicio. Es la linea que separa "cliente de la
+    #: malla" de "proveedor" (ver :mod:`delm.core.tiers`).
+    NOT_A_PROVIDER = "not_a_provider"
+    #: el solicitante es el propio nodo: inferencia local, que no cuenta.
+    SELF_REQUESTED = "self_requested"
 
 
 def _canon(obj: Any) -> bytes:
@@ -456,8 +466,15 @@ class PeerContribution:
     admitted_at: float = 0.0
     last_seen: float = 0.0
     seconds_observed: float = 0.0
-    credits: float = 0.0
-    credits_spent: float = 0.0
+    #: Inferencias **de la red** verificadas que este nodo ha servido. Es un
+    #: contador de historial, no un saldo: no se gasta, no se transfiere y no
+    #: compra nada. Es lo que un nodo muestra al resto para que sepa cuanto ha
+    #: servido, y en que orden relativo al de los demas.
+    inferences_served: int = 0
+    #: Satoshis acumulados por esas inferencias. Tampoco es un saldo: es la
+    #: cifra que el grafo ya muestra, guardada aqui para que el ranking no tenga
+    #: que ir a la cadena cada vez que se consulta.
+    satoshis_earned: int = 0
     reports: int = 0
     rejections: int = 0
     #: digest of the signed report these numbers were admitted from
@@ -498,10 +515,6 @@ class PeerContribution:
                    - self.vram_shared_gb)
 
     @property
-    def credits_available(self) -> float:
-        return max(0.0, self.credits - self.credits_spent)
-
-    @property
     def alive(self) -> bool:
         """Alive means *observed* since admission (last_seen set)."""
         return self.last_seen > 0.0
@@ -515,9 +528,9 @@ class PeerContribution:
                 "public_key": self.public_key.hex(), "sig_kind": self.sig_kind,
                 "admitted_at": self.admitted_at, "last_seen": self.last_seen,
                 "seconds_observed": self.seconds_observed,
-                "credits": self.credits, "credits_spent": self.credits_spent,
+                "inferences_served": self.inferences_served,
+                "satoshis_earned": self.satoshis_earned,
                 "reports": self.reports, "rejections": self.rejections,
-                "credits_available": self.credits_available,
                 # El anchor de integridad DEBE viajar con el estado: sin el, un
                 # ledger re-escrito en disco (o copiado a otro host) perdería la
                 # capacidad admitida al releerla, que es la mitad de lo que
@@ -543,15 +556,15 @@ class PeerContribution:
                    admitted_at=float(d.get("admitted_at", 0.0) or 0.0),
                    last_seen=float(d.get("last_seen", 0.0) or 0.0),
                    seconds_observed=float(d.get("seconds_observed", 0.0) or 0.0),
-                   credits=float(d.get("credits", 0.0) or 0.0),
-                   credits_spent=float(d.get("credits_spent", 0.0) or 0.0),
+                   inferences_served=int(d.get("inferences_served", 0) or 0),
+                   satoshis_earned=int(d.get("satoshis_earned", 0) or 0),
                    reports=int(d.get("reports", 0) or 0),
                    rejections=int(d.get("rejections", 0) or 0),
                    admitted_digest=str(d.get("admitted_digest", "") or ""))
 
 
 class ContributionLedger:
-    """Admission + hash-chained audit trail + per-peer credit balances.
+    """Admission + hash-chained audit trail + per-peer standing.
 
     Deliberately synchronous and in-memory, like :class:`delm.core.ledger.
     AdmissionLedger`: the mesh can hold several of these (one per view of the
@@ -565,6 +578,10 @@ class ContributionLedger:
         self.peers: dict[str, PeerContribution] = {}
         self.challenges: dict[str, Challenge] = {}      # nonce -> challenge
         self.used_nonces: set[str] = set()
+        #: Anclas ya contadas. Una transaccion no se cuenta dos veces: la
+        #: cadena ya lo impide, pero un contador que admitiera un replay seria
+        #: la mentira mas barata que queda en el sistema.
+        self._counted_txids: set[str] = set()
 
     # -- chain ------------------------------------------------------------
     def _append(self, peer_id: str, digest: str, accepted: bool,
@@ -648,7 +665,7 @@ class ContributionLedger:
             # Identity binding: a `peer_id` is *its key*, not a free-form label.
             # Without this, editing the local identity file (or replaying a
             # report under someone else's name) silently re-binds the name to a
-            # new key, and every credit already earned would follow the new key.
+            # new key, and the standing already earned would follow the new key.
             if report.public_key != known.public_key:
                 return ContribReject.PEER_KEY_CHANGED
         if report.nonce in self.used_nonces:
@@ -677,14 +694,19 @@ class ContributionLedger:
         return ContribReject.OK
 
 
-    # -- liveness → credit ------------------------------------------------
+    # -- liveness ---------------------------------------------------------
     def observe(self, peer_id: str, now: float, *, dt_s: float = 0.0,
-                policy: "ExchangePolicy | None" = None) -> PeerContribution | None:
-        """Mark *peer_id* seen and accrue credit for the observed interval.
+                ) -> PeerContribution | None:
+        """Mark *peer_id* seen, and add to how long the mesh has watched it.
 
         ``dt_s`` is the elapsed time the *observer* vouches for (from the
-        heartbeat tick). Accrual is deliberately outside the ledger: it needs
-        the rate, and the rate is policy, not ledger state.
+        heartbeat tick). It feeds :attr:`PeerContribution.seconds_observed`,
+        which is provenance data — "how long has this peer been observable" —
+        and **nothing else**. It used to also accrue credit proportional to
+        VRAM x time, which meant a node earned by existing: a 16-GiB box
+        accumulated value without serving a single request. The only thing
+        that counts now is :meth:`record_inference`, and only a verified,
+        anchored one.
         """
         peer = self.peers.get(peer_id)
         if peer is None:
@@ -692,31 +714,48 @@ class ContributionLedger:
         peer.last_seen = now
         if dt_s > 0:
             peer.seconds_observed += dt_s
-            if policy is not None:
-                peer.credits += policy.accrual(peer, dt_s)
         return peer
 
-    # -- spend ------------------------------------------------------------
-    def spend(self, peer_id: str, units: float, *,
-              policy: "ExchangePolicy | None" = None,
-              require_alive: bool = True) -> tuple[bool, str]:
-        """Debit *units* of credit for *peer_id*'s inference.
+    # -- reputation -------------------------------------------------------
+    def record_inference(self, peer_id: str, *, txid: str,
+                         satoshis: int = 0) -> tuple[bool, str]:
+        """Count one **verified** network inference toward *peer_id*'s standing.
 
-        Refuses rather than going negative: the whole point of the exchange is
-        that free inference is *earned*, so a peer with no credit simply does
-        not get it. ``policy`` lets the caller require the peer to be
-        currently observed (``PEER_NOT_OBSERVED``) — the default, because
-        letting a departed node keep spending is a hole.
+        The only way a node's number goes up. Three things have to hold, and
+        they are checked in the order that costs the attacker least:
+
+        1. the peer exists and **offers VRAM to the mesh**
+           (``NOT_A_PROVIDER``): the test is :attr:`vram_advertised_gb`, not
+           :attr:`vram_gb`. Having 16 GiB and offering none is the shape of a
+           *consumer*, which is what ``tiers`` says a node on the pay-per-use
+           seat is — and a ranking of who serves is worthless if consumers can
+           appear in it.
+        2. the record carries a **txid** (``NO_ANCHOR``): an unanchored claim
+           is a claim, and this is the counting rule, not the settlement one;
+        3. the same txid is not counted twice — the chain already forbids that,
+           and a counter that double-counts would be the cheapest lie left in
+           the system.
+
+        The satoshis are recorded too, but they are *history*: the balance is on
+        the chain, and this is only what the mesh saw pass by.
         """
         peer = self.peers.get(peer_id)
         if peer is None:
             return False, ContribReject.UNKNOWN_PEER.value
-        if require_alive and not peer.alive:
-            return False, ContribReject.PEER_NOT_OBSERVED.value
-        if policy is not None and not policy.can_spend(peer, units):
-            return False, ContribReject.INSUFFICIENT_CREDIT.value
-        peer.credits_spent += units
+        if peer.vram_advertised_gb <= 0:
+            return False, ContribReject.NOT_A_PROVIDER.value
+        if not txid:
+            return False, ContribReject.NO_ANCHOR.value
+        if txid in self._counted_txids:
+            return False, ContribReject.NO_ANCHOR.value
+        self._counted_txids.add(txid)
+        peer.inferences_served += 1
+        peer.satoshis_earned += max(0, int(satoshis))
         return True, ContribReject.OK.value
+
+    def counted_txids(self) -> tuple[str, ...]:
+        """The anchors already counted, so a replay is visible rather than hidden."""
+        return tuple(sorted(self._counted_txids))
 
     # -- views ------------------------------------------------------------
     def admitted_peers(self, *, observed_only: bool = False
@@ -752,10 +791,9 @@ class ContributionLedger:
         Cheap way for two observers to agree they are looking at the same
         ledger without shipping it.
         """
-        balances = {pid: round(p.credits_available, 6)
-                    for pid, p in sorted(self.peers.items())}
+        served = {pid: p.inferences_served for pid, p in sorted(self.peers.items())}
         head = self.records[-1].entry_hash if self.records else ""
-        return _digest({"head": head, "balances": balances,
+        return _digest({"head": head, "served": served,
                         "peers": {pid: [p.vram_gb, p.seconds_observed]
                                   for pid, p in sorted(self.peers.items())}})
 
@@ -770,6 +808,7 @@ class ContributionLedger:
             "challenges": [c.to_dict() for c in
                            sorted(self.challenges.values(), key=lambda c: c.nonce)],
             "used_nonces": sorted(self.used_nonces),
+            "counted_txids": sorted(self._counted_txids),
         }
 
     @classmethod
@@ -784,6 +823,7 @@ class ContributionLedger:
             ch = Challenge.from_dict(c)
             led.challenges[ch.nonce] = ch
         led.used_nonces = set(d.get("used_nonces", []))
+        led._counted_txids = set(d.get("counted_txids", []))
         return led
 
     def save(self, path: str) -> str:
@@ -804,146 +844,3 @@ class ContributionLedger:
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return (f"ContributionLedger(mesh_id={self.mesh_id!r}, "
                 f"peers={len(self.peers)}, records={len(self.records)})")
-
-
-# ------------------------------------------------------------------- policy
-@dataclass(frozen=True)
-class ExchangePolicy:
-    """The rate and the rules of the exchange.
-
-    * ``credits_per_gib_hour`` — how much credit a peer earns per GiB of
-      *admitted* VRAM per hour of *observed* uptime. The default makes one
-      8-GiB node earn 8 credits/hour, i.e. credits are directly proportional to
-      contributed VRAM, which is the honest shape for "share VRAM, get
-      inference".
-    * ``credits_per_request`` / ``credits_per_ktoken`` — what inference costs.
-      A request has a floor so a peer cannot spam sub-token calls for free.
-    * ``baseline_credits`` — a small welcome grant for every admitted peer, so
-      the exchange is usable before a peer has accrued anything. Set to 0.0 for
-      a strict "earn before you spend" mesh.
-    * ``require_alive_to_spend`` — a departed node loses access immediately
-      (default) rather than banking credit while offline.
-    """
-
-    credits_per_gib_hour: float = 1.0
-    credits_per_request: float = 0.5
-    credits_per_ktoken: float = 0.01
-    baseline_credits: float = 1.0
-    require_alive_to_spend: bool = True
-    max_credits_per_peer: float = 10_000.0
-
-    def accrual(self, peer: PeerContribution, dt_s: float) -> float:
-        """Credit earned by *peer* for ``dt_s`` seconds of observed uptime.
-
-        Scaled by **advertised** VRAM, not by the physical maximum. This is the
-        economic half of the split: a node with a 24 GiB card that offers 4 GiB
-        earns 4 credits/hour, not 24. Paying for hardware the mesh was not
-        allowed to use is how "share your GPU" turns into a free lunch.
-
-        The physical number still matters, and it matters more: a node that
-        raises its offer later needs the real thing to be there. But the *rate*
-        follows what was offered, because that is what the mesh could plan on.
-        """
-        if dt_s <= 0 or peer.vram_advertised_gb <= 0:
-            return 0.0
-        hours = dt_s / 3600.0
-        return min(self.max_credits_per_peer,
-                   peer.vram_advertised_gb * self.credits_per_gib_hour * hours)
-
-    def request_cost(self, *, tokens_in: int = 0, tokens_out: int = 0) -> float:
-        """What one completion costs: a floor plus a per-token rate."""
-        ktokens = (max(0, tokens_in) + max(0, tokens_out)) / 1000.0
-        return self.credits_per_request + self.credits_per_ktoken * ktokens
-
-    def entitlement(self, peer: PeerContribution) -> float:
-        """Free-inference allowance of *peer*: baseline + what it has earned."""
-        return round(self.baseline_credits + peer.credits_available, 6)
-
-    def can_spend(self, peer: PeerContribution, units: float) -> bool:
-        if self.require_alive_to_spend and not peer.alive:
-            return False
-        return peer.credits_available >= units
-
-
-# ------------------------------------------------------- the metered client
-class MeteredLLMClient:
-    """An :class:`~delm.core.llm.LLMClient` that pays for inference with credit.
-
-    This is the "a cambio" half of the exchange made concrete: the same pipeline
-    runs, but a request is only served if the peer has earned the credit for it,
-    and every served request is debited. It is a thin wrapper on purpose — the
-    model-agnostic contract is untouched, so any backend (MeshLLM's
-    OpenAI-compatible endpoint, a local llama.cpp, a remote provider) can sit
-    behind it and be metered identically.
-    """
-
-    def __init__(self, inner: Any, ledger: ContributionLedger, peer_id: str,
-                 policy: ExchangePolicy | None = None) -> None:
-        self.inner = inner
-        self.ledger = ledger
-        self.peer_id = peer_id
-        self.policy = policy or ExchangePolicy()
-        #: Every decision, in order — the audit trail of the metered side.
-        self.log: list[dict[str, Any]] = []
-        self.served = 0
-        self.refused = 0
-        #: Requests that passed the credit check but whose inference failed
-        #: (endpoint down, timeout, model error). These were *charged* — the
-        #: debit is deliberate and happens first — so `served + failed` is what
-        #: the mesh was billed for, and `served` alone is what it actually got.
-        self.failed = 0
-
-    async def complete(self, *args: Any, **kwargs: Any) -> Any:
-        tokens_in = int(kwargs.get("tokens_in", 0) or 0)
-        tokens_out = int(kwargs.get("tokens_out", 0) or 0)
-        cost = self.policy.request_cost(tokens_in=tokens_in,
-                                        tokens_out=tokens_out)
-        ok, reason = self.ledger.spend(
-            self.peer_id, cost, policy=self.policy,
-            require_alive=self.policy.require_alive_to_spend)
-        entry = {"cost": round(cost, 6), "ok": ok, "reason": reason,
-                 "tokens_in": tokens_in, "tokens_out": tokens_out}
-        self.log.append(entry)
-        if not ok:
-            self.refused += 1
-            # El peer puede no estar en el ledger todavia (identidad vista
-            # pero capacidad nunca admitida). Antes, formatear este mensaje
-            # hacia `None.credits_available` -> AttributeError DENTRO de la
-            # construccion del PermissionError, de modo que el un error que
-            # debe explicar al par lo reemplazaba por un AttributeError.
-            # Se formatea el saldo de forma tolerante.
-            _rec = self.ledger.peers.get(self.peer_id)
-            _saldo = getattr(_rec, "credits_available", None)
-            _saldo_txt = f"{_saldo:.4f}" if _saldo is not None else "0.0000 (sin registro)"
-            raise PermissionError(
-                f"inferencia sin crédito ({reason}): {self.peer_id} necesita "
-                f"{cost:.4f} y tiene {_saldo_txt} "
-                f"disponibles")
-        # El cobro va ANTES de la inferencia, a proposito: es lo que impide
-        # que un par sin credito gaste GPU ajena (si se comprobara despues,
-        # el `await` ya habria ocurrido). El coste de ese orden es que un
-        # endpoint caido tambien se cobra, asi que `served` SOLO sube cuando
-        # la inferencia ocurrio de verdad. Antes subia antes del `await`: un
-        # 404 o un timeout contaba como servida, y el log decia `ok: True`
-        # de una inferencia que nunca existio.
-        try:
-            out = await self.inner.complete(*args, **kwargs)
-        except BaseException as exc:
-            entry["ok"] = False
-            entry["reason"] = f"inference_failed: {type(exc).__name__}: {exc}"
-            self.failed += 1
-            raise
-        self.served += 1
-        return out
-
-    def stats(self) -> dict[str, Any]:
-        peer = self.ledger.peers.get(self.peer_id)
-        return {
-            "peer_id": self.peer_id,
-            "served": self.served,
-            "refused": self.refused,
-            "failed": self.failed,
-            "credits_available": peer.credits_available if peer else 0.0,
-            "entitlement": self.policy.entitlement(peer) if peer else 0.0,
-            "log": list(self.log),
-        }

@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 from delm.config import DEFAULT_CONFIG_PATH, build_client, load_config
 from delm.web import REPO_ROOT
 from delm.core.contrib import (
-    ExchangePolicy,
     default_identity_path,
     default_state_path,
 )
@@ -1302,7 +1301,6 @@ def _save_mesh(led: Any) -> str:
 
 def _mesh_view(led: Any, mesh_id: str, endpoint: str) -> dict[str, Any]:
     """The exchange as the UI wants it: peers, totals, chain, endpoint."""
-    policy = ExchangePolicy()
     peers = led.admitted_peers(observed_only=False)
     return {
         "mesh_id": mesh_id,
@@ -1322,9 +1320,9 @@ def _mesh_view(led: Any, mesh_id: str, endpoint: str) -> dict[str, Any]:
         "vram_available_gb": p.vram_available_gb, "ram_gb": p.ram_gb,
              "cpu_cores": p.cpu_cores, "backend": p.backend,
              "alive": p.alive, "seconds_observed": p.seconds_observed,
-             "credits": p.credits, "credits_spent": p.credits_spent,
-             "credits_available": p.credits_available,
-             "entitlement": policy.entitlement(p),
+             # Historial, no saldo: se cuenta, no se gasta.
+             "inferences_served": p.inferences_served,
+             "satoshis_earned": p.satoshis_earned,
              "rejections": p.rejections}
             for p in peers],
     }
@@ -1526,12 +1524,17 @@ class MeshObserve(BaseModel):
 def post_mesh_observe(body: MeshObserve,
                       mesh_id: str = Query(default=DEFAULT_MESH_ID,
                                            max_length=80)) -> dict[str, Any]:
-    """Accrue credit for observed uptime — the only path to credit."""
+    """Mark a peer as observed for *seconds*.
+
+    It does **not** credit anything: earning used to be a function of uptime
+    times VRAM, which meant a machine accumulated value by being plugged in.
+    The only thing that counts an inference now is `POST /api/mesh/infer`, and
+    only with a verified anchor.
+    """
     import time as _time
 
     led = _load_mesh(mesh_id)
-    peer = led.observe(body.peer_id, _time.time(), dt_s=body.seconds,
-                       policy=ExchangePolicy())
+    peer = led.observe(body.peer_id, _time.time(), dt_s=body.seconds)
     if peer is None:
         raise HTTPException(
             status_code=400,
@@ -1539,8 +1542,59 @@ def post_mesh_observe(body: MeshObserve,
     _save_mesh(led)
     return {"ok": True, "peer_id": peer.peer_id,
             "seconds_observed": peer.seconds_observed,
-            "credits": peer.credits, "credits_available": peer.credits_available,
+            "inferences_served": peer.inferences_served,
+            "credits_accrued": False,   # explicito: observar no acredita
             **_mesh_view(led, mesh_id, DEFAULT_MESH_ENDPOINT)}
+
+
+class MeshInfer(BaseModel):
+    peer_id: str = Field(default="local", min_length=1, max_length=80)
+    txid: str = Field(min_length=8, max_length=200)
+    satoshis: int = Field(default=0, ge=0, le=21_000_000)
+
+
+@router.post("/mesh/infer")
+def post_mesh_infer(body: MeshInfer,
+                    mesh_id: str = Query(default=DEFAULT_MESH_ID,
+                                         max_length=80)) -> dict[str, Any]:
+    """Count one verified inference in a peer's history.
+
+    The only way a node's count goes up, and it is deliberately narrow: the peer
+    must publish VRAM (a consumer is not a provider), the record must carry a
+    txid, and the same txid cannot be counted twice. The satoshis are recorded
+    as *history* — the balance is on the chain, and this is only what the mesh
+    watched go by.
+    """
+    led = _load_mesh(mesh_id)
+    ok, reason = led.record_inference(body.peer_id, txid=body.txid,
+                                      satoshis=body.satoshis)
+    if not ok:
+        raise HTTPException(status_code=400,
+                            detail=f"la inferencia no cuenta ({reason})")
+    _save_mesh(led)
+    peer = led.peers[body.peer_id]
+    return {"ok": True, "reason": reason,
+            "peer_id": peer.peer_id,
+            "inferences_served": peer.inferences_served,
+            "satoshis_earned": peer.satoshis_earned,
+            **_mesh_view(led, mesh_id, DEFAULT_MESH_ENDPOINT)}
+
+
+@router.get("/mesh/reputation")
+def get_mesh_reputation(mesh_id: str = Query(default=DEFAULT_MESH_ID,
+                                            max_length=80)) -> dict[str, Any]:
+    """The ranking: how much each node has actually served.
+
+    It is a counter, not a balance: it cannot be spent, transferred, or bought,
+    and it only moves on an anchored record. See :mod:`delm.core.reputation`.
+    """
+    from delm.core.reputation import board_from_counters
+
+    led = _load_mesh(mesh_id)
+    board = board_from_counters(led)
+    return {"ok": True, **board.to_dict(),
+            "mesh_id": mesh_id,
+            "total_inferences": sum(e.inferences_served for e in board)}
 
 
 @router.get("/mesh/plan")
@@ -1550,7 +1604,7 @@ def get_mesh_plan(
     layers: int = Query(default=0, ge=0, le=100_000),
     quant: str = Query(default="", max_length=32),
     reserve_gb: float = Query(default=0.0, ge=0.0, le=100_000.0),
-    require_credit: bool = Query(default=True),
+    require_provider: bool = Query(default=True),
     observed_only: bool = Query(default=True),
     mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
     endpoint: str = Query(default=DEFAULT_MESH_ENDPOINT, max_length=200),
@@ -1563,7 +1617,6 @@ def get_mesh_plan(
     the model — and its absence is reported in the body, not as an HTTP error,
     so the page can still show the mesh and explain the missing piece.
     """
-    from delm.core.contrib import ExchangePolicy
     from delm.core.placement import ModelSpec, plan_placement
 
     led = _load_mesh(mesh_id)
@@ -1589,8 +1642,9 @@ def get_mesh_plan(
         llmfit_note = f"dimensionado por llmfit: {row.memory_required_gb:.1f}G " \
                       f"({row.best_quant or 'sin quant'})"
 
-    plan = plan_placement(spec, led, policy=ExchangePolicy(),
-                          reserve_gb=reserve_gb, require_credit=require_credit,
+    plan = plan_placement(spec, led,
+                          reserve_gb=reserve_gb,
+                          require_provider=require_provider,
                           observed_only=observed_only, endpoint=endpoint)
     payload = {"available": True, "llmfit": llmfit_note,
                **_mesh_view(led, mesh_id, endpoint), **plan.to_dict()}
@@ -1605,10 +1659,11 @@ def get_mesh_check(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
     """Audit the exchange: chain, rejections, balances, and what it cannot prove."""
     led = _load_mesh(mesh_id)
     view = _mesh_view(led, mesh_id, DEFAULT_MESH_ENDPOINT)
-    negative = [p.peer_id for p in led.peers.values() if p.credits_available < -1e-9]
+    served = sum(p.inferences_served for p in led.peers.values())
     view.update({
-        "ok": bool(view["chain_ok"]) and not negative,
-        "negative_balances": negative,
+        "ok": bool(view["chain_ok"]),
+        "inferences_served": served,
+        "counted_anchors": len(led.counted_txids()),
         "refusals": [{"seq": r.seq, "peer_id": r.peer_id, "reason": r.reason}
                      for r in led.records if not r.accepted][-20:],
         "not_proven": ("que la VRAM declarada exista: no hay atestación de "

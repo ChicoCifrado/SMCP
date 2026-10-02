@@ -97,12 +97,12 @@ def test_one_above_the_crossover_dedicated_is_strictly_cheaper():
     assert dedicated_is_cheaper(1_001)
 
 
-def test_negative_inferences_are_rejected_not_credited():
-    """Menos cero tiene que fallar, no devolver una presupuesto negativo.
+def test_negative_inferences_are_rejected_not_counted():
+    """Menos cero tiene que fallar, no devolver un presupuesto negativo.
 
     Un total negativo en un sistema de pagos es un regalo silencioso, y un
-    negative zero de inferencias es la forma mas barata de Conseguir inferencia
-    gratis.
+    "negative zero" de inferencias es la forma mas barata de conseguir
+    inferencia gratis — y de subir en el ranking sin haber servido nada.
     """
     for f in (metered_cost_sats, tier_for_inferences):
         with pytest.raises(ValueError):

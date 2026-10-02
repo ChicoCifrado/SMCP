@@ -30,13 +30,19 @@ def _key() -> Secp256k1KeyPair:
     return Secp256k1KeyPair.new("n1")
 
 
+#: El solicitante es **otro** nodo: un ancla con solicitante == nodo es
+#: autoacreditacion y no se construye (ver `tests/test_anchor.py`).
+REQUESTER = Secp256k1KeyPair.new("quien-pide")
+
+
 def _write(tmp_path, *, txid: str = TXID, height: int = 100,
            header_root: str | None = None, signature: str | None = None,
            record: dict | None = None):
     """Escribe anchor.json + header.json. Devuelve sus rutas."""
     key = _key()
     rec = AnchorRecord(membership_txid=txid, membership_vout=0,
-                       membership_pubkey=key.public_key.hex(), satoshis=1,
+                       membership_pubkey=key.public_key.hex(),
+                       requester_pubkey=REQUESTER.public_key.hex(), satoshis=1,
                        occurred_at=1_700_000_000)
     sig = signature if signature is not None else rec.sign(key)
     leaf = bytes.fromhex(txid)[::-1]

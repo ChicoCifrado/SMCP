@@ -1,222 +1,255 @@
-"""La tesis del intercambio, encadenada de punta a punta (P2).
+"""La tesis del intercambio, encadenada de punta a punta.
 
-Por qué este archivo existe: hay 32 tests de `contrib` y 22 de `placement`, y
-todos prueban **piezas**. Ninguno prueba la afirmación que el proyecto
-sostiene, que es una afirmación sobre la **secuencia**:
+Por qué este archivo existe: los tests de `contrib` y de `placement` prueban
+**piezas**. Ninguno prueba la afirmación que el proyecto sostiene, que es una
+afirmación sobre la **secuencia**:
 
-    contribuir capacidad  ->  ganar crédito por estar vivo  ->  que el
-    planner coloque el modelo ahí  ->  que la inferencia se sirva solo si ese
-    crédito se puede gastar.
+    un nodo publica VRAM (firmado)  ->  la malla lo coloca carga  ->
+    otro nodo le pide una inferencia  ->  el ancla lo demuestra contra la
+    cabecera  ->  y solo entonces su historial sube
 
-Esa cadena es lo que distingue "tengo 32 tests verdes" de "el intercambio
-funciona". Los tests por pieza pasan los tres aunque el cuarto paso este roto:
-pueden estar midiendo un ledger que nunca se consulta, o un planner que
-devuelve un plan que nadie usa para cobrar.
+Los tests por pieza pasan los tres aunque el paso del medio este roto: pueden
+estar midiendo un contador que nunca se consulta, o un plan que coloca trabajo
+donde no lo hay.
+
+**La tesis anterior era otra.** Antes la cadena era "contribuir → ganar crédito
+por estar vivo → el planner coloca → la inferencia se sirve si se puede
+gastar". Esa se elimino entera: un nodo que gana por existir tiene un
+incentivo para no hacer nada, que es lo contrario de lo que una malla quiere.
+Se puede ver el cambio en `delm/core/reputation.py`.
 
 Qué NO es este test (y por qué importa decirlo):
 
 * **No es una atestación de hardware.** Las cifras de VRAM son *afirmaciones
-  firmadas*. El propio módulo lo dice y `test_contrib.py` lo cubre: una
-  afirmación firmada pero falsa se admite. Este test no intenta cerrar esa
-  laguna porque no es un bug, es el límite documentado del diseño. Lo que
-  sí comprueba es que la **firma** ate los números a lo largo de toda la
-  cadena: si alguien manipula la capacidad *después* de admitirla, el
-  planner debe dejar de ver esa capacidad.
-* **No prueba que exista un nodo real.** `FakeLLMClient` es un doble
-  determinista. Lo que se prueba es la *mediación* (que el crédito decide si
-  la inferencia se sirve), no la capacidad del modelo.
-* **No toca red.** `test_meshllm_wiring.py` cubre el cliente contra un
-  endpoint real y se skipea si no lo hay. Este es su complemento offline: la
-  economía del intercambio sin depender de que haya una malla encendida.
+  firmadas*: `test_contrib.py` fija que una afirmación firmada pero falsa se
+  admite. Lo que sí se comprueba es que la **firma** ate los números, y que la
+  **cadena** ate la inferencia.
+* **No toca red.** No hay cliente HTTP: la inferencia es un hecho anclado, y
+  lo que se prueba es la contabilidad de ese hecho, no que un modelo sepa
+  Contestar.
+* **El pago no se comprueba aqui.** Que la inferencia se pagara es cosa de
+  `delm.core.x402` (challenge/proof) y de la cadena; este test empieza donde
+  esa parte ya dio por buena.
 """
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from delm.core.contrib import (
-    ContributionLedger,
-    ExchangePolicy,
-    MeteredLLMClient,
-)
-from delm.core.llm import FakeLLMClient
+from delm.core.anchor import AnchorRecord
+from delm.core.bsv_keys import Secp256k1KeyPair
+from delm.core.contrib import CapacityReport, ContributionLedger
+from delm.core.membership import BlockHeader, InclusionProof, merkle_root
 from delm.core.placement import ModelSpec, plan_placement
 from delm.core.provenance import KeyPair
+from delm.core.reputation import board_from_counters, board_from_verified
 
-MESH = "smcp-thesis"
+MESH = "malla-tesis"
 NOW = 1_000.0
 
 
-# --------------------------------------------------------------- helpers
-#: Politica estricta: sin `baseline_credits`. El default (1.0) es una
-#: bienvenida para que la malla sea usable antes de acumular, pero para probar
-#: que **la observacion** es lo que abre el grifo, el baseline la enmascara.
-STRICT = ExchangePolicy(baseline_credits=0.0)
-
-
-def admit_and_earn(led: ContributionLedger, peer_id: str, vram_gb: float, *,
-                   observe_s: float, key: KeyPair | None = None,
-                   now: float = NOW, policy: ExchangePolicy | None = None,
-                   ) -> KeyPair:
-    """La vía completa de un par: reto → informe firmado → admitir → observar.
-
-    Devuelve la `KeyPair` para que el test pueda alterar la afirmación DESPUÉS
-    (que es la mitad atacar del test de manipulación).
-    """
-    key = key or KeyPair.new(peer_id)
-    policy = policy or ExchangePolicy()
-    ch = led.issue_challenge(peer_id, now=now, ttl_s=300.0)
-    from delm.core.contrib import CapacityReport
-
+# ------------------------------------------------------------------ helpers
+def _provider(led: ContributionLedger, peer_id: str, vram: float,
+              advertised: float | None = None, *,
+              identity: KeyPair | None = None) -> KeyPair:
+    """Admit capacity for *peer_id*, offering *advertised* (default: all)."""
+    identity = identity or KeyPair.new(peer_id)
+    ch = led.issue_challenge(peer_id, now=NOW)
     rep = CapacityReport(
-        mesh_id=led.mesh_id, peer_id=peer_id, vram_gb=vram_gb,
-        vram_advertised_gb=vram_gb, ram_gb=64.0,
-        cpu_cores=12, backend="cuda", nonce=ch.nonce, issued_at=now,
-        expires_at=now + 600.0,
-    ).sign(key)
-    ok, reason = led.admit(rep, now=now)
-    assert ok, f"admit debería aceptar un informe firmado: {reason}"
-    # El crédito SOLO se gana por `observe`; sin esto el par está admitido
-    # pero no ha ganado nada, que es el caso que el planner debe rechazar.
-    led.observe(peer_id, now, dt_s=observe_s, policy=policy)
-    return key
+        mesh_id=MESH, peer_id=peer_id, vram_gb=vram,
+        vram_advertised_gb=vram if advertised is None else advertised,
+        ram_gb=32.0, cpu_cores=8, nonce=ch.nonce, issued_at=NOW,
+        expires_at=NOW + 3600).sign(identity)
+    ok, why = led.admit(rep, now=NOW)
+    assert ok, why
+    led.observe(peer_id, NOW, dt_s=60)
+    return identity
 
 
-def spec(gb: float, **kw) -> ModelSpec:
-    return ModelSpec(name="Qwen/Qwen3-32B", memory_required_gb=gb,
-                     n_layers=64, quant="Q4_K_M", fit_level="good",
-                     estimated_tps=12.0, **kw)
+def _header(txid: str, height: int = 900_000) -> BlockHeader:
+    """Header whose Merkle root *is* the txid: a single leaf, so root == leaf."""
+    return BlockHeader(merkle_root=txid, height=height)
 
 
-# ------------------------------------------------------- la tesis, completa
-def test_contribute_earn_place_and_pay_is_one_chain():
-    """Un par contribuye, gana crédito, recibe el plan, y paga la inferencia.
+def _inclusion(txid: str, height: int = 900_000) -> InclusionProof:
+    """Inclusion of a lone transaction; root == txid (see test_anchor.py)."""
+    # El txid de presentacion es big-endian y la hoja interna little-endian, asi
+    # que la hoja se invierte. Sin eso la raiz seria distinta de la que
+    # computa cualquier otro y el test pasaria sin probar nada.
+    leaf = bytes.fromhex(txid)[::-1]
+    return InclusionProof(txid=txid, index=0, path=[],
+                          merkle_root=merkle_root([leaf]).hex(), height=height)
 
-    Este es el test que justifica el diseño. Los otros comprueban que cada
-    pieza funciona; este comprueba que **encajan**.
+
+def _anchored_inference(worker: Secp256k1KeyPair, requester: Secp256k1KeyPair,
+                        txid: str, *, satoshis: int = 100,
+                        height: int = 900_000):
+    """A real, verifiable anchor for one inference the *network* requested.
+
+    Returns ``(record, signature, inclusion, header)``, all of which verify —
+    so a test that counts it is counting something a third party could check.
+    """
+    rec = AnchorRecord(membership_txid=txid, membership_vout=0,
+                       membership_pubkey=worker.public_key.hex(),
+                       requester_pubkey=requester.public_key.hex(),
+                       satoshis=satoshis, occurred_at=1_700_000_000)
+    return rec, rec.sign(worker), _inclusion(txid, height), _header(txid, height)
+
+
+# ------------------------------------------------------------------- la tesis
+def test_the_whole_chain_from_offer_to_ranking():
+    """Un nodo que publica, recibe carga, sirve a la red y sube en el ranking."""
+    led = ContributionLedger(MESH)
+    provider_key = Secp256k1KeyPair.new("proveedor")
+    # 1. publica capacidad, firmada, y la malla la admite
+    identity = _provider(led, "proveedor", vram=8.0)
+    assert led.peers["proveedor"].vram_advertised_gb == 8.0
+
+    # 2. la malla le coloca carga: es un proveedor, y por eso tiene stage
+    plan = plan_placement(ModelSpec(name="Qwen/Qwen3-8B", memory_required_gb=6.0),
+                          led)
+    assert plan.ok and plan.peers == ("proveedor",)
+    assert plan.stages[0].memory_gb == pytest.approx(6.0)
+
+    # 3. otro nodo le pide una inferencia, y el ancla lo demuestra
+    requester = Secp256k1KeyPair.new("quien-pide")
+    txid = "9a" * 32
+    rec, sig, inc, header = _anchored_inference(provider_key, requester, txid)
+    assert rec.verify(sig, inc, header)[0] is True
+
+    # 4. solo entonces el historial sube
+    assert led.record_inference("proveedor", txid=txid, satoshis=100) == \
+        (True, "ok")
+    assert led.peers["proveedor"].inferences_served == 1
+
+    # 5. y el ranking lo muestra, ordenando por inferencias servidas
+    board = board_from_counters(led)
+    assert board.position("proveedor") == 1
+    assert board.get("proveedor").inferences_served == 1
+    # La identidad ed25519 del handshake no es la de membresia: son dos
+    # claves y por eso el anclaje necesita la secp256k1. Que `identity` exista
+    # no se usa mas alla de la admision, y aun asi hace falta para el paso 1.
+    assert identity.author_id == "proveedor"
+
+
+def test_serving_the_network_is_what_moves_the_ranking():
+    """El ranking ordena por inferencias servidas, no por VRAM anunciada."""
+    led = ContributionLedger(MESH)
+    # El mas grande sirve una inferencia; el mas pequeno, tres.
+    _provider(led, "grande", vram=24.0)
+    _provider(led, "pequeno", vram=4.0)
+    for i in range(3):
+        led.record_inference("pequeno", txid=f"{i:02x}" * 32, satoshis=100)
+    led.record_inference("grande", txid="ff" * 32, satoshis=100)
+    board = board_from_counters(led)
+    # Tres inferencias de una caja de 4 GiB baten a una de una de 24 GiB.
+    assert board.position("pequeno") == 1
+    assert board.get("grande").vram_advertised_gb == 24.0
+    assert board.get("pequeno").inferences_served == 3
+
+
+def test_an_unanchored_inference_does_not_move_the_ranking():
+    """Sin ancla no hay prueba, y sin prueba no hay historial.
+
+    Es el reverso exacto de la regla que se esta construyendo: un nodo no puede
+    subir su puesto diciéndolo, solo mostrando una transaccion incluida.
     """
     led = ContributionLedger(MESH)
-    policy = STRICT
-    # 2 pares de 8G, los dos observados 60s: nobody contributes and nobody
-    # is idle, porque el crédito se gana con `observe`.
-    admit_and_earn(led, "n1", 8.0, observe_s=1800.0, policy=policy)
-    admit_and_earn(led, "n2", 8.0, observe_s=1800.0, policy=policy)
-
-    # (1) El planner SI coloca: 12G deben repartirse entre los dos 8G.
-    plan = plan_placement(spec(12.0), led, policy=policy)
-    assert plan.ok, f"con 16G admitidos y crédito, el plan debe ser OK: {plan.reason}"
-    assert len(plan.stages) == 2, "12G no caben en un solo nodo de 8G: debe repartir"
-    assert {s.peer_id for s in plan.stages} == {"n1", "n2"}
-
-    # (2) La inferencia se SIRVE, y se cobra. Esto es lo que conecta el plan
-    # con el gasto: el mismo ledger que colocó el modelo es el que debita.
-    metered = MeteredLLMClient(FakeLLMClient(), led, peer_id="n1",
-                               policy=policy)
-    before = led.peers["n1"].credits_available
-    out = asyncio.run(metered.complete("verifica este contexto compartido"))
-    assert out, "con crédito debe servir la inferencia"
-    after = led.peers["n1"].credits_available
-    assert after < before, "servir debe debitar crédito del par que se sirvió"
-    assert abs((before - after) - policy.request_cost()) < 1e-6, (
-        "el débito debe ser exactamente el coste de la petición")
+    _provider(led, "a", vram=8.0)
+    assert led.record_inference("a", txid="")[0] is False
+    assert board_from_counters(led).get("a").inferences_served == 0
+    # Y una transacion repetida tampoco: el contador no la admite dos veces.
+    assert led.record_inference("a", txid="ab" * 32, satoshis=100)[0] is True
+    assert led.record_inference("a", txid="ab" * 32, satoshis=100)[0] is False
+    assert led.peers["a"].inferences_served == 1
 
 
-def test_credit_is_the_thing_that_unlocks_the_plan_not_the_claim():
-    """La tesis, contraprueba: la **afirmación** sola no da plan.
+def test_a_consumer_never_reaches_the_ranking():
+    """Quien no ofrece VRAM no sirve la malla, y no aparece en ella.
 
-    Un par admite y firma 64G, pero nunca se observa. Su capacidad es real
-    en el ledger (`admitted_peers` lo ve) y aun así el planner debe negarse:
-    el intercambio es "a cambio" de presencia, no de marketing. Esto separa
-    las dos mitades del diseño y prueba que `require_credit` significa algo.
+    El nodo de 24 GiB que ofrece 0 es el caso del nivel `metered` de `tiers`:
+    esta en la malla, pero es cliente. Si su historial contara, el ranking
+    estaria lleno de nodos que no han hecho nada por nadie.
     """
     led = ContributionLedger(MESH)
-    policy = STRICT
-    # Admitido, firmado, 64G — pero `observe_s=0`: jamás visto.
-    admit_and_earn(led, "ghost", 64.0, observe_s=0.0, policy=policy)
-
-    # La capacidad está admitida…
-    assert any(p.peer_id == "ghost" for p in led.admitted_peers(observed_only=False))
-    # …pero no observada, así que no hay plan: el planner exige presencia.
-    plan = plan_placement(spec(8.0), led, policy=policy)
-    assert not plan.ok, (
-        "un par que nunca se observó no puede dar garantias de capacidad: "
-        "el plan debe rechazarse aunque la capacidad esté admitida")
-    assert plan.reason, "un rechazo debe nombrar su motivo"
+    _provider(led, "cliente", vram=24.0, advertised=0.0)
+    _provider(led, "proveedor", vram=8.0)
+    assert led.record_inference("cliente", txid="ab" * 32)[0] is False
+    led.record_inference("proveedor", txid="cd" * 32, satoshis=100)
+    board = board_from_counters(led)
+    assert [p.node_id for p in board.providers()] == ["proveedor"]
+    # Sigue estando en el board (tiene historia declarada, aunque sea cero),
+    # pero marcado como no-proveedor para que ningun consumidor se cuelgue.
+    assert board.get("cliente").publishes_vram is False
 
 
-def test_manipulating_capacity_after_admission_changes_the_plan():
-    """La mitad atacar: alterar los números después de que se admitieron.
+def test_the_verified_board_counts_what_the_chain_supports():
+    """El board verificado reconstruye el numero desde las anclas, no desde el
+    contador del ledger.
 
-    La firma ata los números *en el informe*. Si un par pudiera reescribir su
-    capacidad en el ledger local después de admitirla, se llevaría el plan
-    entero. Este test comprueba que la manipulación no cambia lo que el planner
-    ve: el ledger guarda lo que se firmó, no lo que se le dice después.
+    Es la diferencia entre "la malla contó esto" y "la cadena lo sostiene". Con
+    un ancla limpia ambos coinciden; en cuanto una no verifica, el board
+    verificado deja de contarla **aunque el contador local siga diciendo que
+    sí** — y esa discrepancia es justo la que un tercero vería.
     """
+    from delm.core.anchor import AnchorLedger
+    from delm.core.membership import MembershipOutput
+
     led = ContributionLedger(MESH)
-    policy = STRICT
-    key = admit_and_earn(led, "n1", 8.0, observe_s=1800.0, policy=policy)
+    wk = Secp256k1KeyPair.new("proveedor")
+    rq = Secp256k1KeyPair.new("quien-pide")
+    _provider(led, "proveedor", vram=8.0)
 
-    plan_ok = plan_placement(spec(8.0), led, policy=policy)
-    assert plan_ok.ok, "8G de un par de 8G caben justo"
+    # El ledger de anclas solo acepta anclas de una membresia que conoce, asi
+    # que hay que registrar el output primero: un ledger que aceptara cualquier
+    # clave seria un ledger que cualquiera puede rellenar.
+    txid = "9a" * 32
+    membership = MembershipOutput(txid="cc" * 32, vout=0, satoshis=1000,
+                                 script_hash="bb" * 32)
+    chain = AnchorLedger(membership_outputs=[membership])
+    rec, sig, inc, header = _anchored_inference(wk, rq, txid)
+    # La membresia que el ancla declara tiene que ser la que el ledger conoce.
+    rec = AnchorRecord(**{**rec.to_dict(), "membership_txid": membership.txid})
+    sig = rec.sign(wk)
+    inc = InclusionProof(txid=membership.txid, index=0, path=[],
+                         merkle_root=merkle_root(
+                             [bytes.fromhex(membership.txid)[::-1]]).hex(),
+                         height=header.height)
+    header = BlockHeader(merkle_root=inc.merkle_root, height=900_000)
+    assert rec.verify(sig, inc, header)[0] is True
+    ok, why = chain.append(rec, inc, sig)
+    assert ok, why
+    assert led.record_inference("proveedor", txid=txid, satoshis=100)[0] is True
 
-    # Intento: reescribir la capacidad del par a 64G en el ledger, sin
-    # volver a pasar por `admit` (que exigiría un reto nuevo firmado).
-    led.peers["n1"].vram_gb = 64.0
+    verified = board_from_verified({"proveedor": chain}, header)
+    counters = board_from_counters(led)
+    assert verified.get("proveedor").inferences_served == 1
+    assert verified.get("proveedor").inferences_served == \
+        counters.get("proveedor").inferences_served
+    assert verified.get("proveedor").satoshis_earned == 100
 
-    plan_after = plan_placement(spec(8.0), led, policy=policy)
-    # El planner sigue viendo 8G (el valor firmado), así que un modelo de 32G
-    # NO debe caber — si "cupiera", la manipulación habría funcionado.
-    plan_big = plan_placement(spec(32.0), led, policy=policy)
-    assert not plan_big.ok, (
-        "tras manipular la capacidad, un modelo de 32G no debe planearse: "
-        "el planner debe seguir viendo la capacidad firmada (8G), no la "
-        "escrita (64G)")
+    # Ahora una segunda ancla que NO verifica (firma de otra clave): el
+    # contador local la contaria, el verificado no.
+    chain.append(rec, inc, "00" * 64)
+    led.record_inference("proveedor", txid="bb" * 32, satoshis=100)
+    assert led.peers["proveedor"].inferences_served == 2
+    assert board_from_verified({"proveedor": chain}, header) \
+        .get("proveedor").inferences_served == 1
 
 
-# --------------------------------------------- la inferencia sin crédito
-def test_inference_is_refused_without_credit_even_with_capacity():
-    """Capacidad sin crédito no compra inferencia.
+def test_a_self_served_inference_cannot_be_anchored_at_all():
+    """La forma mas barata de inflar el ranking esta cerrada en el ancla.
 
-    El reverso de la tesis: si `MeteredLLMClient` sirviera sin crédito, el
-    "a cambio" sería decorativo. Un par que contribuye capacidad pero nunca se
-    observa tiene el derecho a no ser servido, aunque su capacidad esté
-    admitida.
+    Ejecutar inferencia contra uno mismo y anclarla exigiria que el
+    solicitante fuera el propio nodo, y eso no se construye: falla al
+    construirse el registro. No es una comprobacion posterior que alguien
+    pudiera saltarse por otro camino — no hay registro que saltarse.
     """
-    led = ContributionLedger(MESH)
-    policy = STRICT
-    # Capacidad admitida, crédito NO ganado (observe_s=0).
-    admit_and_earn(led, "n1", 32.0, observe_s=0.0, policy=policy)
+    node = Secp256k1KeyPair.new("n1")
+    from delm.core.membership import ProtocolError
 
-    metered = MeteredLLMClient(FakeLLMClient(), led, peer_id="n1",
-                               policy=policy)
-    with pytest.raises(PermissionError):
-        asyncio.run(metered.complete("pide sin crédito"))
-    assert metered.refused == 1, (
-        "el rechazo debe contabilizarse en el cliente (quien cobra), "
-        "no tragarse en silencio")
-
-
-def test_the_exchange_is_ordered_observe_then_spend():
-    """Un par que gana crédito tras observar puede gastar; el orden importa.
-
-    Prueba la asimetría temporal: el mismo par, el mismo plan, pero el gasto
-    solo es posible DESPUÉS de `observe`. Antes de observar, se niega (test
-    anterior); después, se sirve. Es la misma instancia, no dos escenarios.
-    """
-    led = ContributionLedger(MESH)
-    policy = STRICT
-    key = KeyPair.new("n1")
-    metered = MeteredLLMClient(FakeLLMClient(), led, peer_id="n1",
-                               policy=policy)
-
-    # Antes de observar: se niega.
-    admit_and_earn(led, "n1", 8.0, observe_s=0.0, policy=policy, key=key)
-    with pytest.raises(PermissionError):
-        asyncio.run(metered.complete("antes de observar"))
-
-    # Tras observar: se sirve. Mismo par, mismo ledger.
-    led.observe("n1", NOW + 1800.0, dt_s=1800.0, policy=policy)
-    out = asyncio.run(metered.complete("después de observar"))
-    assert out, "tras observar y ganar crédito, la inferencia debe servirse"
+    with pytest.raises(ProtocolError) as exc:
+        AnchorRecord(membership_txid="ab" * 32, membership_vout=0,
+                     membership_pubkey=node.public_key.hex(),
+                     requester_pubkey=node.public_key.hex(), satoshis=100)
+    assert "auto-solicitada" in str(exc.value)

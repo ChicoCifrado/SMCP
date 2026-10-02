@@ -149,14 +149,60 @@ def test_observe_requires_an_admitted_peer(state, tmp_path, capsys):
     assert "no está admitido" in capsys.readouterr().err
 
 
-def test_observe_accrues_credit(state, tmp_path, capsys):
+def test_observe_records_uptime_and_credits_nothing(state, tmp_path, capsys):
+    """`delm mesh observe` anota cuanto tiempo se ve al nodo, y nada mas.
+
+    Antes acreditaba VRAM x horas, de modo que una caja enchufada generaba
+    valor sin servir. El comando lo dice en su propia salida para que nadie lo
+    lea como un descuido.
+    """
     ident = tmp_path / "id.json"
     contribute(state, ident, "nodo-a", 8.0)
     assert main(["mesh", "observe", "--state", str(state), "--mesh-id", MESH,
                  "--peer-id", "nodo-a", "--seconds", "3600"]) == 0
-    assert "+3600s" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "+3600s" in out
+    assert "NO acredita nada" in out
     led = ContributionLedger.load(str(state))
-    assert led.peers["nodo-a"].credits == pytest.approx(8.0)
+    assert led.peers["nodo-a"].seconds_observed == 3600.0
+    assert led.peers["nodo-a"].inferences_served == 0
+
+
+def test_infer_counts_one_anchored_inference(state, tmp_path, capsys):
+    """El camino del ingreso, y el replay que lo hace inutilizable."""
+    ident = tmp_path / "id.json"
+    contribute(state, ident, "nodo-a", 8.0)
+    capsys.readouterr()
+    args = ["mesh", "infer", "--state", str(state), "--mesh-id", MESH,
+            "--peer-id", "nodo-a"]
+    assert main(args + ["--txid", "ab" * 32, "--satoshis", "100"]) == 0
+    assert "contada" in capsys.readouterr().out
+    # El mismo txid otra vez: no cuenta, y el comando sale con 2.
+    assert main(args + ["--txid", "ab" * 32]) == 2
+    assert "no_anchor" in capsys.readouterr().err
+    led = ContributionLedger.load(str(state))
+    assert led.peers["nodo-a"].inferences_served == 1
+    assert led.peers["nodo-a"].satoshis_earned == 100
+
+
+def test_reputation_ranks_by_inferences_served(state, tmp_path, capsys):
+    contribute(state, tmp_path / "a.json", "nodo-a", 8.0, seconds=60)
+    contribute(state, tmp_path / "b.json", "nodo-b", 24.0, seconds=60)
+    capsys.readouterr()
+    for i in range(3):
+        main(["mesh", "infer", "--state", str(state), "--mesh-id", MESH,
+              "--peer-id", "nodo-a", "--txid", f"{i:02x}" * 32,
+              "--satoshis", "100"])
+    main(["mesh", "infer", "--state", str(state), "--mesh-id", MESH,
+          "--peer-id", "nodo-b", "--txid", "ff" * 32, "--satoshis", "100"])
+    capsys.readouterr()
+    assert main(["mesh", "reputation", "--state", str(state), "--mesh-id", MESH,
+                 "--peer-id", "nodo-b"]) == 0
+    out = capsys.readouterr().out
+    # Tres inferencias de una caja de 8 GiC baten a una de una de 24 GiB.
+    assert out.index("nodo-a") < out.index("nodo-b")
+    assert "es #2 de 2" in out
+    assert "no se gasta" in out
 
 
 # ------------------------------------------------------------------ plan
@@ -270,18 +316,18 @@ def test_plan_forwards_hardware_overrides_to_llmfit(state, tmp_path, capsys,
     assert seen["cpu_cores"] == 8
 
 
-def test_an_unobserved_node_is_not_plannable_even_with_no_credit(state,
+def test_an_unobserved_node_is_not_plannable_even_diagnostically(state,
                                                                  tmp_path,
                                                                  capsys):
-    """`--no-credit` salta el cobro, no la observación.
+    """`--no-provider` salta la política, no la observación.
 
     Un nodo al que la malla no está viendo no puede servir inferencia, así que
-    no recibe un stage ni en modo diagnóstico. La válvula de escape existe para
-    el *crédito*, no para la liveness.
+    no recibe un stage ni en modo diagnóstico. La válvula de escape existe
+    para la **política de proveedores**, no para la liveness.
     """
     contribute(state, tmp_path / "id.json", "nodo-a", 16.0)   # sin observe
     capsys.readouterr()
-    for extra in ([], ["--no-credit"]):
+    for extra in ([], ["--no-provider"]):
         rc = main(["mesh", "plan", "m", "--state", str(state), "--mesh-id", MESH,
                    "--memory-gb", "8"] + extra)
         assert rc == 2
@@ -301,7 +347,9 @@ def test_check_passes_on_a_honest_ledger(state, tmp_path, capsys):
     assert main(["mesh", "check", "--state", str(state), "--mesh-id", MESH]) == 0
     out = capsys.readouterr().out
     assert "íntegra" in out
-    assert "saldos    : todos >= 0" in out
+    # El informe ya no habla de saldos:_historial y la cadena de hashes.
+    assert "historial" in out
+    assert "saldos" not in out
     # Y dice lo que no prueba: es la mitad del contrato de este comando.
     assert "NO prueba" in out
     assert "atestación de hardware" in out

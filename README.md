@@ -43,13 +43,27 @@ si pasa. El progreso intermedio deja de ser un mensaje efímero y se convierte
 en **estado reutilizable**. Eso es lo que los agentes repartidos por la malla
 comparten: no un result chunk, sino estado verificado.
 
-### 2. VRAM compartida, verificada y*a cambio* de inferencia
+### 2. VRAM compartida, verificada, pagada en satoshis
 
 Cada nodo declara su capacidad; la malla **no se la cree**: la exige firmada,
 ligada a un reto de un solo uso, con caducidad, y encadenada en un log de
-admisiones. El crédito se gana **solo mientras la malla ve al nodo vivo**, y la
-inferencia se paga con ese crédito (`MeteredLLMClient`). Un nodo que no aporta
-no recibe inferencia gratis; uno que desaparece, la pierde al instante.
+admisiones. El único dinero es el **satoshi**, y se mueve en la cadena
+(`delm/core/tiers.py` fija los precios; `x402` verifica el pago de una
+inferencia; `anchor.py` demuestra que ocurrió).
+
+**No hay moneda interna.** Hubo una: un "crédito" float que un nodo ganaba por
+GiB y hora y gastaba por petición. Se eliminó, y el motivo es la línea que
+decide el diseño: **un nodo que gana por existir no tiene ningún incentivo para
+servir a nadie.** Una caja de 16 GiB enchufada generaba valor sin haber hecho
+una sola inferencia, que es exactamente lo contrario de "a cambio reciben
+acceso a inferencia" — y una invitación a mantener una flota de máquinas
+paradas a cargo de otro.
+
+Lo que queda donde estaba el saldo es un **contador**: cuántas inferencias **de
+la red** ha servido cada nodo (`delm/core/reputation.py`). No se gasta, no se
+transfiere, no compra nada. Es el ranking que un nodo enseña al resto para que
+sepan cuánto ha servido, y sube **solo** con un ancla verificada en la que el
+solicitante es **otro** nodo: ejecutar inferencia contra uno mismo no se ancla.
 
 ### 3. Reparto de las capas de un modelo entre varios nodos
 
@@ -329,9 +343,11 @@ modelo; la malla dice quién tiene VRAM *verificada*; DeLM comparte el `C` entre
 los agentes que razonan sobre lo que la malla ejecuta.
 
 ```bash
-delm mesh                                     # = status: quién aporta, cuánto debe
+delm mesh                                     # = status: quién ofrece y cuánto ha servido
 delm mesh contribute --vram-gb 16 --vram-advertised-gb 8   # 16 físicos, ofrezco 8
-delm mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva"
+delm mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva" (no acredita)
+delm mesh infer    --peer-id local --txid <tx> --satoshis 100  # 1 inferencia anclada
+delm mesh reputation                          # el ranking de quién ha servido
 delm mesh plan "Qwen/Qwen3-32B"              # lo dimensiona llmfit y lo reparte
 delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64   # sin llmfit
 delm mesh plan "Qwen/Qwen3-32B" --memory-gb 400; echo $?     # 2 = no cabe
@@ -341,7 +357,7 @@ delm mesh anchor --anchor anchor.json --header header.json   # ancla de inferenc
 delm mesh membership verify --proof proof.json --header header.json   # gate de pertenencia BSV
 delm mesh reserve --peer-id nodo-b --memory-gb 6     # tier de pago único
 delm mesh release  --reservation-id nodo-b#1
-delm mesh check                               # audita cadena y saldos
+delm mesh check                               # audita cadena e historial
 delm mesh --help
 ```
 
@@ -354,14 +370,15 @@ nodo       : local
 firma      : ed25519 · digest 520427c288fce0fa…
 capacidad  : 16.0G VRAM · 64G RAM · 12 núcleos · cuda
 $ delm mesh observe --peer-id local --seconds 3600
-local: +3600s observado · créditos 16.000 · disponibles 16.000
+local: +3600s observado · inferencias servidas 0
+nota: observar NO acredita nada. El historial sube solo con `delm mesh infer`.
 $ delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64
 === smcp placement ===
 modelo   : Qwen/Qwen3-32B
 memoria  : 40.0G requeridos · 48.0G verificados en la malla
 veredicto : ok · 3 nodo(s)
 
-  nodo                 memoria  vmax  ofrece  usa  disp    uso    layers   credits
+  nodo                 memoria  vmax  ofrece  usa  disp    uso    layers
   nodo-b                 20.4G    24G   24.0G  0.0G  24.0G   85%     0-31    0.256
   nodo-a                 13.3G    16G   16.0G  0.0G  16.0G   83%    32-52    0.167
   nodo-c                  6.2G     8G    8.0G  0.0G   8.0G   78%    53-63    0.078
@@ -382,10 +399,13 @@ de cabecera admite planes que no van a funcionar. La diferencia entre
 `total_vram_gb` y `total_advertised_gb` es la capacidad que los dueños están
 decidiendo no compartir — un número que antes la malla no podía ver.
 
-El crédito escala con lo **ofrecido**, no con el hardware. Antes inflar la
-cifra compraba enrutamiento *y* multiplicaba el pago: `credits_per_gib_hour`
-usaba el mismo número para las dos cosas. Ahora un nodo de 24 GB que ofrece 4
-gana 4 créditos/hora.
+Lo que se reparte se decide con lo **ofrecido**, no con el hardware. Antes
+inflar la cifra compraba enrutamiento *y* multiplicaba el pago, porque
+`credits_per_gib_hour` usaba el mismo número para las dos cosas. Hoy no queda
+nada que multiplicar: la reputación cuenta inferencias, y esas no dependen de
+cuánto hardware se anuncie. Un nodo con 24 GB que ofrece 4 GiB es proveedor,
+porque es lo que está dispuesto a compartir — y si no ofrece ninguno, es un
+consumidor (`metered`) y no aparece en el ranking.
 
 `vram_shared_gb` está fuera del digest firmado a propósito: cambia en cada
 heartbeat, y anclarlo marcaría como manipulado a todo nodo honesto en menos de
@@ -446,15 +466,19 @@ Cuatro propiedades que hacen que esto no sea un registro de promesas:
   ligado a ese reto, con caducidad. Repetir un "tengo 64G" de ayer no vale: el
   nonce se quemó. Y un `peer_id` queda **atado a su clave** para siempre
   (`peer_key_changed`), así que un nombre no se puede re-apuntar a otra clave
-  para heredar el crédito de otro.
-- **El crédito se gana estando vivo.** `observe` es el *único* camino al crédito
-  y lo que lo mueve es el tiempo que la malla ha visto al nodo. Un nodo que
-  desaparece no puede ni seguir ganando ni seguir gastando
-  (`require_alive_to_spend`).
-- **La inferencia se paga.** `MeteredLLMClient` envuelve cualquier
-  `LLMClient` (el de la malla, un llama.cpp local, lo que sea): sirve si hay
-  crédito y lanza `PermissionError` si no. El pipeline no cambia; la contabilidad
-  sí.
+  para heredar el puesto de otro.
+- **Estar vivo no cuenta para nada.** `observe` solo deja constancia de cuánto
+  tiempo la malla ha visto al nodo; no acredita nada, y su salida lo dice para
+  que nadie lo lea como un descuido. El historial sube por un único camino:
+  `record_inference`, que exige ancla con txid y no cuenta dos veces la misma.
+- **Solo se cuenta lo que pidió la red.** El ancla lleva el **solicitante**
+  (`requester_pubkey`, formato v2) y se niega a construirse si es el propio
+  nodo. Ejecutar inferencia contra uno mismo —lo más barato y lo más fácil de
+  multiplicar— no deja registro, así que el ranking no se puede inflar solo.
+- **El valor es el satoshi y va por la cadena.** `tiers.py` fija los precios
+  (100 sat por inferencia en `metered`), `x402` verifica el pago y `anchor.py`
+  prueba que la inferencia ocurrió. No hay saldo interno que alguien pueda
+  gastar sin que nadie se entere.
 - **Nada de lo que esto afirma es invisible.** Cada admisión —y cada
   **rechazo**— entra en una cadena de hashes (`verify_chain`) que sobrevive a un
   save/load, y `delm mesh check` la verifica y dice, en mayúsculas, lo que no
@@ -636,13 +660,12 @@ El suite está repartido en treinta y ocho archivos, todos deterministas:
   `AdmissionLedger` (dump/load/export, opt-in).
 - `test_meshllm_wiring.py` — wiring SMCP→MeshLLM (opt-in `slow`; se skipea
   sin endpoint; **2 passed** vs malla pública 2026-09-23).
-- `test_meshllm_thesis.py` — la tesis del intercambio contra un endpoint
-  **real** (opt-in `slow`): report firmado → observe → plan → `MeteredLLMClient`
-  → inferencia de verdad. Tres casos: la cadena completa, el rechazo **antes**
-  de cualquier llamada de red, y un 404 real que deja el cobro registrado como
-  fallo. Se skipea sin endpoint:
-  `MESH_LLM_URL=http://127.0.0.1:8888/v1 python -m pytest tests/test_meshllm_thesis.py -m slow -v`
-  (**3 passed** contra unsloth/Qwen3.8-27B-GGUF el 2026-09-28).
+- `test_meshllm_thesis.py` — la tesis contra un endpoint **real** (opt-in
+  `slow`): report firmado → plan → inferencia de verdad → **ancla que verifica**
+  → el historial sube. Tres casos: la cadena completa, dos inferencias reales
+  seguidas, y que un endpoint caído no mueve el contador. Se skipea sin
+  endpoint:
+  `MESH_LLM_URL=http://127.0.0.1:9337/v1 python -m pytest tests/test_meshllm_thesis.py -m slow -v`.
 - `test_cli.py` — la CLI unificada (issue #9): los subcomandos
   (`demo`/`test`/`config-check`/`version`), el despacho de cada demo a su módulo,
   el passthrough de flags, `--slow` pisando el `-m 'not slow'` de los addopts,
@@ -652,11 +675,17 @@ El suite está repartido en treinta y ocho archivos, todos deterministas:
   reto/informe vencidos, reto ligado al par, malla equivocada), firma que ata
   los números (inflar la VRAM tras firmar invalida el digest), el `peer_id`
   atado a su clave, la cadena que detecta manipulación y persiste los rechazos,
-  el crédito que solo se gana `observe`dolo y es proporcional a la VRAM
-  aportada, el gasto que se niega sin crédito, y `MeteredLLMClient` sirviendo
-  con `FakeLLMClient` y negándose al agotarse. Incluye el test que **fija la
-  limitación**: una afirmación firmada pero falsa se admite (no hay atestación
-  de hardware), y por eso es auditable.
+  y la **reputación**: que solo cuente un ancla con txid, que la misma
+  transacción no cuente dos veces, que un nodo sin VRAM ofrecida no cuente, y
+  que `observe` no acredite nada. Incluye el test que **fija la limitación**:
+  una afirmación firmada pero falsa se admite (no hay atestación de hardware),
+  y por eso es auditable.
+- `test_reputation.py` — el ranking: ordena por inferencias servidas (no por
+  VRAM anunciada), separa los satoshis del mérito en su propia columna, deja al
+  consumidor visible y marcado, y reconstruye el número desde anclas
+  verificadas contra una cabecera. Incluye que **sin cabecera no cuenta nada**
+  (un ledger sin verificar es una afirmación) y que el historial no es un
+  saldo — fijado por ausencia de API.
 - `test_placement.py` — el reparto: rechazo con motivo y *cuánta* VRAM falta,
   que no se use capacidad no admitida ni sin crédito, la exclusividad del
   orden greedy (más VRAM primero), la suma exacta de stages, los rangos de capas
@@ -729,7 +758,12 @@ un cero silencioso que la UI leería como "el proyecto tiene cero tests".
 - `/api/mesh/contribute` — firma la capacidad de este nodo y la admite (crea la
   identidad si no existe). Rechazos → `400` con el motivo, y **quedan
   registrados** en la cadena.
-- `/api/mesh/observe` — acredita crédito por tiempo observado vivo.
+- `/api/mesh/observe` — marca el nodo como observado. **No acredita nada**
+  (responde `credits_accrued: false`): el uptime es procedencia, no historial.
+- `/api/mesh/infer` — cuenta **una inferencia verificada** en el historial del
+  nodo. Es el único camino del ingreso: exige txid, no admite dos veces la misma
+  transacción, y rechaza a quien no ofrece VRAM (`not_a_provider`).
+- `/api/mesh/reputation` — el ranking: inferencias servidas por nodo.
 - `/api/mesh/plan?model=…` — plan de reparto (dimensiona con llmfit salvo que se
   pase `memory_gb`). `llmfit` ausente no es un error HTTP: `available: false` +
   `hint`.
@@ -847,7 +881,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1076 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1091 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -876,21 +910,31 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   `--write-config` sin pisar, llmfit ausente como exit `3`) +
   19 `/api/fit*` (validación de filtros, veredicto sobre el catálogo entero,
   cero secretos, el escritor de config compartido con `PUT /api/config`) +
-  103 la malla: 36 del intercambio (reto de un solo uso y caducidad, firma que
-  ata los números, `peer_id` ligado a su clave, cadena con rechazos
-  persistentes, crédito por uptime, gasto que se niega) + 22 del reparto
-  (rechazo accionable, exclusividad del greedy, suma exacta de stages, capas
-  que teselan `[0, n-1]`, determinismo y replay) + 25 de `delm mesh`
-  (identidad persistente, dos nodos sobre un estado, `plan` con y sin llmfit,
-  `check` que detecta la cadena alterada) + 20 de `/api/mesh/*` incluido el
-  que comprueba que CLI y web ven la misma malla +
+  33 del intercambio (reto de un solo uso y caducidad, firma que ata los
+  números, `peer_id` ligado a su clave, cadena con rechazos persistentes, y la
+  reputación: solo cuenta un ancla con txid, la misma transacción no cuenta dos
+  veces, un nodo sin VRAM ofrecida no cuenta, y `observe` no acredita nada) +
+  15 de reputación (orden por inferencias, satoshis en su columna, consumidor
+  marcado, board verificado contra cabecera, y sin cabecera no cuenta nada) +
+  18 del reparto (rechazo accionable, la puerta de proveedores, exclusividad
+  del greedy, suma exacta de stages, capas que teselan `[0, n-1]`,
+  determinismo y replay) +
+  27 de `delm mesh` (identidad persistente, dos nodos sobre un estado,
+  `infer`/`reputation`, `plan` con y sin llmfit, `check` que detecta la cadena
+  alterada) +
+  23 de `/api/mesh/*` incluido el que comprueba que CLI y web ven la misma malla,
+  y el que fija que observar no acredita +
+  32 del ancla (el solicitante es obligatorio y distinto del nodo: sin eso,
+  inferencia local y petición de red serían lo mismo) +
   60 anclaje a BSV (Fase 1): 26 bytes canónicos del ledger (v1/v2 y por qué v1
   no era reproducible), 18 wallet SPV (BRC-75 maestro, BRC-42 derivación,
   BRC-43 `keyId`) + 16 anclaje (identidad secp256k1, reloj del nodo,
   rebroadcast frente a reemplazo en mempool) +
-  5 tesis del intercambio encadenada de punta a punta (contribuir → ganar
-  crédito → el planner coloca el modelo ahí → la inferencia se sirve solo si ese
-  crédito se gasta) +
+  6 de tesis del intercambio encadenada de punta a punta (publicar capacidad
+  firmado → la malla coloca carga → otro nodo pide una inferencia → el ancla lo
+  demuestra contra la cabecera → y solo entonces el historial sube), y el
+  caso que la hipótesis descartaba: un ancla auto-solicitada no llega a
+  construirse +
   21 ACP (`smcp-serve`: handshake, ciclo de vida, el contrato de firmas de los
   overrides contra `acp.Agent`, prompt con el pipeline real, cancelación, smoke
   JSON-RPC por stdio) +
@@ -916,17 +960,20 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
 
 **Hecho y verificado (la malla como intercambio):**
 
-- **La malla tiene modelo de recurso y economía** — `delm/core/contrib.py`:
+- **La malla tiene modelo de recurso, sin moneda** — `delm/core/contrib.py`:
   `Challenge` (reto de un solo uso) + `CapacityReport` (capacidad firmada,
   ligada al reto, con caducidad) + `ContributionLedger` (admisión con motivo,
-  cadena de hashes que sobrevive a save/load, y saldo por par) +
-  `ExchangePolicy` (tarifa y medidor) + `MeteredLLMClient` (la inferencia se
-  paga con crédito, sobre cualquier `LLMClient`). 32 tests.
+  cadena de hashes que sobrevive a save/load, e `record_inference` — el único
+  camino del historial). Ni `ExchangePolicy` ni saldos: el valor es el satoshi
+  y se mueve en la cadena. 33 tests.
+- **La reputación es historial, no saldo** — `delm/core/reputation.py`: el
+  ranking de inferencias servidas por nodo, con el board verificado
+  (reconstruido desde anclas contra una cabecera) junto al cheap de contadores.
+  15 tests.
 - **El reparto de un modelo entre nodos** — `delm/core/placement.py`:
   `ModelSpec` (se construye desde una fila de llmfit) + `plan_placement` (greedy
-  por VRAM verificada,Admission con `PlanReject` accionable, rangos de capas que
-  teselan `[0, n-1]`, determinista y con round-trip para replay) +
-  `MeteredLLMClient` como consumidor. 22 tests.
+  por VRAM verificada, `PlanReject` accionable, y la puerta de **proveedores**:
+  solo se coloca carga donde el nodo ofrece capacidad). 18 tests.
 - **Las tres piezas en una sola superficie** — `delm mesh
   {status,contribute,observe,plan,check}`, `/api/mesh*` y la página **Malla**
   (`delm/web/static/malla.html`), las tres sobre el **mismo fichero de estado** (lo resuelve
@@ -1081,7 +1128,8 @@ delm/
     hci.py             Headroom-Closed Index             (métrica de mejora)
     rsi.py             RSILoop + Successor               (loop RSI L1)
     llmfit.py          LlmfitRunner + FitReport/veredicto (dimensionar el modelo local)
-    contrib.py         Challenge/CapacityReport + ContributionLedger + créditos
+    contrib.py         Challenge/CapacityReport + ContributionLedger
+    reputation.py      ReputationBoard: el ranking de inferencias servidas
     placement.py       ModelSpec/Stage/PlacementPlan (reparto entre nodos)
     bsv_keys.py        ECDSA-secp256k1 (la firma que ancla a BSV)
     timechain.py       el reloj del nodo: qué publicó, reenvía y no ha probado

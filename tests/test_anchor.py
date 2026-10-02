@@ -60,10 +60,21 @@ def _inclusion(txid: str, height: int) -> InclusionProof:
                           height=height)
 
 
+REQUESTER = Secp256k1KeyPair.new('quien-pide')
+
+
 def _record(key: Secp256k1KeyPair, *, vout: int = 0, satoshis: int = 1,
-            occurred_at: int = 1_700_000_000) -> AnchorRecord:
+            occurred_at: int = 1_700_000_000,
+            requester: Secp256k1KeyPair | None = None) -> AnchorRecord:
+    """Un ancla de una peticion **de la red**: el solicitante es otro nodo.
+
+    El default es un solicitante distinto a proposito: casi todo lo que se
+    prueba aqui (firma, inclusion,DER) asume una peticion de otro. El caso
+    auto-solicitado tiene sus propios tests.
+    """
     return AnchorRecord(membership_txid=TXID, membership_vout=vout,
                         membership_pubkey=key.public_key.hex(),
+                        requester_pubkey=(requester or REQUESTER).public_key.hex(),
                         satoshis=satoshis, occurred_at=occurred_at)
 
 
@@ -82,7 +93,8 @@ def test_the_content_hash_cannot_be_filled_and_that_is_the_point():
     key = Secp256k1KeyPair.new("n1")
     with pytest.raises(ProtocolError) as ei:
         AnchorRecord(membership_txid=TXID, membership_vout=0,
-                     membership_pubkey=key.public_key.hex(), satoshis=1,
+                     membership_pubkey=key.public_key.hex(),
+                     requester_pubkey=REQUESTER.public_key.hex(), satoshis=1,
                      content_sha256="ab" * 32)
     assert "no publica el contenido" in str(ei.value)
     assert "identificador" in str(ei.value)
@@ -171,6 +183,7 @@ def test_the_membership_pubkey_is_part_of_the_signed_payload():
     # mismo txid, mismo vout, pero clave declarada distinta
     spoofed = AnchorRecord(membership_txid=TXID, membership_vout=0,
                            membership_pubkey=victim.public_key.hex(),
+                           requester_pubkey=REQUESTER.public_key.hex(),
                            satoshis=rec.satoshis, occurred_at=rec.occurred_at)
     inc = _inclusion(TXID, 100)
     ok, why = spoofed.verify(sig, inc, _header(TXID, 100))
@@ -189,6 +202,7 @@ def test_a_tampered_amount_invalidates_the_signature():
     sig = rec.sign(key)
     inflado = AnchorRecord(membership_txid=TXID, membership_vout=0,
                            membership_pubkey=key.public_key.hex(),
+                           requester_pubkey=REQUESTER.public_key.hex(),
                            satoshis=1_000_000,
                            occurred_at=rec.occurred_at)
     ok, why = inflado.verify(sig, _inclusion(TXID, 100), _header(TXID, 100))
@@ -251,7 +265,8 @@ def test_a_malformed_pubkey_is_refused_at_construction_not_at_verification():
     key = Secp256k1KeyPair.new("n1")
     with pytest.raises(ProtocolError) as ei:
         AnchorRecord(membership_txid=TXID, membership_vout=0,
-                     membership_pubkey="ab" * 5, satoshis=1)
+                     membership_pubkey="ab" * 5,
+                     requester_pubkey=REQUESTER.public_key.hex(), satoshis=1)
     assert "pubkey" in str(ei.value)
 
 
@@ -260,13 +275,13 @@ def test_negative_values_and_bad_method_are_refused():
     pk = key.public_key.hex()
     with pytest.raises(ProtocolError):
         AnchorRecord(membership_txid=TXID, membership_vout=0,
-                     membership_pubkey=pk, satoshis=-1)
+                     membership_pubkey=pk, requester_pubkey=REQUESTER.public_key.hex(), satoshis=-1)
     with pytest.raises(ProtocolError):
         AnchorRecord(membership_txid=TXID, membership_vout=0,
-                     membership_pubkey=pk, satoshis=1, method="p2sh")
+                     membership_pubkey=pk, requester_pubkey=REQUESTER.public_key.hex(), satoshis=1, method="p2sh")
     with pytest.raises(ProtocolError):
         AnchorRecord(membership_txid=TXID, membership_vout=0,
-                     membership_pubkey=pk, satoshis=1, occurred_at=-1)
+                     membership_pubkey=pk, requester_pubkey=REQUESTER.public_key.hex(), satoshis=1, occurred_at=-1)
 
 
 def test_an_unknown_format_version_is_refused():
@@ -274,7 +289,7 @@ def test_an_unknown_format_version_is_refused():
     key = Secp256k1KeyPair.new("n1")
     with pytest.raises(ProtocolError) as ei:
         AnchorRecord(membership_txid=TXID, membership_vout=0,
-                     membership_pubkey=key.public_key.hex(), satoshis=1,
+                     membership_pubkey=key.public_key.hex(), requester_pubkey=REQUESTER.public_key.hex(), satoshis=1,
                      ver=ANCHOR_VERSION + 1)
     assert "version" in str(ei.value)
 
@@ -433,11 +448,11 @@ def test_a_txid_of_the_wrong_length_is_refused_at_construction():
     pk = key.public_key.hex()
     with pytest.raises(ProtocolError) as ei:
         AnchorRecord(membership_txid="ab" * 10, membership_vout=0,
-                     membership_pubkey=pk, satoshis=1)
+                     membership_pubkey=pk, requester_pubkey=REQUESTER.public_key.hex(), satoshis=1)
     assert "txid" in str(ei.value)
     with pytest.raises(ProtocolError):
         AnchorRecord(membership_txid=TXID + "ab", membership_vout=0,
-                     membership_pubkey=pk, satoshis=1)
+                     membership_pubkey=pk, requester_pubkey=REQUESTER.public_key.hex(), satoshis=1)
 
 
 def test_changing_occurred_at_invalidates_the_signature():
@@ -452,7 +467,7 @@ def test_changing_occurred_at_invalidates_the_signature():
     rec = _record(key, occurred_at=1_000)
     sig = rec.sign(key)
     movido = AnchorRecord(membership_txid=TXID, membership_vout=0,
-                          membership_pubkey=key.public_key.hex(), satoshis=1,
+                          membership_pubkey=key.public_key.hex(), requester_pubkey=REQUESTER.public_key.hex(), satoshis=1,
                           occurred_at=2_000_000)
     ok, why = movido.verify(sig, _inclusion(TXID, 100), _header(TXID, 100))
     assert not ok and "firma" in why
@@ -544,3 +559,84 @@ def test_a_corrupt_ledger_refuses_to_grow():
     ok, why = led.append(rec, _inclusion(TXID, 100), rec.sign(key))
     assert not ok and "corrupto" in why
     assert len(led.anchors) == 1, "no se anade nada sobre un registro roto"
+
+
+# ============================================== la peticion viene de la red
+# La regla que sostiene la reputacion: un nodo solo cuenta inferencias que
+# ALGUIEN le pidio. Sin esto, ejecutar inferencia contra uno mismo —lo mas
+# barato de hacer y lo mas facil de multiplicar— seria indistinguible de
+# servir a la malla, y el ranking no significaria nada.
+
+def test_an_anchor_without_a_requester_is_refused():
+    """Sin solicitante no hay peticion de red que probar.
+
+    Un ancla v1 (que no tenia el campo) llega con el solicitante vacio y se
+    rechaza. La direccion del fallo importa: preferimos un registro que no
+    cuenta antes que uno que cuenta sin poder distinguir local de red.
+    """
+    key = Secp256k1KeyPair.new("n1")
+    with pytest.raises(ProtocolError) as ei:
+        AnchorRecord(membership_txid=TXID, membership_vout=0,
+                     membership_pubkey=key.public_key.hex(), satoshis=1,
+                     requester_pubkey="")
+    assert "solicitante" in str(ei.value)
+    assert "red" in str(ei.value)
+
+
+def test_a_self_requested_anchor_is_refused():
+    """El nodo pidiendo a si mismo es autoacreditacion, y no se ancla."""
+    key = Secp256k1KeyPair.new("n1")
+    with pytest.raises(ProtocolError) as ei:
+        AnchorRecord(membership_txid=TXID, membership_vout=0,
+                     membership_pubkey=key.public_key.hex(),
+                     requester_pubkey=key.public_key.hex(), satoshis=1)
+    assert "auto-solicitada" in str(ei.value)
+
+
+def test_a_requester_of_the_wrong_length_is_refused():
+    key = Secp256k1KeyPair.new("n1")
+    with pytest.raises(ProtocolError) as ei:
+        AnchorRecord(membership_txid=TXID, membership_vout=0,
+                     membership_pubkey=key.public_key.hex(),
+                     requester_pubkey="ab" * 5, satoshis=1)
+    assert "pubkey" in str(ei.value)
+
+
+def test_the_requester_is_inside_the_signed_payload():
+    """Cambiar el solicitante despues de firmar invalida la firma.
+
+    Si el campo no estuviera en el payload firmado, un nodo podria anclar una
+    peticion de otro y luego reescribir el solicitante por uno suyo para
+    convertirla en local (o al reves, para atribuir a otro). Es la misma
+    disciplina que el importe: firmado, aunque no sea de confianza.
+    """
+    key = Secp256k1KeyPair.new("n1")
+    rec = _record(key)
+    sig = rec.sign(key)
+    otro = Secp256k1KeyPair.new("otro")
+    cambiado = AnchorRecord(
+        membership_txid=TXID, membership_vout=rec.membership_vout,
+        membership_pubkey=key.public_key.hex(),
+        requester_pubkey=otro.public_key.hex(),
+        satoshis=rec.satoshis, occurred_at=rec.occurred_at)
+    ok, why = cambiado.verify(sig, _inclusion(TXID, 100), _header(TXID, 100))
+    assert not ok and "firma" in why
+
+
+def test_a_v1_record_cannot_come_back_as_an_inference():
+    """Un ancla v1 no tiene solicitante, y el formato v1 ya no se acepta.
+
+    Subir la version es lo que hace esto barato: no hace falta migrar los
+    registros viejos ni decidir que hacen, simplemente no vuelven a existir como
+    inferencias contables. El que se lea con `ver: 1` falla al construirse, y
+    por tanto tampoco verifica.
+    """
+    key = Secp256k1KeyPair.new("n1")
+    rec = _record(key)
+    sig = rec.sign(key)
+    v1 = rec.to_dict()
+    v1.pop("requester_pubkey")
+    v1["ver"] = 1
+    with pytest.raises(ProtocolError) as ei:
+        AnchorRecord.from_dict(v1)
+    assert "version" in str(ei.value)

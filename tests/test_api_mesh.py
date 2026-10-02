@@ -58,10 +58,12 @@ def mesh_paths(tmp_path, monkeypatch):
     return state, ident
 
 
-def contribute(client: TestClient, peer: str, vram: float, **kw) -> dict:
-    r = client.post("/api/mesh/contribute", params={"mesh_id": MESH},
-                    json={"peer_id": peer, "vram_gb": vram, "ram_gb": 64,
-                          "cpu_cores": 12, **kw})
+def contribute(client: TestClient, peer: str, vram: float, *,
+               vram_advertised: float | None = None, **kw) -> dict:
+    body = {"peer_id": peer, "vram_gb": vram, "ram_gb": 64, "cpu_cores": 12, **kw}
+    if vram_advertised is not None:
+        body["vram_advertised_gb"] = vram_advertised
+    r = client.post("/api/mesh/contribute", params={"mesh_id": MESH}, json=body)
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -106,14 +108,68 @@ def test_contribute_reuses_one_identity(client, mesh_paths):
     assert first == second          # mismo nodo, no dos
 
 
-def test_observe_accrues_credit(client, mesh_paths):
+def test_observe_does_not_credit_anything(client, mesh_paths):
+    """Observar anota uptime y nada mas.
+
+    Antes este endpoint acreditaba VRAM x horas, asi que una caja enchufada
+    generaba valor sin servir. La respuesta lo dice explicitamente
+    (`credits_accrued: false`) para que el cliente no lo lea como un descuido.
+    """
     contribute(client, "nodo-a", 8.0)
     j = observe(client, "nodo-a", 3600)
-    assert j["credits"] == pytest.approx(8.0)
     assert j["seconds_observed"] == 3600.0
+    assert j["credits_accrued"] is False
+    assert j["inferences_served"] == 0
     view = client.get("/api/mesh", params={"mesh_id": MESH}).json()
     assert view["peers"][0]["alive"] is True
     assert view["vram_verified_gb"] == pytest.approx(8.0)
+
+
+def test_infer_counts_history_only_with_an_anchor(client, mesh_paths):
+    """El camino del ingreso: una inferencia anclada, y solo esa."""
+    contribute(client, "nodo-a", 8.0)
+    observe(client, "nodo-a", 60)
+    # Sin ancla no cuenta.
+    r = client.post("/api/mesh/infer", params={"mesh_id": MESH},
+                    json={"peer_id": "nodo-a", "txid": ""})
+    assert r.status_code == 422
+    ok = client.post("/api/mesh/infer", params={"mesh_id": MESH},
+                    json={"peer_id": "nodo-a", "txid": "ab" * 32,
+                          "satoshis": 100})
+    assert ok.status_code == 200
+    assert ok.json()["inferences_served"] == 1
+    # Repetir la misma transaccion no cuenta dos veces.
+    again = client.post("/api/mesh/infer", params={"mesh_id": MESH},
+                        json={"peer_id": "nodo-a", "txid": "ab" * 32})
+    assert again.status_code == 400
+    assert "no_anchor" in again.json()["detail"]
+
+
+def test_reputation_is_the_ranking(client, mesh_paths):
+    contribute(client, "nodo-a", 8.0)
+    contribute(client, "nodo-b", 24.0)
+    observe(client, "nodo-a", 60)
+    observe(client, "nodo-b", 60)
+    for i in range(3):
+        client.post("/api/mesh/infer", params={"mesh_id": MESH},
+                    json={"peer_id": "nodo-a", "txid": f"{i:02x}" * 32,
+                          "satoshis": 100})
+    client.post("/api/mesh/infer", params={"mesh_id": MESH},
+                json={"peer_id": "nodo-b", "txid": "ff" * 32, "satoshis": 100})
+    j = client.get("/api/mesh/reputation", params={"mesh_id": MESH}).json()
+    # Tres inferencias de una caja de 8 GiC baten a una de una de 24 GiB.
+    assert [e["node_id"] for e in j["entries"]] == ["nodo-a", "nodo-b"]
+    assert j["total_inferences"] == 4
+    assert "saldos" not in j and "credits" not in j
+
+
+def test_a_node_that_offers_nothing_is_not_a_provider(client, mesh_paths):
+    """Un consumidor no acumula historial: el ranking muestra quien sirve."""
+    contribute(client, "cliente", 24.0, vram_advertised=0.0)
+    r = client.post("/api/mesh/infer", params={"mesh_id": MESH},
+                    json={"peer_id": "cliente", "txid": "ab" * 32})
+    assert r.status_code == 400
+    assert "not_a_provider" in r.json()["detail"]
 
 
 def test_observe_of_an_unknown_peer_is_400(client, mesh_paths):
@@ -235,13 +291,14 @@ def test_plan_requires_a_model(client, mesh_paths):
 
 
 # ------------------------------------------------------------------ check
-def test_check_reports_chain_and_balances(client, mesh_paths):
+def test_check_reports_chain_and_history(client, mesh_paths):
     contribute(client, "nodo-a", 8.0)
     observe(client, "nodo-a", 600)
     j = client.get("/api/mesh/check", params={"mesh_id": MESH}).json()
     assert j["ok"] is True
     assert j["chain_ok"] is True
-    assert j["negative_balances"] == []
+    assert j["inferences_served"] == 0
+    assert j["counted_anchors"] == 0
     assert j["not_proven"] and "atestación" in j["not_proven"]
 
 

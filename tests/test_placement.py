@@ -27,7 +27,7 @@ import json
 
 import pytest
 
-from delm.core.contrib import CapacityReport, ContributionLedger, ExchangePolicy
+from delm.core.contrib import CapacityReport, ContributionLedger
 from delm.core.placement import (
     DEFAULT_MESH_ENDPOINT,
     ModelSpec,
@@ -41,7 +41,6 @@ from delm.core.provenance import KeyPair
 
 MESH = "smcp-test"
 NOW = 1_000.0
-POLICY = ExchangePolicy(credits_per_gib_hour=1.0, baseline_credits=1.0)
 
 
 def mesh(*peers: tuple[str, float], observe_s: float = 3600.0,
@@ -57,7 +56,7 @@ def mesh(*peers: tuple[str, float], observe_s: float = 3600.0,
                              nonce=ch.nonce, issued_at=NOW,
                              expires_at=NOW + 3600).sign(key)
         assert led.admit(rep, now=NOW)[0]
-        led.observe(peer_id, NOW, dt_s=observe_s, policy=POLICY)
+        led.observe(peer_id, NOW, dt_s=observe_s,)
     return led
 
 
@@ -68,7 +67,7 @@ def spec(gb: float, **kw) -> ModelSpec:
 
 # --------------------------------------------------------------- el rechazo
 def test_no_peers_means_no_plan():
-    plan = plan_placement(spec(10.0), ContributionLedger(MESH), policy=POLICY)
+    plan = plan_placement(spec(10.0), ContributionLedger(MESH),)
     assert plan.ok is False
     assert plan.reason == PlanReject.NO_ADMITTED_PEERS.value
     assert "contribute" in " ".join(plan.notes)
@@ -80,75 +79,67 @@ def test_admitted_but_unobserved_nodes_are_distinguished():
     led = mesh(("a", 16.0), observe_s=0.0)     # admitido, nunca observado
     led.peers["a"].last_seen = 0.0
     led.peers["a"].seconds_observed = 0.0
-    plan = plan_placement(spec(8.0), led, policy=POLICY, observed_only=True)
+    plan = plan_placement(spec(8.0), led, observed_only=True)
     assert plan.reason == PlanReject.PEER_NOT_OBSERVED.value
 
 
-def test_an_unobserved_node_never_gets_a_stage():
+def test_an_unobserved_node_is_not_placed():
     """Un nodo que la malla no está viendo no puede servir inferencia.
 
-    `ExchangePolicy.require_alive_to_spend` es lo que lo impide: sin `observe`
-    no hay crédito, y sin crédito no hay stage — ni siquiera con VRAM de sobra.
-    ``require_credit=False`` es la válvula de diagnóstico y sí lo salta a
-    propósito, así que también se fija aquí ese contrato.
+    El filtro `observed_only` lo saca antes de que la capacidad sea
+    suficiente, así que el motivo es `PEER_NOT_OBSERVED` y no
+    `INSUFFICIENT_MESH_VRAM`: son arreglos distintos —esperar a que vuelva, o
+    más nodos— y el mensaje tiene que distinguirlos.
     """
     led = mesh(("a", 16.0), observe_s=0.0)
     led.peers["a"].last_seen = 0.0
-    strict = plan_placement(spec(8.0), led, policy=POLICY, observed_only=False)
-    assert strict.ok is False
-    assert strict.reason == PlanReject.INSUFFICIENT_CREDIT.value
-    # Diagnóstico: la válvula de escape, que es lo que la hace honesta.
-    diagnostic = plan_placement(spec(8.0), led, policy=POLICY,
-                                observed_only=False, require_credit=False)
-    assert diagnostic.ok is True
-    assert diagnostic.node_count == 1
-
-
-
-def test_not_enough_mesh_vram_says_how_much_is_missing():
-    led = mesh(("a", 16.0))
-    plan = plan_placement(spec(40.0), led, policy=POLICY)
+    plan = plan_placement(spec(8.0), led, observed_only=True)
     assert plan.ok is False
-    assert plan.reason == PlanReject.INSUFFICIENT_MESH_VRAM.value
-    assert "faltan 24.0G" in " ".join(plan.notes)
+    assert plan.reason == PlanReject.PEER_NOT_OBSERVED.value
 
 
-def test_a_spec_without_memory_is_refused_not_guessed():
-    led = mesh(("a", 64.0))
-    plan = plan_placement(spec(0.0), led, policy=POLICY)
-    assert plan.reason == PlanReject.SPEC_MISSING_MEMORY.value
+def test_a_node_that_offers_no_vram_is_not_placed():
+    """La puerta que queda: se coloca trabajo donde hay capacidad **ofrecida**.
 
-
-def test_reserve_can_make_every_node_unusable():
-    led = mesh(("a", 8.0))
-    plan = plan_placement(spec(4.0), led, policy=POLICY, reserve_gb=8.0)
-    assert plan.reason == PlanReject.PEER_TOO_SMALL.value
-
-
-def test_uncredited_nodes_are_excluded_from_the_mesh():
-    """La parte honesta del intercambio: VRAM sin crédito no se usa."""
+    Antes era "tiene crédito"; ahora es "ofrece VRAM a la malla", que es
+    exactamente lo que significa :attr:`vram_advertised_gb`. Un nodo con 64 GiB
+    físicos que no ofrece ni uno tiene la forma de un consumidor (nivel
+    `metered`), y darle una stage planificaría carga donde no se ofreció nada.
+    """
     led = ContributionLedger(MESH)
     key = KeyPair.new("a")
     ch = led.issue_challenge("a", now=NOW)
     rep = CapacityReport(mesh_id=MESH, peer_id="a", vram_gb=64.0,
-                       vram_advertised_gb=64.0, ram_gb=32.0,
+                         vram_advertised_gb=0.0, ram_gb=32.0,
                          cpu_cores=8, nonce=ch.nonce, issued_at=NOW,
                          expires_at=NOW + 3600).sign(key)
     led.admit(rep, now=NOW)
-    led.observe("a", NOW, dt_s=0.0)        # observado, pero 0 créditos ganados
-    strict = ExchangePolicy(baseline_credits=0.0)
-    plan = plan_placement(spec(8.0), led, policy=strict, require_credit=True)
-    assert plan.reason == PlanReject.INSUFFICIENT_CREDIT.value
+    led.observe("a", NOW, dt_s=0.0)
+    plan = plan_placement(spec(8.0), led, require_provider=True)
+    assert plan.reason == PlanReject.NOT_A_PROVIDER.value
     assert "a" in plan.detail["blocked"]
-    # Diagnóstico: con --no-credit el mismo nodo sí entra.
-    diag = plan_placement(spec(8.0), led, policy=strict, require_credit=False)
-    assert diag.ok is True and diag.node_count == 1
+    # Diagnóstico: la válvula de escape salta la *política*, no la física. Con
+    # 0 GiB ofrecidos sigue sin haber dónde colocar nada, y decir lo contrario
+    # sería un motivo de rechazo que no significa nada.
+    diag = plan_placement(spec(8.0), led, require_provider=False)
+    assert diag.ok is False
+    assert diag.reason == PlanReject.PEER_TOO_SMALL.value
+    # Si el mismo nodo ofreciera 8 GiB, entraría por la puerta del proveedor.
+    ok_report = CapacityReport(mesh_id=MESH, peer_id="a", vram_gb=64.0,
+                               vram_advertised_gb=8.0, ram_gb=32.0,
+                               cpu_cores=8, nonce=led.issue_challenge(
+                                   "a", now=NOW).nonce, issued_at=NOW,
+                               expires_at=NOW + 3600).sign(key)
+    led.admit(ok_report, now=NOW)
+    led.observe("a", NOW, dt_s=60)
+    good = plan_placement(spec(8.0), led, require_provider=True)
+    assert good.ok is True and good.peers == ("a",)
 
 
 # ------------------------------------------------------------------ el plan
 def test_single_node_plan_when_it_fits():
     led = mesh(("a", 16.0), ("b", 24.0))
-    plan = plan_placement(spec(14.0), led, policy=POLICY)
+    plan = plan_placement(spec(14.0), led)
     assert plan.ok is True
     assert plan.single_node is True
     assert plan.node_count == 1
@@ -161,7 +152,7 @@ def test_single_node_plan_when_it_fits():
 
 def test_multi_node_split_is_proportional_to_verified_vram():
     led = mesh(("a", 8.0), ("b", 16.0), ("c", 24.0))
-    plan = plan_placement(spec(40.0), led, policy=POLICY, reserve_gb=1.0)
+    plan = plan_placement(spec(40.0), led, reserve_gb=1.0)
     assert plan.ok is True
     assert plan.node_count == 3
     assert plan.peers == ("c", "b", "a")           # mayor VRAM primero
@@ -175,17 +166,17 @@ def test_multi_node_split_is_proportional_to_verified_vram():
 
 def test_stages_sum_exactly_to_the_requirement():
     led = mesh(("a", 8.0), ("b", 16.0), ("c", 24.0), ("d", 7.0))
-    plan = plan_placement(spec(53.0), led, policy=POLICY)
+    plan = plan_placement(spec(53.0), led)
     assert sum(s.memory_gb for s in plan.stages) == pytest.approx(53.0, abs=1e-6)
     # También con 1e-9 de ruido: la suma tiene que seguir cuadrando.
-    plan2 = plan_placement(spec(53.37), led, policy=POLICY)
+    plan2 = plan_placement(spec(53.37), led)
     assert sum(s.memory_gb for s in plan2.stages) == pytest.approx(53.37,
                                                                    abs=1e-6)
 
 
 def test_layer_ranges_tile_the_model_when_the_count_is_known():
     led = mesh(("a", 8.0), ("b", 16.0), ("c", 24.0))
-    plan = plan_placement(spec(40.0, n_layers=64), led, policy=POLICY)
+    plan = plan_placement(spec(40.0, n_layers=64), led)
     ranges = [(s.first_layer, s.last_layer) for s in plan.stages]
     assert ranges[0][0] == 0
     assert ranges[-1][1] == 63
@@ -197,7 +188,7 @@ def test_layer_ranges_tile_the_model_when_the_count_is_known():
 def test_without_layer_count_the_plan_is_by_memory():
     """Lo que ocurre siempre con llmfit: no publica nº de capas."""
     led = mesh(("a", 16.0), ("b", 24.0))
-    plan = plan_placement(spec(30.0), led, policy=POLICY)
+    plan = plan_placement(spec(30.0), led)
     assert all(s.first_layer is None and s.last_layer is None
                for s in plan.stages)
     assert "no publica nº de capas" in " ".join(plan.notes)
@@ -205,40 +196,36 @@ def test_without_layer_count_the_plan_is_by_memory():
 
 def test_a_one_layer_model_still_gets_a_valid_range():
     led = mesh(("a", 8.0), ("b", 16.0))
-    plan = plan_placement(spec(20.0, n_layers=1), led, policy=POLICY)
+    plan = plan_placement(spec(20.0, n_layers=1), led)
     ranges = [(s.first_layer, s.last_layer) for s in plan.stages]
     assert ranges[-1][1] == 0
     assert all(r[1] is not None for r in ranges)
 
 
-def test_credits_are_charged_per_stage_and_proportional():
+def test_a_stage_carries_no_earnings():
+    """El plan no dice cuanto gana el nodo, porque no lo sabe.
+
+    Cuantas inferencias se ejecutaran sobre una stage lo decide el uso, no el
+    plan. Poner un "lo que vas a ganar" aqui seria un numero inventado, y un
+    numero inventado en la columna de ingresos es peor que ninguna columna.
+    """
     led = mesh(("a", 8.0), ("b", 16.0), ("c", 24.0))
-    plan = plan_placement(spec(40.0), led, policy=POLICY)
-    total = sum(s.credits_cost for s in plan.stages)
-    assert total == pytest.approx(POLICY.request_cost(), abs=1e-6)
-    # El nodo que más aporta es el que más paga: la proporción es la misma.
-    biggest = max(plan.stages, key=lambda s: s.memory_gb)
-    assert biggest.credits_cost > min(s.credits_cost for s in plan.stages)
+    plan = plan_placement(spec(40.0), led)
+    assert not hasattr(plan.stages[0], "credits_cost")
+    assert "credits" not in plan.stages[0].to_dict()
 
 
-def test_charged_false_costs_nothing():
-    led = mesh(("a", 8.0), ("b", 16.0))
-    plan = plan_placement(spec(20.0), led, policy=POLICY, charged=False)
-    assert all(s.credits_cost == 0.0 for s in plan.stages)
-
-
-# ------------------------------------------------------------ determinismo
 def test_the_same_ledger_gives_a_byte_identical_plan():
     led = mesh(("a", 8.0), ("b", 16.0), ("c", 24.0))
     s = spec(40.0, n_layers=64)
-    first = plan_json(plan_placement(s, led, policy=POLICY, reserve_gb=1.0))
-    second = plan_json(plan_placement(s, led, policy=POLICY, reserve_gb=1.0))
+    first = plan_json(plan_placement(s, led, reserve_gb=1.0))
+    second = plan_json(plan_placement(s, led, reserve_gb=1.0))
     assert first == second
 
 
 def test_plan_roundtrips_for_audit_replay():
     led = mesh(("a", 8.0), ("b", 16.0), ("c", 24.0))
-    plan = plan_placement(spec(40.0, n_layers=64), led, policy=POLICY)
+    plan = plan_placement(spec(40.0, n_layers=64), led)
     back = plan_from_dict(json.loads(plan_json(plan)))
     assert back.to_dict() == plan.to_dict()
     assert back.render() == plan.render()
@@ -246,14 +233,14 @@ def test_plan_roundtrips_for_audit_replay():
 
 def test_render_is_deterministic_and_shows_the_verdict():
     led = mesh(("a", 8.0), ("b", 16.0))
-    plan = plan_placement(spec(20.0, n_layers=32), led, policy=POLICY)
+    plan = plan_placement(spec(20.0, n_layers=32), led)
     text = plan.render()
     assert text == plan.render()
     assert "plan OK" in text
     assert "0-" in text and "21-31" in text   # los rangos de capas se pintan
     assert DEFAULT_MESH_ENDPOINT in text
 
-    bad = plan_placement(spec(400.0), led, policy=POLICY)
+    bad = plan_placement(spec(400.0), led)
     assert "rechazado" in bad.render()
     assert "insufficient_mesh_vram" in bad.render()
     assert "plan OK" not in bad.render()
@@ -288,11 +275,11 @@ def test_spec_serialisation_survives_json():
 def test_endpoint_hint_from_the_model_wins_over_the_default():
     led = mesh(("a", 16.0))
     plan = plan_placement(spec(8.0, endpoint_hint="http://10.0.0.5:9337/v1"), led,
-                          policy=POLICY)
+                         )
     assert plan.endpoint == "http://10.0.0.5:9337/v1"
     # ... y un --endpoint explícito gana sobre el hint del modelo.
     plan2 = plan_placement(spec(8.0, endpoint_hint="http://10.0.0.5:9337/v1"),
-                           led, policy=POLICY, endpoint="http://127.0.0.1:1/v1")
+                           led, endpoint="http://127.0.0.1:1/v1")
     assert plan2.endpoint == "http://127.0.0.1:1/v1"
 
 

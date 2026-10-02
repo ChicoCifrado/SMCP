@@ -411,15 +411,16 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
         return _mesh_tiers(args)
     if action == "anchor":
         return _mesh_anchor(args)
+    if action == "infer":
+        return _mesh_infer(args)
+    if action == "reputation":
+        return _mesh_reputation(args)
     return 2
 
 
 def _mesh_status(args: argparse.Namespace) -> int:
-    from delm.core.contrib import ExchangePolicy
-
     state, _ = _mesh_paths(args)
     led = _load_exchange(state, args.mesh_id)
-    policy = ExchangePolicy()
     peers = led.admitted_peers(observed_only=False)
     print(f"=== smcp mesh ({args.mesh_id}) ===")
     print(f"estado     : {state}{'' if state.exists() else ' (aún no existe)'}")
@@ -433,13 +434,15 @@ def _mesh_status(args: argparse.Namespace) -> int:
         print("— ningún nodo ha aportado capacidad todavía —")
         print("  delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12")
         return 0
-    print("  nodo                 vram    observado  créditos  disposición")
+    print("  nodo                 vram    ofrece   observado  inferencias  sats")
     for p in peers:
         print(f"  {p.peer_id[:20]:<20} {p.vram_gb:>5.1f}G "
+              f"{p.vram_advertised_gb:>6.1f}G "
               f"{('sí' if p.alive else 'NO'):>9} "
-              f"{p.credits_available:>9.2f} "
-              f"{policy.entitlement(p):>10.2f}")
+              f"{p.inferences_served:>11} {p.satoshis_earned:>5}")
     print()
+    print("no hay saldo ni moneda interna: el valor es el satoshi y se mueve "
+          "en la cadena. Las inferencias son historial (delm mesh reputation).")
     print("nota: la capacidad es una afirmación *firmada* de la identidad, no "
           "una atestación de hardware (ver docs/threat-model.md).")
     return 0
@@ -578,6 +581,52 @@ def _mesh_release(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 2
     print(f"reserva liberada: {args.reservation_id} ({out})")
+    return 0
+
+
+def _mesh_infer(args: argparse.Namespace) -> int:
+    """Cuenta una inferencia verificada en el historial del nodo.
+
+    Es el camino del ingreso, y es el **unico**. No acepta el importe: el
+    satoshi no se acredita aqui, se lee de la cadena. Solo el txid, que es lo
+    que lets un tercero volver a verificar lo mismo.
+    """
+    from delm.core.contrib import ContributionLedger
+
+    state, _ = _mesh_paths(args)
+    led = _load_exchange(state, args.mesh_id)
+    ok, reason = led.record_inference(args.peer_id, txid=args.txid,
+                                      satoshis=args.satoshis)
+    if not ok:
+        print(f"no cuenta ({reason}): {args.peer_id} / {args.txid[:16] or '(sin ancla)'}…",
+              file=sys.stderr)
+        return 2
+    state.parent.mkdir(parents=True, exist_ok=True)
+    led.save(str(state))
+    peer = led.peers[args.peer_id]
+    print(f"contada   : {args.peer_id} · {peer.inferences_served} inferencias "
+          f"· {peer.satoshis_earned} sats acumulados")
+    print(f"motivo    : {reason}")
+    print("recuerda  : un txid repetido no cuenta dos veces, y una inferencia "
+          "local (solicitante == nodo) no se ancla.")
+    return 0
+
+
+def _mesh_reputation(args: argparse.Namespace) -> int:
+    """El ranking: cuantosUe ha servido cada nodo, y en que orden."""
+    from delm.core.contrib import ContributionLedger
+    from delm.core.reputation import board_from_counters
+
+    state, _ = _mesh_paths(args)
+    led = _load_exchange(state, args.mesh_id)
+    board = board_from_counters(led)
+    if args.json:
+        print(json.dumps(board.to_dict(), indent=2, sort_keys=True))
+    else:
+        print(board.render())
+    pos = board.position(args.peer_id) if args.peer_id else None
+    if pos:
+        print(f"posicion  : {args.peer_id} es #{pos} de {len(board)}")
     return 0
 
 
@@ -779,26 +828,24 @@ def _mesh_membership(args: argparse.Namespace) -> int:
 
 
 def _mesh_observe(args: argparse.Namespace) -> int:
-    from delm.core.contrib import ExchangePolicy
-
     state, _ = _mesh_paths(args)
     led = _load_exchange(state, args.mesh_id)
-    policy = ExchangePolicy()
     now = time.time()
-    peer = led.observe(args.peer_id, now, dt_s=args.seconds, policy=policy)
+    peer = led.observe(args.peer_id, now, dt_s=args.seconds)
     if peer is None:
         print(f"error: {args.peer_id} no está admitido; usa "
               f"`delm mesh contribute` primero.", file=sys.stderr)
         return 2
     led.save(str(state))
     print(f"{args.peer_id}: +{args.seconds:.0f}s observado · "
-          f"créditos {peer.credits:.3f} · disponibles {peer.credits_available:.3f}")
+          f"inferencias servidas {peer.inferences_served}")
+    print("nota: observar NO acredita nada. El historial sube solo con "
+          "`delm mesh infer` (una inferencia con ancla verificada).")
     return 0
 
 
 def _mesh_plan(args: argparse.Namespace) -> int:
     """Size a model with llmfit, then decide who hosts it across the mesh."""
-    from delm.core.contrib import ExchangePolicy
     from delm.core.llmfit import LlmfitError, LlmfitRunner
     from delm.core.placement import ModelSpec, plan_placement
 
@@ -822,9 +869,9 @@ def _mesh_plan(args: argparse.Namespace) -> int:
             return 2
         spec = ModelSpec.from_fit_row(row, name=row.name)
 
-    plan = plan_placement(spec, led, policy=ExchangePolicy(),
+    plan = plan_placement(spec, led,
                           reserve_gb=args.reserve_gb,
-                          require_credit=not args.no_credit,
+                          require_provider=not args.no_provider,
                           endpoint=args.endpoint)
     if args.json:
         print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
@@ -845,14 +892,11 @@ def _spec_from_args(args: argparse.Namespace):
 
 def _mesh_check(args: argparse.Namespace) -> int:
     """Audit the exchange: chain integrity, balances, and what it does not prove."""
-    from delm.core.contrib import ExchangePolicy
-
     state, _ = _mesh_paths(args)
     if not state.exists():
         print(f"no hay estado de malla en {state}", file=sys.stderr)
         return 2
     led = _load_exchange(state, args.mesh_id)
-    policy = ExchangePolicy()
     chain_ok = led.verify_chain()
     print(f"=== smcp mesh check ({args.mesh_id}) ===")
     print(f"estado    : {state}")
@@ -862,16 +906,15 @@ def _mesh_check(args: argparse.Namespace) -> int:
     print(f"rechazos  : {len(rejected)}")
     for r in rejected[-5:]:
         print(f"  - seq {r.seq} {r.peer_id}: {r.reason}")
-    bad = [p.peer_id for p in led.peers.values() if p.credits_available < -1e-9]
-    print(f"saldos    : {'todos >= 0' if not bad else 'NEGATIVOS: ' + ', '.join(bad)}")
+    print(f"historial : {sum(p.inferences_served for p in led.peers.values())} "
+          f"inferencias contadas · {len(led.counted_txids())} anclas")
     for p in led.admitted_peers(observed_only=False):
-        print(f"  {p.peer_id}: allocates {p.vram_gb:.1f}G · observed "
-              f"{p.seconds_observed:.0f}s · entitlement "
-              f"{policy.entitlement(p):.3f}")
+        print(f"  {p.peer_id}: ofrece {p.vram_advertised_gb:.1f}G · observed "
+              f"{p.seconds_observed:.0f}s · sirvio {p.inferences_served}")
     print()
     print("lo que esto NO prueba: que la VRAM declarada exista. No hay "
           "atestación de hardware; es una afirmación firmada y auditable.")
-    return 0 if chain_ok and not bad else 2
+    return 0 if chain_ok else 2
 
 
 # ----------------------------------------------------------------- parser
@@ -885,9 +928,11 @@ def build_parser() -> argparse.ArgumentParser:
                "  delm demo security        # Capas 1+2\n"
                "  delm demo multihost       # 2 nodos sobre QUIC\n"
                "  delm demo real --dry-run  # resuelve la config, no llama al modelo\n"
-               "  delm mesh status           # quien contribuye y cuanto tiene de credito\n"
+               "  delm mesh status           # quien publica VRAM y cuanto ha servido\n"
                "  delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12\n"
                "  delm mesh plan <modelo>    # repartir un modelo entre los nodos\n"
+               "  delm mesh infer --txid <tx>  # contar una inferencia verificada\n"
+               "  delm mesh reputation       # ranking de quien ha servido\n"
                "  delm fit                  # que modelos caben en esta maquina\n"
                "  delm fit --check          # el modelo de la config cabe aqui?\n"
                "  delm test                 # la suite (por defecto: -m 'not slow')\n"
@@ -1059,9 +1104,10 @@ def build_parser() -> argparse.ArgumentParser:
     m_pl.add_argument("--quant", default="", help="quant (nota informativa)")
     m_pl.add_argument("--reserve-gb", type=float, default=0.0,
                       help="VRAM que se reserva por nodo (no se ofrece)")
-    m_pl.add_argument("--no-credit", action="store_true",
-                      help="ignorar el crédito (planifica aunque no haya "
-                           "pagado: solo para diagnóstico)")
+    m_pl.add_argument("--no-provider", action="store_true",
+                      help="planificar también contra nodos que no publican "
+                           "VRAM (solo diagnóstico: coloca carga donde no "
+                           "hay capacidad ofrecida)")
     m_pl.add_argument("--memory", default=None, help="override de VRAM a llmfit")
     m_pl.add_argument("--ram", default=None, help="override de RAM a llmfit")
     m_pl.add_argument("--cpu-cores", type=int, default=None,
@@ -1071,7 +1117,25 @@ def build_parser() -> argparse.ArgumentParser:
                       help="segundos de espera para llmfit")
     m_pl.add_argument("--json", action="store_true", help="plan en JSON")
 
-    m_ck = msub.add_parser("check", help="auditar cadena y saldos")
+    m_in = msub.add_parser(
+        "infer", help="cuenta una inferencia verificada en el historial")
+    _mesh_common(m_in)
+    m_in.add_argument("--peer-id", default="local",
+                      help="el nodo que la sirvio (default: local)")
+    m_in.add_argument("--txid", required=True,
+                      help="txid de la transaccion que la ancla: la prueba")
+    m_in.add_argument("--satoshis", type=int, default=0,
+                      help="satoshis de la ancla (historial; el saldo esta "
+                           "en la cadena)")
+
+    m_rep = msub.add_parser(
+        "reputation", help="ranking de inferencias servidas por nodo")
+    _mesh_common(m_rep)
+    m_rep.add_argument("--peer-id", default=None,
+                       help="muestra tambien la posicion de este nodo")
+    m_rep.add_argument("--json", action="store_true", help="ranking en JSON")
+
+    m_ck = msub.add_parser("check", help="auditar cadena e historial")
     _mesh_common(m_ck)
 
     # Reservas dedicadas (tier de pago único). Un libro de reservas es

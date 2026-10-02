@@ -22,7 +22,7 @@ What "admissible" means here, and what it does not:
 * **Checked:** total admitted VRAM covers the model's requirement; every stage
   fits in its host's *admitted* VRAM minus a reserve; no peer is overcommitted
   by two concurrent plans; every contributing peer is currently observed and
-  has the credit to pay for its share.
+  publishes VRAM to the mesh.
 * **Not checked:** that the weights can actually be fetched, that the hosts are
   bandwidth-connected, or that a specific layer→stage mapping is efficient. The
   plan is a *decision record* — deterministic, replayable, and the thing you
@@ -36,12 +36,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Sequence
 
-from delm.core.contrib import (
-    ContribReject,
-    ContributionLedger,
-    ExchangePolicy,
-    capacity_is_intact,
-)
+from delm.core.contrib import ContributionLedger, capacity_is_intact
 
 __all__ = [
     "PlanReject",
@@ -66,7 +61,8 @@ class PlanReject(str, Enum):
     INSUFFICIENT_MESH_VRAM = "insufficient_mesh_vram"
     PEER_TOO_SMALL = "peer_too_small"
     PEER_NOT_OBSERVED = "peer_not_observed"
-    INSUFFICIENT_CREDIT = "insufficient_credit"
+    NO_PROVIDERS = "no_providers"
+    NOT_A_PROVIDER = "not_a_provider"
     SPEC_MISSING_MEMORY = "spec_missing_memory"
     SPEC_NOT_FITTABLE = "spec_not_fittable"   # even an unbounded mesh can't
     #: capacidad admitida que no supera el digest firmado al admitirla
@@ -134,7 +130,6 @@ class Stage:
     peer_ram_gb: float = 0.0
     first_layer: int | None = None
     last_layer: int | None = None
-    credits_cost: float = 0.0
 
     @property
     def utilization(self) -> float:
@@ -163,7 +158,6 @@ class Stage:
                 "peer_vram_available_gb": self.peer_vram_available_gb,
                 "peer_ram_gb": self.peer_ram_gb,
                 "first_layer": self.first_layer, "last_layer": self.last_layer,
-                "credits_cost": round(self.credits_cost, 6),
                 "utilization": self.utilization}
 
 
@@ -213,15 +207,15 @@ class PlacementPlan:
             return "\n".join(out)
         out.append(f"veredicto : {self.reason} · {self.node_count} nodo(s)")
         out.append("")
-        out.append("  nodo                 memoria  vmax  ofrece  usa  disp    uso    layers   credits")
+        out.append("  nodo                 memoria  vmax  ofrece  usa  disp    uso    layers")
         for s in self.stages:
             layers = ("-" if s.first_layer is None
                       else f"{s.first_layer}-{s.last_layer}")
             out.append(f"  {s.peer_id[:20]:<20} {s.memory_gb:>6.1f}G "
                        f"{s.peer_vram_gb:>5.0f}G {s.peer_advertised_gb:>5.1f}G "
-            f"{s.peer_shared_gb:>4.1f}G {s.peer_vram_available_gb:>5.1f}G "
-            f"{s.utilization:>5.0%} "
-                       f"{layers:>8} {s.credits_cost:>8.3f}")
+                       f"{s.peer_shared_gb:>4.1f}G "
+                       f"{s.peer_vram_available_gb:>5.1f}G "
+                       f"{s.utilization:>5.0%} {layers:>8}")
         for note in self.notes:
             out.append(f"  · {note}")
         out.append("=== plan OK ===")
@@ -254,12 +248,11 @@ def _assign_layers(spec: ModelSpec, sizes: Sequence[float]) -> list[tuple[int | 
 
 
 def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
-                   policy: ExchangePolicy | None = None,
                    reserve_gb: float = 0.0,
-                   require_credit: bool = True,
+                   require_provider: bool = True,
                    observed_only: bool = True,
                    endpoint: str | None = None,
-                   charged: bool = True) -> PlacementPlan:
+                   ) -> PlacementPlan:
     """Decide how *spec* is split across the mesh's admitted capacity.
 
     The algorithm is deliberately greedy and boring — biggest verified VRAM
@@ -268,10 +261,12 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
     plan is byte-identical, so a plan can be logged, replayed and compared
     between observers (see :meth:`ContributionLedger.state_digest`).
 
-    ``require_credit`` is what makes the exchange enforceable: a peer that has
-    not earned credit does not get a stage, however much VRAM it claims.
+    ``require_provider`` is what keeps the mesh honest about what it places:
+    a peer that offers no VRAM is a **consumer** (see
+    :mod:`delm.core.tiers`), and giving it a stage would mean scheduling work
+    on a machine that never offered capacity. The old rule was "must have
+    credit", which was the same idea wearing a currency it did not need.
     """
-    policy = policy or ExchangePolicy()
     total_vram = ledger.total_vram_gb(observed_only=observed_only)
     # Anotacion explicita: sin ella pyright infiere `dict[str, str | float]`
     # (el valor comun de los literales) y cada `PlacementPlan(**base)` de la
@@ -336,9 +331,29 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
     # against the physical maximum, which would be planning against hardware
     # the owner never offered. reserve_gb then comes off the top, per node, as
     # an operator-level keep-out rather than the node's own decision.
+    # La puerta de proveedor va ANTES que la de tamaño. "No ofrece VRAM" y
+    # "ofrece muy poca" son arreglos distintos —publicar capacidad, o
+    # esperar a un nodo más grande— y si el filtro de tamaño se come al
+    # primero, el operador recibe un diagnóstico que no le sirve.
+    if require_provider:
+        providers = [p for p in candidates if p.vram_advertised_gb > 0]
+        non_providers = [p for p in candidates if p.vram_advertised_gb <= 0]
+    else:
+        providers, non_providers = candidates, []
+
     usable = [(p, max(0.0, p.vram_available_gb - reserve_gb))
-              for p in candidates]
+              for p in providers]
     usable = [(p, v) for p, v in usable if v > 0]
+    if not usable and non_providers:
+        _sin_proveedores = ("ningún nodo ofrece VRAM a la malla: "
+                            + ", ".join(sorted(p.peer_id
+                                               for p in non_providers))
+                            + ". Un nodo que consume no puede alojar carga.")
+        return PlacementPlan(ok=False, reason=PlanReject.NOT_A_PROVIDER.value,
+                             notes=(_sin_proveedores,),
+                             detail={"blocked": sorted(p.peer_id
+                                                      for p in non_providers)},
+                             **base)
     if not usable:
         return PlacementPlan(ok=False, reason=PlanReject.PEER_TOO_SMALL.value,
                              notes=(f"todos los nodos están por debajo del usable "
@@ -351,23 +366,14 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
     for peer, free in usable:
         if covered >= spec.memory_required_gb:
             break
-        if require_credit and not policy.can_spend(peer, policy.credits_per_request):
-            blocked.append(peer.peer_id)
-            continue
         picked.append((peer, free))
         covered += free
     if not picked:
-        # Un solo rechazo accionable. La tupla vacia de la rama `else` es lo
-        # que pyright no unia con `tuple[str]`: al declararla aqui, la
-        # anotacion manda y la rama `()` deja de romper la inferencia.
-        _motivo = PlanReject.INSUFFICIENT_CREDIT.value if blocked else PlanReject.PEER_TOO_SMALL.value
-        _notas_bloqueo: tuple[str, ...] = (
-            ("nodos con VRAM pero sin crédito: " + ", ".join(blocked),)
-            if blocked
-            else ()
-        )
+        # La rama ya no tiene dos motivos: la puerta de proveedor se resolvio
+        # antes, asi que llegar aqui es "todo el mundo es demasiado pequeño".
+        _notas_bloqueo: tuple[str, ...] = ()
         return PlacementPlan(ok=False,
-                             reason=_motivo,
+                             reason=PlanReject.PEER_TOO_SMALL.value,
                              notes=_notas_bloqueo,
                              detail={"blocked": blocked}, **base)
 
@@ -399,9 +405,6 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
             peer_advertised_gb=peer.vram_advertised_gb,
             peer_shared_gb=peer.vram_shared_gb,
             peer_ram_gb=peer.ram_gb,
-            credits_cost=(round(policy.request_cost() * memory
-                                / max(spec.memory_required_gb, 1e-9), 6)
-                          if charged else 0.0),
         ))
     # Absorb rounding into the largest stage so the sum is exact.
     if stages:
@@ -451,8 +454,7 @@ def plan_from_dict(d: dict[str, Any]) -> PlacementPlan:
             peer_advertised_gb=float(s.get("peer_advertised_gb", 0.0) or 0.0),
             peer_shared_gb=float(s.get("peer_shared_gb", 0.0) or 0.0),
             peer_ram_gb=float(s.get("peer_ram_gb", 0.0) or 0.0),
-            first_layer=s.get("first_layer"), last_layer=s.get("last_layer"),
-            credits_cost=float(s.get("credits_cost", 0.0) or 0.0))
+            first_layer=s.get("first_layer"), last_layer=s.get("last_layer"))
             for s in d.get("stages", [])),
         endpoint=str(d.get("endpoint", DEFAULT_MESH_ENDPOINT)),
         single_node=bool(d.get("single_node", False)),

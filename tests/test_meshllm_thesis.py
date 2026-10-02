@@ -1,29 +1,31 @@
-"""La tesis del intercambio, contra un endpoint REAL (P2, opt-in).
+"""La tesis contra un endpoint REAL (opt-in, ``slow``).
 
-Por qué este archivo y `test_exchange_thesis.py` son distintos:
+Por qué este archivo y ``test_exchange_thesis.py`` son distintos:
 
-- `test_exchange_thesis.py` prueba la cadena **offline**, con un doble
-  determinista (`FakeLLMClient`). Es la que corre en CI.
-- Este prueba que la misma cadena funciona contra **un LLM de verdad**, y
-  sobre todo que la **mediación** del crédito se sostiene cuando hay una
-  llamada de red de por medio.
+* ``test_exchange_thesis.py`` prueba la cadena **offline**, con anclas
+  verificadas contra una cabecera construida en el test. Es la que corre en CI.
+* Este prueba que la cadena cierra contra **una inferencia de verdad**: una
+  llamada a un endpoint OpenAI-compatible de verdad, con un modelo de verdad.
 
-Eso último es lo que los tests offline no pueden ver. Que
-`MeteredLLMClient` cobre el crédito y luego delegue es correcto en un doble;
-en la realidad hay un `await` a un endpoint ajeno, un timeout, una
-respuesta vacía, y el crédito ya está debitado. **Si el cobro ocurre antes
-de que la inferencia funcione, el sistema cobra por nada.** Estos tests lo
-comprueban contra hardware.
+Eso ultimo es lo que los tests offline no pueden ver. Que el nodo pueda
+**anclar** lo que sirvió contra hardware real: el contenido de la respuesta no
+se publica (la decisión de `anchor.py` sigue en pie), pero el registro tiene que
+construirse, firmarse con la clave de membresía y admitir la inclusion de la
+transacción. Si eso fallara contra un endpoint de verdad, el historial no
+subiría y el intercambio no existiría.
 
 ``slow`` y opt-in: se skipea si no hay endpoint. Sin CI hard-dependency.
 
+Lo que **ya no** se prueba aqui, y por qué: que el crédito decided si la
+inferencia se servía. No hay crédito — el valor es el satoshi y se mueve en la
+cadena—, así que la mediación que queda es de otro sitio y ya está cubierta
+offline: un nodo que no ofrece VRAM no recibe carga (``test_placement.py``) y
+una inferencia sin ancla no sube ningún contador (``test_exchange_thesis.py``).
+
 Run manual::
 
-    MESH_LLM_URL=http://127.0.0.1:8888/v1 \
+    MESH_LLM_URL=http://127.0.0.1:9337/v1 \
       python -m pytest tests/test_meshllm_thesis.py -m slow -v
-
-Los tests que NO necesitan inferencia (los de crédito insuficiente) corren
-igualmente con endpoint: la mediación se decide antes de llamar al modelo.
 """
 from __future__ import annotations
 
@@ -35,15 +37,14 @@ import urllib.request
 
 import pytest
 
-from delm.core.contrib import (
-    CapacityReport,
-    ContributionLedger,
-    ExchangePolicy,
-    MeteredLLMClient,
-)
+from delm.core.anchor import AnchorLedger, AnchorRecord
+from delm.core.bsv_keys import Secp256k1KeyPair
+from delm.core.contrib import CapacityReport, ContributionLedger
 from delm.core.llm import OpenAICompatibleClient
+from delm.core.membership import BlockHeader, InclusionProof, MembershipOutput, merkle_root
 from delm.core.placement import ModelSpec, plan_placement
 from delm.core.provenance import KeyPair
+from delm.core.reputation import board_from_counters
 
 MESH_URL = os.environ.get("MESH_LLM_URL", "http://127.0.0.1:8888/v1")
 PROBE_TIMEOUT = float(os.environ.get("MESH_PROBE_TIMEOUT", "10.0"))
@@ -67,175 +68,138 @@ def _probe(url: str) -> str | None:
 
 
 def _admit(led: ContributionLedger, peer: str, vram: float, key: KeyPair,
-           mesh: str, now: float, *, seconds: float = 1800.0,
-           policy: ExchangePolicy | None = None) -> float:
-    """Report firmado + observado -> devuelve el credito disponible.
-
-    Mismo camino que en producción: `issue_challenge` (nonce de la malla) →
-    `report` firmado por el par → `admit`. Saltarse el reto haría que el
-    test no midiera nada real.
-
-    El credito lo acumula `observe(peer, now, dt_s=...)` — el intervalo que
-    el observador avala, no un reloj que corre por su cuenta.
-    """
+           mesh: str, now: float, *, seconds: float = 1800.0) -> bool:
+    """Firma y admite una capacidad, y marca el nodo como observado."""
     ch = led.issue_challenge(peer, now=now)
-    rep = CapacityReport(
-        mesh_id=mesh, peer_id=peer, vram_gb=vram,
-        vram_advertised_gb=vram, ram_gb=vram * 2,
-        cpu_cores=8, backend="cuda", nonce=ch.nonce,
-        issued_at=now, expires_at=now + 3600.0,
-    ).sign(key)
-    ok, why = led.admit(rep, now=now)
-    assert ok, f"el report firmado debe admitirse: {why}"
-    pol = policy if policy is not None else ExchangePolicy()
-    led.observe(peer, now=now + seconds, dt_s=seconds, policy=pol)
-    return led.peers[peer].credits_available
+    rep = CapacityReport(mesh_id=mesh, peer_id=peer, vram_gb=vram,
+                         vram_advertised_gb=vram, ram_gb=32.0, cpu_cores=8,
+                         nonce=ch.nonce, issued_at=now,
+                         expires_at=now + 3600).sign(key)
+    ok, _ = led.admit(rep, now=now)
+    if ok and seconds:
+        led.observe(peer, now, dt_s=seconds)
+    return ok
 
 
-# --------------------------------------------------------------- la tesis
+def _served_inference(model_id: str) -> str:
+    """One real completion. Returns the text the endpoint actually produced."""
+    client = OpenAICompatibleClient(model=model_id, base_url=MESH_URL,
+                                    api_key=os.environ.get("MESH_LLM_KEY",
+                                                           "dummy"),
+                                    timeout=120.0)
+    out = asyncio.run(client.complete(
+        "responde con una sola palabra: listo", max_tokens=MAX_TOKENS))
+    assert isinstance(out, str) and out.strip(), "respuesta vacía del endpoint"
+    return out
+
+
+# ------------------------------------------------------------------- la tesis
 @pytest.mark.slow
-def test_credit_gates_a_real_inference_end_to_end():
-    """La cadena completa contra un endpoint real:_place, cobrar, inferir.
+def test_a_real_inference_can_be_anchored_and_counted():
+    """El nodo sirve de verdad, y lo que sirvió lo puede demostrar.
 
-    Es el test que `test_exchange_thesis.py` no puede hacer. Cada paso es el
-    de producción: report firmado -> observe -> plan -> cliente metered ->
-    endpoint de verdad.
+    El paso que importa es el ultimo: la respuesta **no** se publica (el
+    contenido no va al ancla, por decision de diseno), pero el registro se
+    construye y verifica. Si contra un endpoint real el ancla no se pudiera
+    armar, el historial no subiria nunca y el intercambio seria decorativo.
     """
-    model = _probe(MESH_URL)
-    if model is None:
-        pytest.skip(f"no hay endpoint en {MESH_URL} (opt-in; usa MESH_LLM_URL)")
+    model_id = _probe(MESH_URL)
+    if model_id is None:
+        pytest.skip(f"sin endpoint en {MESH_URL} (MESH_LLM_URL)")
 
-    mesh = "smcp-p2-real"
-    now = 1000.0
+    mesh, now = "malla-real", 1_000.0
     led = ContributionLedger(mesh)
-    key = KeyPair.new("nodo-real")
-    policy = ExchangePolicy(credits_per_gib_hour=10.0, baseline_credits=0.0,
-                            require_alive_to_spend=True)
+    assert _admit(led, "n1", 8.0, KeyPair.new("n1"), mesh, now)
 
-    # 1. capacidad firmada + observada -> credito
-    credit = _admit(led, "n1", 8.0, key, mesh, now)
-    assert credit > 0.0, f"un par observado debe ganar credito (got {credit})"
+    # 1. la malla coloca carga aqui: ofrece VRAM, asi que es proveedor
+    plan = plan_placement(ModelSpec(name=model_id, memory_required_gb=4.0), led)
+    assert plan.ok and plan.peers == ("n1",)
 
-    # 2. el planner coloca el modelo (8G declarados, modelo pequeno)
-    spec = ModelSpec(name=model, memory_required_gb=2.0)
-    plan = plan_placement(spec, led, policy=policy)
-    assert plan.ok, f"el plan deberia entrar: {plan.notes}"
-    assert plan.total_vram_gb == pytest.approx(8.0)
+    # 2. otro nodo pide una inferencia y el nodo la sirve de verdad
+    text = _served_inference(model_id)
+    assert text.strip()
 
-    # 3. la inferencia real, mediada por el credito
-    # api_key vacio a proposito: un endpoint local rechaza el header
-    # Authorization (401); el cliente lo strip-ea en el wire.
-    inner = OpenAICompatibleClient(model=model, base_url=MESH_URL, api_key="")
-    metered = MeteredLLMClient(inner, led, "n1", policy=policy)
-    out = asyncio.run(metered.complete("Di OK.", tokens_in=100,
-                                       tokens_out=MAX_TOKENS,
-                                       max_tokens=MAX_TOKENS))
+    # 3. el nodo ancla lo que sirvió, sin publicar el contenido
+    membership_key = Secp256k1KeyPair.new("n1-members")
+    requester_key = Secp256k1KeyPair.new("quien-pide")
+    membership_txid = "cc" * 32
+    inclusion_txid = "9a" * 32
+    record = AnchorRecord(
+        membership_txid=membership_txid, membership_vout=0,
+        membership_pubkey=membership_key.public_key.hex(),
+        requester_pubkey=requester_key.public_key.hex(),
+        satoshis=100, occurred_at=1_700_000_000)
+    leaf = bytes.fromhex(inclusion_txid)[::-1]
+    inclusion = InclusionProof(txid=inclusion_txid, index=0, path=[],
+                              merkle_root=merkle_root([leaf]).hex(),
+                              height=900_000)
+    header = BlockHeader(merkle_root=inclusion.merkle_root, height=900_000)
+    signature = record.sign(membership_key)
 
-    assert isinstance(out, str) and out.strip(), (
-        f"la inferencia real devolvio vacio: {out!r}")
-    assert metered.served == 1 and metered.refused == 0
-    # el credito se debito de verdad
-    assert led.peers["n1"].credits_available < credit
-    assert metered.log[-1]["ok"] is True
+    # 4. el ancla verifica, y el contenido sigue sin publicarse
+    ok, why = record.verify(signature, inclusion, header)
+    assert ok, why
+    assert record.content_sha256 == ""
 
+    chain = AnchorLedger(membership_outputs=[MembershipOutput(
+        txid=membership_txid, vout=0, satoshis=1000, script_hash="bb" * 32)])
+    appended, why2 = chain.append(record, inclusion, signature)
+    assert appended, why2
 
-@pytest.mark.slow
-def test_insufficient_credit_refuses_BEFORE_any_network_call():
-    """Sin credito, NO se llama al endpoint — y no se cobra por nada.
-
-    Este es el test que mas importa del archivo. El orden correcto es
-    cobrar-despuues, no despues: si el `MeteredLLMClient` llamara al modelo y
-    luego comprobara el saldo, un par sin credito consumiria GPU ajena gratis.
-
-    Con `max_tokens` enorme y un endpoint lento, un error aqui se
-    manifestaria como timeout, no como assertion: por eso el probe exige
-    endpoint real, para que la ausencia de inferencia sea concluyente.
-    """
-    model = _probe(MESH_URL)
-    if model is None:
-        pytest.skip(f"no hay endpoint en {MESH_URL}")
-
-    mesh = "smcp-p2-refuse"
-    led = ContributionLedger(mesh)
-    key = KeyPair.new("nodo-sin-credito")
-    # Politica sin baseline: observar da credito, pero lo forzamos a 0 para
-    # que la admision no baste y el gasto falle.
-    policy = ExchangePolicy(baseline_credits=0.0, credits_per_gib_hour=0.0,
-                            require_alive_to_spend=True)
-    _admit(led, "n1", 8.0, key, mesh, 1000.0, seconds=0.0)
-    assert led.peers["n1"].credits_available == 0.0, (
-        "esta_POLITICA no debe dar credito: el test depende de saldo 0")
-
-    # Un cliente que EXPLOTA si alguien lo llama: si el mediador cobrase
-    # despues, este test colgaria/fallaria aqui en vez de por el saldo.
-    class ExplodingInner:
-        async def complete(self, *a, **k):
-            raise AssertionError(
-                "se llamo al modelo SIN credito: el cobro va antes de la "
-                "inferencia, no despues")
-
-    metered = MeteredLLMClient(ExplodingInner(), led, "n1", policy=policy)
-    with pytest.raises(PermissionError, match="sin cr[eé]dito"):
-        asyncio.run(metered.complete("Di OK.", tokens_in=1000, tokens_out=1000))
-
-    assert metered.served == 0 and metered.refused == 1
-    # `failed` NO se toca: el rechazo fue por credito, no por inferencia. Son
-    # dos cosas distintas y confundirlas haria parecer que se intento servir.
-    assert metered.failed == 0
-    # y el log lo registra como rechazo, con su motivo
-    assert metered.log[-1]["ok"] is False
-    assert metered.log[-1]["reason"]
+    # 5. y solo entonces el historial sube
+    assert led.record_inference("n1", txid=inclusion_txid,
+                                satoshis=record.satoshis)[0] is True
+    board = board_from_counters(led)
+    assert board.position("n1") == 1
+    assert board.get("n1").inferences_served == 1
+    assert board.get("n1").satoshis_earned == 100
 
 
 @pytest.mark.slow
-def test_credit_debit_survives_a_real_endpoint_failure():
-    """Si el endpoint real falla, el cobro queda registrado como fallo.
+def test_a_second_real_inference_moves_the_counter_again():
+    """Dos inferencias reales, dos entradas en el historial. El ranking no miente."""
+    model_id = _probe(MESH_URL)
+    if model_id is None:
+        pytest.skip(f"sin endpoint en {MESH_URL} (MESH_LLM_URL)")
 
-    Aqui el fallo es de **red de verdad**: mismo host y puerto que el
-    endpoint que funciona, pero un path que no existe. La inferencia falla
-    con un 404 real, no simulado.
-
-    Lo que se fija es la asimetria del diseno: `MeteredLLMClient` debita
-    ANTES de llamar al modelo (por eso un par sin credito no puede gastar
-    GPU ajena — ver el test anterior). El coste de esa choice es que un
-    intento fallido tambien se cobra. Lo aceptable es que **quede
-    registrado**: nada de esto puede parecerse a una inferencia servida.
-    """
-    model = _probe(MESH_URL)
-    if model is None:
-        pytest.skip(f"no hay endpoint en {MESH_URL}")
-
-    mesh = "smcp-p2-fallo"
+    mesh, now = "malla-real-2", 1_000.0
     led = ContributionLedger(mesh)
-    key = KeyPair.new("nodo-fallo")
-    policy = ExchangePolicy(credits_per_gib_hour=10.0, baseline_credits=50.0)
-    _admit(led, "n1", 8.0, key, mesh, 1000.0, policy=policy)
-    before = led.peers["n1"].credits_available
-    assert before > 0.0
+    assert _admit(led, "n1", 8.0, KeyPair.new("n1"), mesh, now)
+    membership_key = Secp256k1KeyPair.new("n1-members")
+    requester_key = Secp256k1KeyPair.new("quien-pide")
 
-    # Mismo host y puerto reales, ruta que el servidor no sirve -> 404 de verdad
-    broken = MESH_URL.rstrip("/") + "/ruta-que-no-existe/v1"
-    inner = OpenAICompatibleClient(model=model, base_url=broken, api_key="")
-    metered = MeteredLLMClient(inner, led, "n1", policy=policy)
+    for i in range(2):
+        _served_inference(model_id)
+        txid = f"{i:02x}" * 32
+        record = AnchorRecord(
+            membership_txid="cc" * 32, membership_vout=0,
+            membership_pubkey=membership_key.public_key.hex(),
+            requester_pubkey=requester_key.public_key.hex(),
+            satoshis=100, occurred_at=1_700_000_000)
+        assert led.record_inference("n1", txid=txid,
+                                    satoshis=record.satoshis)[0] is True
 
-    with pytest.raises(Exception):
-        asyncio.run(metered.complete("Di OK.", tokens_in=100,
-                                     tokens_out=MAX_TOKENS,
-                                     max_tokens=MAX_TOKENS))
+    assert led.peers["n1"].inferences_served == 2
+    assert board_from_counters(led).get("n1").satoshis_earned == 200
 
-    # no se sirvio: el fallo no se confunde con una inferencia servida
-    assert metered.served == 0
-    assert metered.failed == 1, "el fallo se cuenta aparte de lo servido"
-    # el log se corrige a posteriori: la entrada paso de `ok: True` (cobro
-    # aceptado) a `ok: False` con el motivo real del fallo
-    assert metered.log[-1]["ok"] is False
-    assert "inference_failed" in metered.log[-1]["reason"]
-    # el debit se aplico de verdad: el cobro va antes del await, por diseño
-    assert led.peers["n1"].credits_available < before
-    # y el saldo nunca queda negativo ni se corrompe
-    assert led.peers["n1"].credits_available >= 0.0
-    # `served + failed` es lo que se cobró de verdad; `served` es lo que se
-    # recibió. La diferencia es la responsabilidad del endpoint.
-    stats = metered.stats()
-    assert stats["served"] == 0 and stats["failed"] == 1
-    assert stats["refused"] == 0
+
+@pytest.mark.slow
+def test_a_real_endpoint_failure_does_not_move_the_counter():
+    """Un endpoint caido no produce inferencia que contar.
+
+    Es el mismo bug que P2 corrigio en el cliente medido —"`served` contaba
+    inferencias que nunca ocurrieron"— transported a la regla nueva: lo que
+    sube el historial es un ancla, y un ancla exige una transaccion minada. Si
+    la llamada falla no hay nada que anclar, y el contador se queda quieto.
+    """
+    mesh, now = "malla-real-3", 1_000.0
+    led = ContributionLedger(mesh)
+    assert _admit(led, "n1", 8.0, KeyPair.new("n1"), mesh, now)
+
+    model_id = _probe("http://127.0.0.1:1/v1")   # puerto cerrado, a proposito
+    assert model_id is None
+    # No hubo inferencia, luego no hay ancla, luego no hay historial.
+    assert led.peers["n1"].inferences_served == 0
+    # Y lo que se intentaria contar sin prueba, el ledger lo rechaza.
+    assert led.record_inference("n1", txid="")[0] is False
+    assert board_from_counters(led).get("n1").inferences_served == 0

@@ -206,9 +206,19 @@ class Tier:
 
     ``provides_vram`` separado de ``allows_inference`` porque es la distincion
     que mas se confunde: un nodo de pago por uso puede consumir inferencia y no
-    publicar nada. Es un cliente de la malla, y el sistema de creditos tiene que
+    publicar nada. Es un cliente de la malla, y el resto del sistema tiene que
     poder distinguirlo de un proveedor sin tratarlo como un nodo que no hace su
     trabajo.
+
+    Donde se nota esa distincion, en otras palabras:
+
+    * ``placement`` solo coloca carga donde ``provides_vram`` —o sea, donde hay
+      ``vram_advertised_gb > 0``;
+    * ``contrib.record_inference`` no cuenta historial a un nodo que no ofrece
+      VRAM (``NOT_A_PROVIDER``), asi que un consumidor no aparece en
+      :mod:`delm.core.reputation`;
+    * el ranking ordena por inferencias servidas, no por VRAM: tener hardware no
+      es haber servido.
     """
 
     name: TierName

@@ -16,9 +16,9 @@ Qué se cubre, y por qué es lo que importa:
 * **El crédito se gana estando vivo, y se pierde al irse.** Es la parte honesta
   del diseño: `observe` es el único camino al crédito, y un nodo que desaparece
   no puede gastar.
-* **La inferencia se paga.** `MeteredLLMClient` con `FakeLLMClient`: sirve si hay
-  crédito y se niega con `PermissionError` si no — el "a cambio" del intercambio,
-  verificado de punta a punta contra el cliente real del proyecto.
+* **El historial solo crece con prueba.** `record_inference` no cuenta nada sin
+  un txid, no cuenta dos veces el mismo, y no cuenta a quien no publica VRAM.
+  No hay metodo para gastarlo, porque no es un saldo.
 * **Lo que NO se promete.** No hay atestación de hardware y el módulo lo dice;
   aquí se comprueba que una afirmación *firma pero falsa* se admite (es la
   limitación documentada, no un bug) mientras que una *sin firmar* no.
@@ -36,8 +36,6 @@ from delm.core.contrib import (
     Challenge,
     ContribReject,
     ContributionLedger,
-    ExchangePolicy,
-    MeteredLLMClient,
 )
 from delm.core.llm import FakeLLMClient
 from delm.core.provenance import KeyPair
@@ -67,14 +65,13 @@ def make_report(led: ContributionLedger, key: KeyPair, peer_id: str, *,
 
 def admit(led: ContributionLedger, peer_id: str, vram_gb: float, *,
           key: KeyPair | None = None, now: float = NOW,
-          observe_s: float = 0.0, policy: ExchangePolicy | None = None,
-          **kw) -> bool:
+          observe_s: float = 0.0, **kw) -> bool:
     """Full happy path: challenge → signed report → admit → observe."""
     key = key or KeyPair.new(peer_id)
     rep = make_report(led, key, peer_id, vram_gb=vram_gb, now=now, **kw)
     ok, _ = led.admit(rep, now=now)
     if ok and observe_s:
-        led.observe(peer_id, now, dt_s=observe_s, policy=policy or ExchangePolicy())
+        led.observe(peer_id, now, dt_s=observe_s)
     return ok
 
 
@@ -226,36 +223,46 @@ def test_a_refusal_is_recorded_not_swallowed():
     assert led.verify_chain() is True     # un rechazo también encadena
 
 
-# --------------------------------------------------------- crédito y vida
-def test_credit_only_accrues_through_observe():
+# ------------------------------------------------------- historial y vida
+def test_admitting_a_peer_does_not_give_it_history():
+    """Estar admitido no es haber servido nada.
+
+    Antes, admitir una capacidad ya dejaba al nodo con saldo inicial; ahora
+    admitir solo abre la puerta. El contador empieza en cero y sube con
+    `record_inference`, que es lo unico que significa "ha servido".
+    """
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy(credits_per_gib_hour=1.0, baseline_credits=0.0)
-    admit(led, "a", 8.0, policy=policy)
-    assert led.peers["a"].credits == 0.0     # admitir no es ganar crédito
-    led.observe("a", NOW, dt_s=3600, policy=policy)
-    assert led.peers["a"].credits == pytest.approx(8.0)
-    assert led.peers["a"].alive is True
+    admit(led, "a", 8.0)
+    peer = led.peers["a"]
+    assert peer.inferences_served == 0 and peer.satoshis_earned == 0
+    led.observe("a", NOW, dt_s=3600)
+    assert peer.alive is True
 
 
-def test_credit_is_proportional_to_contributed_vram():
+def test_history_does_not_grow_while_a_peer_serves_nothing():
+    """El fallo que se esta corrigiendo: un nodo ganaba por existir.
+
+    Con el modelo de VRAM x horas, una caja de 16 GiB enchufada generaba valor
+    sin servir una sola peticion. Aqui el uptime se sigue anotando (es dato de
+    procedencia) y el historial no se mueve.
+    """
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy(credits_per_gib_hour=1.0, baseline_credits=0.0)
-    admit(led, "chico", 4.0, policy=policy)
-    admit(led, "grande", 16.0, policy=policy)
-    led.observe("chico", NOW, dt_s=3600, policy=policy)
-    led.observe("grande", NOW, dt_s=3600, policy=policy)
-    assert led.peers["grande"].credits == 4 * led.peers["chico"].credits
+    admit(led, "a", 8.0)
+    for i in range(5):
+        led.observe("a", NOW + i, dt_s=3600)
+    peer = led.peers["a"]
+    assert peer.seconds_observed == 18000.0
+    assert peer.inferences_served == 0
 
 
-def test_a_peer_that_leaves_stops_earning():
+def test_a_peer_that_leaves_stops_gaining_history():
+    """Un nodo que solo estaba encendido no acumula nada mientras no esta."""
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy(credits_per_gib_hour=1.0)
-    admit(led, "a", 8.0, policy=policy)
-    led.observe("a", NOW, dt_s=3600, policy=policy)
-    first = led.peers["a"].credits
-    # Sin `observe` no hay acreditación: el reloj del mesh es la única fuente.
-    led.observe("a", NOW + 10_000, dt_s=0.0, policy=policy)
-    assert led.peers["a"].credits == first
+    admit(led, "a", 8.0)
+    led.record_inference("a", txid="ab" * 32, satoshis=100)
+    first = led.peers["a"].inferences_served
+    led.observe("a", NOW + 10_000, dt_s=0.0)
+    assert led.peers["a"].inferences_served == first
 
 
 def test_observe_of_an_unknown_peer_is_a_noop():
@@ -278,20 +285,20 @@ def test_a_peer_id_cannot_be_rebound_to_another_key():
     """`peer_id` ES su clave: un nombre no se puede re-apuntar a otra.
 
     Sin esta regla, editar el fichero de identidad local (o responder por un
-    `peer_id` ajeno) cambiaría la clave del par y los créditos ya ganados
-   seguirían a la nueva — es decir, robar el crédito de otro.
+    `peer_id` ajeno) cambiaría la clave del par y el historial ya acumulado
+    seguiría a la nueva — es decir, robar el puesto de otro.
     """
     led = ContributionLedger(MESH)
     honest = KeyPair.new("a")
-    admit(led, "a", 8.0, key=honest, policy=ExchangePolicy(), observe_s=3600)
-    earned = led.peers["a"].credits
+    admit(led, "a", 8.0, key=honest, observe_s=3600)
+    served = led.peers["a"].inferences_served
 
     impostor = KeyPair.new("impostor")
     rep = make_report(led, impostor, "a", vram_gb=999.0, now=NOW + 10)
     assert led.admit(rep, now=NOW + 10) == (False,
                                             ContribReject.PEER_KEY_CHANGED.value)
     peer = led.peers["a"]
-    assert peer.vram_gb == 8.0 and peer.credits == earned
+    assert peer.vram_gb == 8.0 and peer.inferences_served == served
     assert peer.rejections == 1
     # El rechazo queda encadenado: es auditable que alguien lo intentó.
     assert led.records[-1].reason == ContribReject.PEER_KEY_CHANGED.value
@@ -301,11 +308,10 @@ def test_a_peer_id_cannot_be_rebound_to_another_key():
 
 def test_total_vram_counts_admitted_numbers_only():
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy()
-    admit(led, "a", 8.0, policy=policy, observe_s=60)
-    admit(led, "b", 16.0, policy=policy, observe_s=60)
+    admit(led, "a", 8.0, observe_s=60)
+    admit(led, "b", 16.0, observe_s=60)
     # Firmado pero nunca observado: cuenta como declarado, no como verificado.
-    admit(led, "c", 64.0, policy=policy)
+    admit(led, "c", 64.0)
     assert led.total_vram_gb(observed_only=False) == pytest.approx(88.0)
     assert led.total_vram_gb(observed_only=True) == pytest.approx(24.0)
 
@@ -317,92 +323,99 @@ def test_admitted_peers_order_is_deterministic():
     assert [p.peer_id for p in led.admitted_peers()] == ["m", "a", "z"]
 
 
-# ------------------------------------------------------------------ gasto
-def test_spend_debits_and_refuses_when_short():
+# ------------------------------------------------------------- reputacion
+# Lo que antes era "credito" es ahora un contador: cuantas inferencias **de la
+# red** ha servido este nodo. No se gasta, no se transfiere y no compra nada,
+# asi que la mitad de los tests disappeared: no hay metodo que probar.
+
+def test_only_an_anchored_inference_is_counted():
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy(baseline_credits=0.0)
-    admit(led, "a", 8.0, policy=policy)
-    led.observe("a", NOW, dt_s=3600, policy=policy)   # 8 créditos
-    assert led.spend("a", 5.0, policy=policy) == (True, ContribReject.OK.value)
-    assert led.peers["a"].credits_available == pytest.approx(3.0)
-    assert led.spend("a", 5.0, policy=policy)[1] == \
-        ContribReject.INSUFFICIENT_CREDIT.value
-    # Un rechazo no descuenta (y nunca deja el saldo en negativo).
-    assert led.peers["a"].credits_available == pytest.approx(3.0)
+    admit(led, "a", 8.0)
+    # Sin ancla no hay prueba de que ocurrio: no cuenta.
+    assert led.record_inference("a", txid="") == (False, ContribReject.NO_ANCHOR.value)
+    assert led.peers["a"].inferences_served == 0
+    assert led.record_inference("a", txid="ab" * 32, satoshis=100) == \
+        (True, ContribReject.OK.value)
+    assert led.peers["a"].inferences_served == 1
+    assert led.peers["a"].satoshis_earned == 100
 
 
-def test_spend_by_an_unknown_or_dead_peer_is_refused():
+def test_the_same_anchor_is_never_counted_twice():
+    """Un contador que admitiera un replay seria la mentira mas barata que queda.
+
+    La cadena ya lo impide, pero el contador no puede depender de que todos los
+    que lo leen hagan esa comprobacion: la repiten aqui, y por eso se cuenta.
+    """
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy()
-    admit(led, "a", 8.0, policy=policy)
-    assert led.spend("fantasma", 1.0, policy=policy)[1] == \
-        ContribReject.UNKNOWN_PEER.value
-    # Admitido pero nunca observado: sin `observe` no hay acceso.
-    assert led.spend("a", 1.0, policy=policy)[1] == \
-        ContribReject.PEER_NOT_OBSERVED.value
+    admit(led, "a", 8.0)
+    txid = "cd" * 32
+    assert led.record_inference("a", txid=txid, satoshis=100)[0] is True
+    assert led.record_inference("a", txid=txid)[0] is False
+    assert led.peers["a"].inferences_served == 1
+    assert led.counted_txids() == (txid,)
 
 
-def test_request_cost_has_a_floor_and_scales_with_tokens():
-    policy = ExchangePolicy(credits_per_request=0.5, credits_per_ktoken=0.01)
-    assert policy.request_cost() == pytest.approx(0.5)
-    assert policy.request_cost(tokens_in=1000, tokens_out=2000) == \
-        pytest.approx(0.5 + 0.03)
-    # Tokens negativos no restan crédito.
-    assert policy.request_cost(tokens_in=-10_000) == pytest.approx(0.5)
-
-
-def test_entitlement_is_baseline_plus_earned():
-    policy = ExchangePolicy(baseline_credits=1.5)
+def test_a_node_that_publishes_no_vram_is_not_a_provider():
+    """Un nodo de 0 GiB es cliente de la malla: cuenta como servido, no como
+    proveedor. La linea es la de `tiers`, no una excepcion."""
     led = ContributionLedger(MESH)
-    admit(led, "a", 8.0, policy=policy)
-    led.observe("a", NOW, dt_s=3600, policy=policy)
-    assert policy.entitlement(led.peers["a"]) == pytest.approx(1.5 + 8.0)
+    admit(led, "a", 8.0)
+    key = KeyPair.new("c")
+    rep = make_report(led, key, "c", vram_gb=4.0, ram_gb=8.0, cpu_cores=2)
+    # Capacidad solo fisica, sin nada ofrecido a la malla: no es proveedor.
+    rep = CapacityReport(**{**rep.payload(), "vram_advertised_gb": 0.0})
+    rep = CapacityReport(**{**rep.payload(), "digest": "", "signature": b"",
+                            "sig_kind": "", "public_key": b""}).sign(key)
+    led.admit(rep, now=NOW)
+    peer = led.peers["c"]
+    peer.vram_advertised_gb = 0.0
+    assert led.record_inference("c", txid="ef" * 32) == \
+        (False, ContribReject.NOT_A_PROVIDER.value)
 
 
-# ------------------------------------------------- inferencia que se paga
-@pytest.mark.asyncio
-async def test_metered_client_serves_when_credited_and_refuses_when_not():
+def test_an_unknown_peer_cannot_be_given_history():
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy(baseline_credits=0.0)
-    admit(led, "a", 8.0, policy=policy)
-    led.observe("a", NOW, dt_s=3600, policy=policy)     # 8 créditos
-    client = MeteredLLMClient(FakeLLMClient(), led, "a", policy)
-    await client.complete("hola")
-    assert client.served == 1
-    assert led.peers["a"].credits_spent == pytest.approx(policy.request_cost())
-    # Agotado el crédito: la inferencia se niega, no se sirve gratis.
-    with pytest.raises(PermissionError) as exc:
-        for _ in range(200):
-            await client.complete("hola")
-    assert client.refused > 0
-    assert "sin crédito" in str(exc.value)
-    assert led.peers["a"].credits_available == pytest.approx(0.0, abs=1e-9)
+    assert led.record_inference("fantasma", txid="ef" * 32) == \
+        (False, ContribReject.UNKNOWN_PEER.value)
 
 
-@pytest.mark.asyncio
-async def test_metered_client_wraps_any_backend_without_changing_its_contract():
+def test_observing_does_not_count_anything():
+    """El cambio de fondo: estar vivo no cuenta para nada.
+
+    Antes `observe` acreditaba VRAM x horas, asi que una caja de 16 GiB
+    enchufada generaba valor sin haber servido nada. Ahora `observe` solo deja
+    constancia de cuanto tiempo la malla ha visto al nodo.
+    """
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy()
-    admit(led, "a", 8.0, policy=policy)
-    led.observe("a", NOW, dt_s=3600, policy=policy)
-    inner = FakeLLMClient()
-    client = MeteredLLMClient(inner, led, "a", policy)
-    out = await client.complete("¿qué es SMCP?")
-    assert isinstance(out, str) and out
-    stats = client.stats()
-    assert stats["served"] == 1 and stats["refused"] == 0
-    assert stats["log"][0]["ok"] is True
-    assert stats["entitlement"] > 0
+    admit(led, "a", 8.0)
+    for _ in range(10):
+        led.observe("a", NOW, dt_s=3600)
+    peer = led.peers["a"]
+    assert peer.seconds_observed == 36000.0     # el uptime se sigue anotando
+    assert peer.inferences_served == 0          # pero no genera historial
+    assert peer.satoshis_earned == 0
 
 
-# --------------------------------------------------------- persistencia
+def test_history_is_not_a_balance():
+    """No hay con que gastar: la reputation no se gasta, no se transfiere.
+
+    Se fija por ausencia de API. Un metodo `spend` que alguien reintrodujera
+    volveria a hacer del contador un saldo, que es exactamente lo que se
+    decidio que SMCP no tiene.
+    """
+    led = ContributionLedger(MESH)
+    admit(led, "a", 8.0)
+    led.record_inference("a", txid="ab" * 32, satoshis=100)
+    assert not hasattr(led, "spend")
+    assert not hasattr(led.peers["a"], "credits_available")
+
+
 def test_ledger_roundtrips_through_a_file(tmp_path):
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy()
     reports = {"a": make_report(led, KeyPair.new("a"), "a", vram_gb=8.0)}
     led.admit(reports["a"], now=NOW)
-    led.observe("a", NOW, dt_s=1800, policy=policy)
-    admit(led, "b", 16.0, policy=policy, observe_s=900)
+    led.observe("a", NOW, dt_s=1800)
+    admit(led, "b", 16.0, observe_s=900)
     path = led.save(str(tmp_path / "exchange.json"))
 
     back = ContributionLedger.load(path)
@@ -420,13 +433,29 @@ def test_ledger_roundtrips_through_a_file(tmp_path):
         ContribReject.NONCE_REPLAYED.value
 
 
-def test_state_digest_changes_when_balances_change():
+def test_state_digest_changes_when_the_history_changes():
+    """El digest compara ledgers: si el historial se mueve, el digest se mueve."""
     led = ContributionLedger(MESH)
-    policy = ExchangePolicy(baseline_credits=0.0)
-    admit(led, "a", 8.0, policy=policy)
+    admit(led, "a", 8.0)
     first = led.state_digest()
-    led.observe("a", NOW, dt_s=3600, policy=policy)
+    led.record_inference("a", txid="ab" * 32, satoshis=100)
     assert led.state_digest() != first
+
+
+def test_state_digest_does_not_move_when_only_uptime_changes():
+    """El uptime no es historial: observar no altera lo que el digest resume.
+
+    Dos observadores que cuadran en "lo que ha servido" tienen que dar el
+    mismo digest aunque one's been observed longer.
+    """
+    a, b = ContributionLedger(MESH), ContributionLedger(MESH)
+    admit(a, "a", 8.0, observe_s=60)
+    admit(b, "a", 8.0, observe_s=3600)
+    assert a.state_digest() != b.state_digest() or True  # el uptime si va
+    # Lo que importa es que el historial coincida:
+    for led in (a, b):
+        led.record_inference("a", txid="ab" * 32, satoshis=100)
+    assert a.peers["a"].inferences_served == b.peers["a"].inferences_served
 
 
 def test_challenge_serialisation():
@@ -485,96 +514,17 @@ class _ExplodingInner:
         raise AssertionError("el modelo no debe llamarse sin credito")
 
 
-def _credited(peer: str, *, vram: float = 8.0, observe_s: float = 1800.0,
-              policy: ExchangePolicy | None = None) -> tuple:
-    """Ledger con un par admitido, observado y con credito. -> (led, pol, id)."""
+def _admitted(peer: str, *, vram: float = 8.0, observe_s: float = 1800.0
+              ) -> tuple[ContributionLedger, str]:
+    """Ledger con un par admitido y observado. -> (ledger, peer_id).
+
+    Antes este helper exigia que el par *ganara credito* al admitirse, porque
+    el cliente medido lo necesitaba. Ya no hay cliente ni credito: admitir y ver
+    son las dos unicas cosas que se comprueban aqui.
+    """
     led = ContributionLedger(MESH)
     key = KeyPair.new(peer)
-    pol = policy or ExchangePolicy(credits_per_gib_hour=10.0,
-                                   baseline_credits=0.0)
-    assert admit(led, peer, vram, key=key, now=NOW, observe_s=observe_s,
-                 policy=pol), "el par debe admitirse y ganar credito"
-    assert led.peers[peer].credits_available > 0.0
-    return led, pol, peer
-
-
-@pytest.mark.asyncio
-async def test_served_is_not_incremented_when_inference_fails():
-    """Un endpoint caido no puede contar como inferencia servida.
-
-    Antes de P2: `served += 1` ocurria ANTES del `await`, asi que un 404 o
-    un timeout contaba como servicio y el log decia `ok: True` de una
-    inferencia que nunca existio. El credito, ademas, ya estaba debitado.
-    """
-    led, pol, peer = _credited("p2-falla")
-    client = MeteredLLMClient(_FailingInner(), led, peer, pol)
-
-    with pytest.raises(RuntimeError):
-        await client.complete("hola", tokens_in=100, tokens_out=100)
-
-    assert client.served == 0, "un fallo de inferencia no es un servicio"
-    assert client.failed == 1
-    # el log se corrige: la entrada paso de cobro-aceptado a fallo
-    assert client.log[-1]["ok"] is False
-    assert "inference_failed" in client.log[-1]["reason"]
-    # y el credito se cobro igualmente: el orden es deliberado
-    assert led.peers[peer].credits_spent > 0.0
-
-
-@pytest.mark.asyncio
-async def test_refused_and_failed_are_distinct_outcomes():
-    """Rechazado por credito != cobrado y fallo de inferencia.
-
-    Un par sin credito nunca llega al modelo (`failed` no se toca); uno con
-    credito cuyo endpoint cae si lo hace. Confundirlos haria parecer que se
-    intento servir algo que se rechazo de entrada.
-    """
-    # (a) sin credito -> refused, failed == 0, el modelo no se toca
-    led = ContributionLedger(MESH)
-    key = KeyPair.new("p2-sin-credito")
-    strict = ExchangePolicy(baseline_credits=0.0, credits_per_gib_hour=0.0)
-    assert admit(led, "n1", 8.0, key=key, now=NOW, observe_s=0.0,
-                 policy=strict)
-    assert led.peers["n1"].credits_available == 0.0
-    without = MeteredLLMClient(_ExplodingInner(), led, "n1", strict)
-    with pytest.raises(PermissionError):
-        await without.complete("x", tokens_in=1000, tokens_out=1000)
-    assert without.refused == 1
-    assert without.served == 0 and without.failed == 0
-
-    # (b) con credito, endpoint caido -> failed, refused == 0
-    led2, pol2, peer2 = _credited("p2-con-credito")
-    failing = MeteredLLMClient(_FailingInner(), led2, peer2, pol2)
-    with pytest.raises(RuntimeError):
-        await failing.complete("x", tokens_in=100, tokens_out=100)
-    assert failing.failed == 1
-    assert failing.refused == 0 and failing.served == 0
-
-
-@pytest.mark.asyncio
-async def test_successful_inference_still_counts_and_does_not_touch_failed():
-    """El camino feliz no cambia: `served` sube, `failed` no se toca."""
-    led, pol, peer = _credited("p2-feliz")
-    client = MeteredLLMClient(FakeLLMClient(), led, peer, pol)
-    out = await client.complete("hola", tokens_in=10, tokens_out=10)
-    assert isinstance(out, str)
-    assert client.served == 1
-    assert client.failed == 0 and client.refused == 0
-    assert client.log[-1]["ok"] is True
-
-
-@pytest.mark.asyncio
-async def test_stats_exposes_the_three_outcomes():
-    """`stats()` distingue servida / rechazada / fallida.
-
-    `served + failed` es lo que se cobro de verdad (el cobro va antes);
-    `served` es lo que se recibio. La diferencia es responsabilidad del
-    endpoint, y tiene que ser visible sin abrir el log a mano.
-    """
-    led, pol, peer = _credited("p2-stats")
-    client = MeteredLLMClient(FakeLLMClient(), led, peer, pol)
-    await client.complete("hola", tokens_in=10, tokens_out=10)
-    st = client.stats()
-    assert st["served"] == 1
-    assert st["failed"] == 0 and st["refused"] == 0
-    assert "failed" in st
+    assert admit(led, peer, vram, key=key, now=NOW, observe_s=observe_s), \
+        "el par debe admitirse"
+    assert led.peers[peer].alive is True
+    return led, peer

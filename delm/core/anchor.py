@@ -76,7 +76,7 @@ log = logging.getLogger(__name__)
 #: Version del formato de ancla. Va en el campo ``ver`` porque el formato va a
 #: cambiar — falta decidir si el importe del output lleva algo — y un registro
 #: sin version obliga a adivinar por el numero de campos.
-ANCHOR_VERSION = 1
+ANCHOR_VERSION = 2
 
 #: Longitudes, de :mod:`delm.core.bsv_keys`. Se re-declaran aqui como literales
 #: porque este modulo valida su propia forma antes de gastar trabajo en ECDSA:
@@ -103,6 +103,17 @@ class AnchorRecord:
     membership_vout: int
     #: Clave de membresia del nodo. Es la que atribuye el gasto.
     membership_pubkey: str
+    #: **Quien pidio la inferencia.** Sin este campo el ancla solo dice "este
+    #: nodo hizo algo", y entonces una inferencia puramente local —el nodo
+    #: ejecutandose a si mismo, que es lo mas barato de hacer y lo mas facil
+    #: de multiplicar— seria indistinguible de una peticion de la red.
+    #:
+    #: El ancla es la prueba de que ocurrio, pero no de *para quien*: sin la
+    #: clave del solicitante, la reputacion de un nodo se la puede inflar solo,
+    #: que es justo lo que un ranking tiene que evitar. El ancla lo ata a la
+    #: cadena, asi que es el sitio donde la regla se decide y no un chequeo
+    #: posterior que otro podria saltarse.
+    requester_pubkey: str
     #: Cuanto pago el output de atribucion. El importe **no** es un precio: no
     #: se verifica contra nada, y por eso no debe leerse como uno. Ver
     #: :data:`ANCLAIM_AMOUNT_SATS`.
@@ -142,6 +153,19 @@ class AnchorRecord:
                 f"se esperaban {PUBKEY_LEN * 2}")
         if not self.membership_pubkey:
             raise ProtocolError("ancla sin clave de membresia: no hay atribucion")
+        if not self.requester_pubkey:
+            raise ProtocolError(
+                "ancla sin clave de solicitante: no se puede probar que la "
+                "peticion venga de la red. Una inferencia local no se ancla.")
+        if len(self.requester_pubkey) != PUBKEY_LEN * 2:
+            raise ProtocolError(
+                f"pubkey de solicitante de {len(self.requester_pubkey)} hex; "
+                f"se esperaban {PUBKEY_LEN * 2}")
+        if self.requester_pubkey == self.membership_pubkey:
+            raise ProtocolError(
+                "ancla auto-solicitada: el solicitante es el propio nodo. "
+                "La reputacion cuenta inferencias que la red pidio, no las que "
+                "el nodo se ejecuta a si mismo.")
         if self.method != "p2pkh":
             raise ProtocolError(f"metodo de lock no soportado: {self.method!r}")
         if self.satoshis < 0:
@@ -167,6 +191,7 @@ class AnchorRecord:
             "kind": "delm-inference-anchor",
             "membership_outpoint": self.membership_outpoint,
             "membership_pubkey": self.membership_pubkey,
+            "requester_pubkey": self.requester_pubkey,
             "satoshis": self.satoshis,
             "method": self.method,
             "occurred_at": self.occurred_at,
@@ -225,6 +250,7 @@ class AnchorRecord:
             "membership_txid": self.membership_txid,
             "membership_vout": self.membership_vout,
             "membership_pubkey": self.membership_pubkey,
+            "requester_pubkey": self.requester_pubkey,
             "satoshis": self.satoshis,
             "method": self.method,
             "ver": self.ver,
@@ -239,6 +265,11 @@ class AnchorRecord:
                 membership_txid=str(d["membership_txid"]),
                 membership_vout=int(d["membership_vout"]),
                 membership_pubkey=str(d["membership_pubkey"]),
+                # Ausente = v1 (que no lo tenia). Se queda vacio a proposito:
+                # la regla de "peticion de la red" lo rechaza, que es la
+                # direccion segura. Rellenarlo seria afirmar que el nodo se
+                # pidio a si mismo, que es justo lo que no sabemos.
+                requester_pubkey=str(d.get("requester_pubkey", "")),
                 satoshis=int(d["satoshis"]),
                 method=str(d.get("method", "p2pkh")),
                 ver=int(d.get("ver", ANCHOR_VERSION)),
