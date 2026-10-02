@@ -82,10 +82,16 @@ def _admit(led: ContributionLedger, peer: str, vram: float, key: KeyPair,
 
 
 def _served_inference(model_id: str) -> str:
-    """One real completion. Returns the text the endpoint actually produced."""
+    """One real completion. Returns the text the endpoint produced.
+
+    ``MESH_LLM_KEY`` defaults to **empty**: el endpoint local (Unsloth,
+    la malla MeshLLM) no exige auth, y cualquier `Authorization` no
+    vacío lo hace rechazar (401). Vacío es lo que activa el camino
+    sin auth de `OpenAICompatibleClient` (que quita la cabecera).
+    """
     client = OpenAICompatibleClient(model=model_id, base_url=MESH_URL,
                                     api_key=os.environ.get("MESH_LLM_KEY",
-                                                           "dummy"),
+                                                           ""),
                                     timeout=120.0)
     out = asyncio.run(client.complete(
         "responde con una sola palabra: listo", max_tokens=MAX_TOKENS))
@@ -119,18 +125,20 @@ def test_a_real_inference_can_be_anchored_and_counted():
     text = _served_inference(model_id)
     assert text.strip()
 
-    # 3. el nodo ancla lo que sirvió, sin publicar el contenido
+    # 3. el nodo ancla lo que sirvió, sin publicar el contenido.
+    # Una transacción por inferencia: la tx que se ancla **es** la
+    # que lleva el output de membresía, y la inclusión es de esa
+    # misma transacción — no de otra (anchor.py lo exige).
     membership_key = Secp256k1KeyPair.new("n1-members")
     requester_key = Secp256k1KeyPair.new("quien-pide")
-    membership_txid = "cc" * 32
-    inclusion_txid = "9a" * 32
+    txid = "9a" * 32
     record = AnchorRecord(
-        membership_txid=membership_txid, membership_vout=0,
+        membership_txid=txid, membership_vout=0,
         membership_pubkey=membership_key.public_key.hex(),
         requester_pubkey=requester_key.public_key.hex(),
         satoshis=100, occurred_at=1_700_000_000)
-    leaf = bytes.fromhex(inclusion_txid)[::-1]
-    inclusion = InclusionProof(txid=inclusion_txid, index=0, path=[],
+    leaf = bytes.fromhex(txid)[::-1]
+    inclusion = InclusionProof(txid=txid, index=0, path=[],
                               merkle_root=merkle_root([leaf]).hex(),
                               height=900_000)
     header = BlockHeader(merkle_root=inclusion.merkle_root, height=900_000)
@@ -142,12 +150,12 @@ def test_a_real_inference_can_be_anchored_and_counted():
     assert record.content_sha256 == ""
 
     chain = AnchorLedger(membership_outputs=[MembershipOutput(
-        txid=membership_txid, vout=0, satoshis=1000, script_hash="bb" * 32)])
+        txid=txid, vout=0, satoshis=1000, script_hash="bb" * 32)])
     appended, why2 = chain.append(record, inclusion, signature)
     assert appended, why2
 
     # 5. y solo entonces el historial sube
-    assert led.record_inference("n1", txid=inclusion_txid,
+    assert led.record_inference("n1", txid=txid,
                                 satoshis=record.satoshis)[0] is True
     board = board_from_counters(led)
     assert board.position("n1") == 1
