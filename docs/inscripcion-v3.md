@@ -1,0 +1,213 @@
+# Inscripción de inferencia v3 — especificación
+
+## Estado
+
+Propuesta de diseño. **No implementada.** v2 (`delm/core/anchor.py`,
+`membership.py`, `tiers.py`) sigue en verde y sin tocar: v3 es un formato
+nuevo que, cuando se implemente, se suma al repo con su propia versión —
+no reemplaza a v2 hasta que una decisión lo haga.
+
+## De dónde viene
+
+La economía de la rama (`abde364`) ya decidió: sin moneda interna, el
+único dinero es el satoshi en cadena, y `record_inference` —que exige un
+txid y no admite doble conteo— es el único camino del historial. Esta
+spec responde a la pregunta pendiente: **cuál es el template de la
+transacción que paga y ancla una inferencia.**
+
+Las decisiones de economía que fija (y que no son de este documento
+sino de la conversación que la originó):
+
+* Una sola tx por inferencia: pago y anclaje son la misma transacción.
+* Alice (solicitante) paga 100 sats; Bob (servidor) ejecuta la
+  inferencia, ancla el hash por 1 satoshi (un ordinal), y cobra
+  99 sats menos la fee de la tx — la fee la paga Bob de su parte.
+* El ordinal se transfiere al solicitante: es el comprobante.
+* El **txid** de la tx de inscripción es la clave que cuenta
+  `record_inference`. Una inferencia = una inscripción = un txid.
+* La unión a la malla (join) es **gratis y off-chain**: intercambio de
+  claves públicas. La dirección del pago la fijan los roles: quien
+  solicita paga, quien sirve cobra.
+
+## Qué cambia respecto a v2
+
+| | v2 (hoy) | v3 (esta spec) |
+|---|---|---|
+| Unión a la malla | output de membresía anclado en BSV (`membership.py`) | intercambio de claves off-chain (el roster que ya existe) |
+| Pago por inferencia | el ancla *declara* satoshis sin verificar pago alguno | una tx paga 100 sats y ancla, las dos cosas a la vez |
+| Qué se publica | outpoints y pubkeys del ancla | `hash(mesh_id ‖ solicitante)` + firma del servidor, dentro de un ordinal de 1 sat |
+| Comprobante | `InclusionProof` contra cabecera que elige el verificador | txid + ordinal en poder del solicitante + certificado SPV |
+| Freno Sybil | 1 sat por inscripción (débil; documentado en `tiers.py`) | la fee de una tx por inferencia, pagada por el servidor |
+
+## BRCs adoptados
+
+Del registro (bsv.brc.dev), con lo que cada uno aporta:
+
+| BRC | Qué aporta a v3 |
+|---|---|
+| **BRC-159** (1Sat Ordinals) | El ordinal de 1 sat como comprobante: el token es la cadena de outputs de 1 sat, su *origin* es el outpoint, y la transferencia la da el orden de satoshis. El ordinal viaja a Alice y es el receipt. |
+| **BRC-160** (Inscription Envelopes) | El formato del envelope: `OP_FALSE OP_IF "ord" … OP_ENDIF` **en el script de bloqueo del output de 1 sat**, con content-type (campo 1), body (campo 0), parent (campo 3) y campos de aplicación adicionales antes del body. **Corrige la idea de "datos en OP_RETURN"**: el sitio estándar de una inscripción de 1 sat es el envelope en el locking script, no un output OP_RETURN. OP_RETURN queda como sitio opcional para metadatos MAP. |
+| **BRC-220** (NotaryHash) | El modelo de notarización de hash firmado: el firmante hashea localmente, firma localmente, y la cadena lleva el hash y la firma — nunca el contenido. Adoptamos su **lección de determinismo** (codificación binaria length-prefixed, nunca `JSON.stringify`) para todo lo que se firma o se hashea, y su modelo de certificado verificable offline contra cabeceras de bloque. Su modo *batch* (merkle root de muchas pruebas en una tx) queda como optimización futura. |
+| **BRC-27** (DPP) | El flujo de pago: el comerciante construye la tx (`PaymentTerms`), el cliente firma su input (`Payment`), el comerciante emite y confirma (`PaymentACK`). Es exactamente el flujo de la tx única: Bob construye, Alice firma su UTXO, Bob emite. |
+| **BRC-77** (Message Signature) | La firma del servidor sobre el hash: construida sobre BRC-42/43 (que el repo ya implementa en `bsv_keys.py`), con estructura auto-descriptiva (lleva la pubkey del firmante, el key ID y la firma DER) — cualquier auditor verifica sin claves extra. `verifierID = 0x00` (verificable por cualquiera). |
+| **BRC-10 / BRC-11** (TSC merkle proof) | El formato del certificado de inclusión. La `InclusionProof` actual ya tiene los mismos campos (`txid`, `index`, `path`, `merkle_root`, `height`); alinear nombres y serialización. |
+| **BRC-36** (outpoints) | Forma canónica de escribir outpoints. El repo usa `txid:vout`; verificar la forma canónica de BRC-36 al implementar. |
+| **BRC-42 / 43 / 75** | Ya adoptados (derivación, keyId, mnemónico). Se quedan. |
+| **BRC-120** (x402) | El repo ya implementa un verificador x402 (`x402.py`); alinear con el estándar ahora que es BRC. Follow-up. |
+
+Referencia (no adoptado ahora): **BRC-122** (ARIA) — inferencia
+auditable con pre-commitment por época y merkle root de registros. Su
+patrón (`OP_FALSE OP_RETURN "ARIA" <json>`) y sus reglas de JSON
+canónico son útiles, pero su modelo de épocas es otra arquitectura;
+queda como referencia para el batching futuro.
+
+**Discrepancia a corregir:** `bsv_keys.py` y docs etiquetan la identidad
+secp256k1 como "BRC-220". En el registro, BRC-220 es NotaryHash; la
+identidad es BRC-42/43/75. Corregir la etiqueta.
+
+## La transacción
+
+Una tx, construida por Bob (DPP), firmada por Alice, emitida por Bob:
+
+* **Input:** un UTXO de Alice con ≥ 100 sats (si es más, el exceso
+  vuelve a Alice como cambio — DPP lo prevé).
+* **Output 1 — 1 sat → Alice**, locking script:
+
+  ```
+  OP_FALSE OP_IF
+    "ord"
+    OP_1  0x0a "text/plain"     # content-type del body
+    OP_3  <36B outpoint>        # parent: el outpoint del input que paga
+    OP_4  0x03                  # versión de formato: SMCP3
+    OP_5  <estructura BRC-77>   # firma del servidor sobre el hash
+    OP_0  <64B ASCII hex>       # body: H, el hash, en texto plano
+  OP_ENDIF
+  <P2PKH(Alice)>
+  ```
+
+  El envelope es un no-op (`OP_FALSE OP_IF` no empuja nada), así que el
+  output se gasta normal con la clave de Alice: **el ordinal es de
+  Alice, y los datos viajan dentro del ordinal**. Quien posee el
+  comprobante posee el registro. Esa es la propiedad que hace mejor el
+  envelope que un OP_RETURN aparte.
+
+* **Output 2 — 99 − fee sats → Bob** (P2PKH del servidor). De aquí
+  sale la fee del minero.
+
+El *parent* (campo 3) ata la inscripción al outpoint que la pagó: la
+proveniencia del receipt es el pago mismo.
+
+### El hash
+
+```
+H = SHA-256( uint16be(len(mesh_id)) ‖ mesh_id ‖ solicitante_pubkey[33] )
+```
+
+`mesh_id` en UTF-8, `solicitante_pubkey` en 33 bytes crudos. El
+prefijo de longitud evita la ambigüedad de la concatenación (la misma
+lección de determinismo de BRC-220: codificación fija, nunca JSON).
+
+**Deliberadamente no es el hash del resultado.** Hashear la respuesta
+requiere CPU que la decisión de economía descarta, y —como v2 ya
+documentó con `content_sha256`— publicar el hash del contenido permite
+a un observador de la cadena confirmar que alguien ejecutó esa
+conversación, porque el hash de un prompt es tan identificador como el
+prompt. Lo que se publica es *que una inferencia verificada ocurrió en
+este mesh, para este solicitante, servida por este nodo* — no qué dijo.
+
+## El flujo
+
+1. **Alice → Bob** (por QUIC; x402 como opción de transporte): la
+   petición — prompt, `mesh_id`, su pubkey de solicitante.
+2. **Bob**: ejecuta la inferencia, calcula `H`, firma `H` (BRC-77),
+   construye la tx (`PaymentTerms`): input de Alice (100 sats),
+   outputs [1 sat → Alice con envelope, 99−fee → Bob].
+3. **Alice**: verifica `H` (lo recomputa de `mesh_id` y su pubkey),
+   la firma contra la identidad de Bob, y los outputs (¿1 sat a mí con
+   el envelope? ¿99−fee a Bob? ¿el input es mío?). Firma su input
+   (`Payment`) y devuelve la tx.
+4. **Bob**: emite, espera confirmación, envía a Alice el **txid** y el
+   certificado (`path`, `merkle_root`, `height` — BRC-10/11). Es el
+   `PaymentACK`.
+5. **Alice**: receipt = (txid, ordinal en su wallet, certificado).
+   Verificación offline: firma sobre `H` + inclusión contra una
+   cabecera de bloque que ella confíe.
+6. **La malla**: `record_inference(peer_id=Bob, txid=<txid>)`. Sin
+   doble conteo: el txid es único por construcción.
+
+## Qué prueba el comprobante, y qué no
+
+Prueba: que el poseedor de la clave que firmó (identificada por la
+estructura BRC-77) ancló `H`; que `H` compromete (`mesh_id`,
+solicitante); que la tx movió 100 sats de Alice a (1 sat ordinal a
+Alice + 99−fee a Bob) — el grafo de la tx dice quién pagó y quién
+cobró; que Alice posee el ordinal; y, con el certificado, en qué altura
+salió.
+
+No prueba: qué se respondió (ver arriba; añadir `hash(resultado)` es
+SMCP4, un campo nuevo y una decisión futura); que la respuesta fue
+correcta (la cadena no ejecuta el modelo); ni que la fee fue "justa"
+— la paga Bob de los 99, y si la fee de relay superara 99 sats el
+tier no cierra (supuesto económico, ver Abierto).
+
+## Tiers bajo v3
+
+Componibles: el nivel de pago por uso está *incluido* en los otros dos
+— un nodo `free` o `ded` que consume capacidad de otro paga por
+consumo con este mecanismo.
+
+| nivel (nombre código) | join | por inferencia |
+|---|---|---|
+| `free` (tier 3) | **0** — off-chain, intercambio de claves | 0 por capacidad propia; metered al consumir de otros |
+| `ded` (tier 2) | 100 000 sats (0.001 BSV) | incluye metered |
+| `metered` (tier 1) | 0 | 100 sats (esta tx) |
+
+El cambio contra v2 es uno: `JOIN_SATOSHIS` de `free`, de 1 a 0.
+
+**La consecuencia honesta, escrita donde vive hoy** (`tiers.py` dice:
+"1 satoshi por inscripción es el único freno económico contra Sybil, y
+es debilisísimo"): v3 quita incluso ese freno. El freno se mueve de la
+identidad al trabajo: cada inferencia servida exige una tx con fee que
+paga el servidor, así que fabricar *N* inferencias cuesta *N* fees —
+el coste escala linealmente con el fraude, que es la propiedad que
+importa. Y como la reputación cuenta inferencias *servidas* (no nodos),
+y una inferencia local no ancla ni paga nada, el Sybil no gana nada
+inflando entradas: solo inflando trabajo real, que es justo lo que el
+ranking mide. Lo que se pierde: el número de *nodos* deja de estar
+frenado por coste de entrada.
+
+## Lo que cambia en el código (cuando se implemente)
+
+* **Nuevo módulo** (p. ej. `delm/core/inscripcion.py`): el template
+  SMCP3, el envelope BRC-160, la firma BRC-77, la construcción DPP de
+  la tx, y la verificación del comprobante (firma + inclusión).
+* **`tiers.py`**: `JOIN_SATOSHIS` de `free` 1 → 0, y su docstring —
+  el freno Sybil cambia de sitio, y ese es el sitio donde está
+  documentado hoy.
+* **`membership.py`**: sin cambios (v2). El join v3 es el roster
+  (`delm.core.roster`): intercambio de claves firmado entre pares.
+* **`anchor.py`**: sin cambios (v2). v3 es formato nuevo con su
+  propia versión (`OP_4 = 3`).
+* **`x402.py`**: alinear con BRC-120 (follow-up).
+* **`bsv_keys.py` / docs**: corregir la etiqueta "BRC-220" → la
+  identidad es BRC-42/43/75.
+
+## Abierto
+
+1. **`hash(resultado)`** — SMCP4. CPU en el servidor y privacidad en
+   la cadena; la decisión puede cambiar, y el formato ya está
+   versionado para eso (`OP_4`).
+2. **Batching** — BRC-220 modo *batch* (merkle root de muchas pruebas
+   en una tx) y BRC-122 (épocas con pre-commitment) como optimización
+   de coste. Rompe "una inferencia = una tx", así que requiere
+   rediseñar el conteo antes de adoptarlo.
+3. **Fee de relay** — verificar que una tx de ~250 bytes cierra dentro
+   de 99 sats a las tarifas actuales de BSV. Si no, el knob es
+   `PER_INFERENCE_SATOSHIS` (y el corte de 1 000 inferencias de
+   `tier_for_inferences` se mueve con él).
+4. **Identidad en el join** — BRC-52 (identity certificates) o
+   BRC-103 (auth mutua) para que el intercambio de claves off-chain
+   demuestre quién es quién; hoy es intercambio simple.
+5. **BRC-77 vs firma cruda** — esta spec adopta BRC-77. Si la
+   implementación empieza con la convención cruda de 64 bytes del repo,
+   migrar después es un cambio de formato versionado.
