@@ -606,6 +606,10 @@ def _mesh_tiers(args: argparse.Namespace) -> int:
         print("\nEl corte entre pago por uso y pago único son 1 000 inferencias "
               "(100 000 / 100). En el empate gana el pago único: mismo precio, "
               "capacidad reservada.")
+        print("BSV no tiene umbral de polvo: una salida de 1 satoshi es válida "
+              "y gastable, que es lo que hace posible 1sat ordinals. El freno "
+              "de Sybil del nivel gratuito es el fee, y es lineal: por eso "
+              "1 sat de entrada no escala con la malla.")
         return 0
 
     # quote

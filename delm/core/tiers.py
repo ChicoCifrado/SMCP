@@ -101,12 +101,24 @@ No toca la cadena. :mod:`delm.core.membership` verifica la prueba de inclusion;
 este modulo solo **nombra** los precios y dice cual de los tres corresponde a
 un caso. Cobrar es de otra capa.
 
-Y sobre el polvo: un output de 1 satoshi a P2PKH esta por debajo del umbral de
-*dust* de BSV (546 sats), asi que un ordinal de 1 sat no es minable bajo la
-politica estandar. Este modulo no lo comprueba ni lo promete — la regla depende
-de la politica de aceptacion de la cadena, y codificarla aqui seria congelar una
-politica que puede cambiar. Lo que si hace es que el precio de entrada sea un
-parametro, no una constante incrustada en un script.
+Y sobre el polvo, que es donde la primera version se equivoco
+---------------------------------------------------------------
+**BSV no tiene umbral de polvo.** El 546 sats es de Bitcoin Core (y de ABC, de
+donde BSV forked), y se elimino. Una salida de 1 satoshi se minable y se gasta
+sin friccion — que es exactamente lo que hace posible el protocolo de 1sat
+ordinals: en BTC el dust limit obligaba a usar un rango de satoshis, y en BSV
+basta con uno.
+
+La version anterior de este modulo afirmaba lo contrario, y de ahi el nombre
+`DUST_LIMIT_SATOSHIS = 546` que lingeron en :data:`BSV_DUST_LIMIT_SATOSHIS`
+siendo cero. Se deja el nombre porque el error era el nombre tanto como el
+numero, y un valor con nombre documenta el numero mientras que la ausencia de
+nombre solo deja el numero suelto.
+
+Y por que importa mas alla de la inscripcion: **la ausencia de polvo no
+desampara al nivel gratuito, lo deja igual**. En una cadena con umbral, cien mil
+salidas minusculas se pagan solas porque el agregado se dispara; en BSV no hay
+ese freno, y el unico freno de Sybil sigue siendo el fee, que es lineal.
 """
 from __future__ import annotations
 
@@ -130,11 +142,23 @@ DEDICATED_SATOSHIS = 100_000
 #: Pago por uso, por inferencia, en satoshis.
 PER_INFERENCE_SATOSHIS = 100
 
-#: Umbral de dust de BSV para una salida P2PKH. Por debajo, la politica
-#: estandar no la acepta. Se declara para que el codigo que construya una
-#: inscripcion sepa que 1 sat esta aqui — no pararejectarlo, que es una
-#: decision de la cadena.
-DUST_LIMIT_SATOSHIS = 546
+#: Umbral de polvo de BSV: **cero**. No es "un umbral bajo" — es que BSV no
+#: tiene ninguno. El dust limit de 546 sats era de Bitcoin Core (y ABC, del que
+#: BSV forked); BSV lo elimino, y por eso una salida de 1 satoshi se minable
+#: y se gasta sin friccion.
+#:
+#: Por que esta constante existe siendo cero, en vez de no existir: porque el
+#: error es facil de cometer y ya se cometio. Importar el 546 de Bitcoin Core y
+#: llamarlo "umbral de BSV" hace que un ordinal de 1 sat parezca no minable,
+#: que es justo lo contrario de lo cierto. Un valor con nombre documenta el
+#: numero; no tener el nombre solo deja el numero sin contexto, y el contexto
+#: es lo que se pierde.
+BSV_DUST_LIMIT_SATOSHIS = 0
+
+#: 1 satoshi no necesita un rango de satoshis para ser gastable, al contrario
+#: que en el Ordinals original de BTC, donde el dust limit obligaba a usar
+#: varios. Ese es el motivo del nombre del protocolo.
+BSV_SINGLE_SAT_OUTPUTS = True
 
 
 def tier_for_inferences(n: int) -> TierName:
@@ -428,5 +452,5 @@ __all__ = [
     "PlanQuote", "tier", "quote", "levels",
     "tier_for_inferences", "metered_cost_sats", "dedicated_is_cheaper",
     "JOIN_SATOSHIS", "DEDICATED_SATOSHIS", "PER_INFERENCE_SATOSHIS",
-    "DUST_LIMIT_SATOSHIS",
+    "BSV_DUST_LIMIT_SATOSHIS", "BSV_SINGLE_SAT_OUTPUTS",
 ]

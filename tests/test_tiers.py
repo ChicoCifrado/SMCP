@@ -28,7 +28,8 @@ import pytest
 
 from delm.core.tiers import (
     DEDICATED_SATOSHIS,
-    DUST_LIMIT_SATOSHIS,
+    BSV_DUST_LIMIT_SATOSHIS,
+    BSV_SINGLE_SAT_OUTPUTS,
     JOIN_SATOSHIS,
     PER_INFERENCE_SATOSHIS,
     TIER_DEDICATED,
@@ -270,17 +271,40 @@ def test_one_dedicated_payment_buys_one_hundred_thousand_joins():
     assert TIER_FREE.join_satoshis == JOIN_SATOSHIS
 
 
-def test_the_free_join_is_below_the_dust_limit_and_the_module_does_not_hide_it():
-    """1 satoshi esta por debajo del umbral de polvo de BSV.
+def test_bsv_has_no_dust_limit_and_that_is_what_makes_one_sat_ordinals_work():
+    """El polvo de BSV es CERO. No "un umbral bajo": ninguno.
 
-    No es un bug de este modulo y no lo "arregla": la regla depende de la
-    politica de aceptacion de la cadena, y codificarla aqui congelaria una
-    politica que puede cambiar. Lo que si hace el modulo es **declararlo**, para
-    que quien construya la inscripcion no descubra en el mempool que su ordinal
-    de 1 sat no entra.
+    El 546 sats es de Bitcoin Core y de ABC, de donde BSV forked. BSV lo elimino
+    — por eso una salida de 1 satoshi se minable y se gasta sin friccion, y por
+    eso el protocolo de 1sat ordinals puede usar un unico satoshi en vez del
+    rango que BTC obligaba a usar por el polvo.
+
+    El error que se corrigio aqui: importar el 546 de Core y llamarlo "umbral de
+    BSV". Hacia que un ordinal de 1 sat pareciera no minable, que es lo
+    contrario de lo cierto. La constante se queda, siendo cero, porque el error
+    es el nombre y no el numero.
     """
-    assert JOIN_SATOSHIS < DUST_LIMIT_SATOSHIS
-    assert DUST_LIMIT_SATOSHIS == 546
+    assert BSV_DUST_LIMIT_SATOSHIS == 0
+    assert BSV_SINGLE_SAT_OUTPUTS is True
+    assert JOIN_SATOSHIS == 1, "un satoshi es una salida valida en BSV"
+
+
+def test_no_dust_limit_makes_the_sybil_problem_worse_not_better():
+    """La ausencia de polvo no es un escudo: es la ausencia de un escudo.
+
+    En una cadena con umbral de polvo, cien mil salidas minusculas cuestan
+    porque el agregado satoshi-hora de la UTXO se dispara. En BSV no hay ese
+    freno. Que el fee de una inscripcion de 1 sat sea barato no es por tanto una
+    ventaja del nivel gratuito — es lo que hace que el problema de Sybil de
+    :func:`test_one_dedicated_payment_buys_one_hundred_thousand_joins` siga
+    exactamente igual en vez de atenuarse.
+    """
+    # sin polvo, el unico freno es el fee por transaccion, y son lineales
+    ratio = DEDICATED_SATOSHIS // JOIN_SATOSHIS
+    assert ratio == 100_000
+    # el nivel gratuito sigue siendo el mas barato de los tres, sin atenuacion
+    assert TIER_FREE.join_satoshis == JOIN_SATOSHIS
+    assert TIER_FREE.join_satoshis < TIER_DEDICATED.join_satoshis
 
 # --------------------------------------------------------------------------
 # Donde x402 encaja — y es una decision de diseno, no un comentario
