@@ -43,6 +43,7 @@ import asyncio
 import queue
 import struct
 import threading
+import time
 from typing import Any
 
 
@@ -214,7 +215,23 @@ class QuicHostNode:
         return total
 
     def close(self) -> None:
-        """Para el event loop y libera los sockets (puertos)."""
+        """Para el event loop y libera los sockets (puertos).
+
+        **Drena las salidas antes de parar.** La tarea de
+        escritura sondea la cola cada 0.1s, así que al cerrar
+        puede haber datagramas encolados que aún no cruzaron la
+        red — y cancelar las tareas los tira. El par se quedaría
+        esperando lo que ya se "envió" (el demo multihost: el
+        nodo que termina primero cierra con su último gist en la
+        cola, y el otro agota su ventana de drenado). Esperar
+        (con techo) a que las colas se vacíen es lo que hace que
+        el cierre sea un cierre: lo encolado llega.
+        """
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            if all(q.empty() for q in self._out.values()):
+                break
+            time.sleep(0.01)
         self._stop.set()
         loop = self._loop
         if loop is not None and loop.is_running():

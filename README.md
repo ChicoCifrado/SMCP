@@ -881,12 +881,13 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1091 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1092 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
   12 requirements + 10 heartbeat + 17 malla: transport/nodo/red/pipeline +
-  QUIC e2e + Nostr e2e + 3 QUIC entre hosts: framing/round-trip/malla completa +
+  QUIC e2e + Nostr e2e +    4 QUIC entre hosts: framing/round-trip/malla completa/close que
+   drena las salidas +
   4 identidad: el enlace identidad-cert del QUIC (legítimo/MITM/insecure/
   `CN=peer_id`) + 19 Nostr: BIP340 contra los 19 vectores + relay de red +
   NostrTransport + convergencia + 5 guardia de relay (rate-limit por `pubkey`,

@@ -86,6 +86,40 @@ def test_quic_host_round_trip():
         swarm.close()
 
 
+def test_close_flushes_pending_writes():
+    """close() drena las salidas: lo encolado llega antes de parar.
+
+    La tarea de escritura sondea la cola cada 0.1s, así que al
+    cerrar puede haber datagramas encolados que aún no cruzaron
+    la red. Si close() cancela sin esperar, el par se queda
+    esperando lo que ya se "envió" — exactamente el fallo del
+    demo multihost, donde el nodo que terminaba primero cerraba
+    con su último gist en la cola y el otro agotaba su ventana
+    de drenado (un fallo intermitente, no de cada vez).
+    """
+    swarm = QuicHostSwarm()
+    swarm.add_peer("A", "127.0.0.1")
+    swarm.add_peer("B", "127.0.0.1")
+    swarm.start()
+    try:
+        # A envía y cierra **inmediatamente**: el datagrama está
+        # en la cola de salida cuando close() empieza.
+        swarm.transport_for("A").send("B", b"ultimo-gist")
+        swarm.transport_for("A").close()
+        # B lo recibe igual: close() drena antes de cancelar.
+        deadline = time.time() + 15
+        received = None
+        while time.time() < deadline:
+            msgs = swarm.transport_for("B").poll()
+            if msgs:
+                received = msgs[0][1]  # (from, payload)
+                break
+            time.sleep(0.05)
+        assert received == b"ultimo-gist", f"B no recibió: {received!r}"
+    finally:
+        swarm.close()
+
+
 # ---------------------------------------------------------------------------
 # Malla completa (3 nodos)
 # ---------------------------------------------------------------------------
