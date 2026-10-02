@@ -405,6 +405,8 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
         return _mesh_reserve(args)
     if action == "release":
         return _mesh_release(args)
+    if action == "membership":
+        return _mesh_membership(args)
     return 2
 
 
@@ -573,6 +575,84 @@ def _mesh_release(args: argparse.Namespace) -> int:
         return 2
     print(f"reserva liberada: {args.reservation_id} ({out})")
     return 0
+
+
+def _mesh_membership(args: argparse.Namespace) -> int:
+    """Verify a BSV membership proof against a block header the caller chose.
+
+    Two files, both operator-supplied: the proof and the header. The header is
+    *not* taken from the proof, because that would make the proof vouch for
+    itself — the trust in a membership gate is the chain of headers the
+    verifier believes, and that has to be an input, not an output of the same
+    file. This mirrors what the threat model says about SPV.
+    """
+    import json as _json
+    from delm.core.membership import (
+        BlockHeader, InclusionProof, MembershipLock, MembershipOutput,
+        MembershipProof, _canonical_digest,
+    )
+
+    if args.membership_cmd != "verify":
+        print(f"error: subcomando {args.membership_cmd!r} no soportado.",
+              file=sys.stderr)
+        return 2
+    try:
+        with open(args.proof, encoding="utf-8") as fh:
+            pd = _json.load(fh)
+        with open(args.header, encoding="utf-8") as fh:
+            hd = _json.load(fh)
+    except (OSError, ValueError) as exc:
+        print(f"error: no se pudo leer proof/header: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        out_d = pd["output"]
+        inc_d = pd["inclusion"]
+        lock = MembershipLock(
+            script_hash=pd.get("lock", {}).get("script_hash", ""),
+            deployment_txid=pd.get("lock", {}).get("deployment_txid", ""))
+        proof = MembershipProof(
+            output=MembershipOutput(
+                txid=str(out_d["txid"]), vout=int(out_d["vout"]),
+                satoshis=int(out_d["satoshis"]),
+                script_hash=str(out_d["script_hash"])),
+            inclusion=InclusionProof(
+                txid=str(inc_d["txid"]), index=int(inc_d["index"]),
+                path=[str(x) for x in inc_d.get("path", [])],
+                merkle_root=str(inc_d["merkle_root"]),
+                height=int(inc_d.get("height", 0))),
+            membership_pubkey=str(pd["membership_pubkey"]),
+            signature=str(pd["signature"]),
+            lock=lock if lock.script_hash else None)
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"error: proof malformado ({exc}). No es un rechazo: es un "
+              f"formato que este comando no entiende.", file=sys.stderr)
+        return 2
+
+    header = BlockHeader(merkle_root=str(hd.get("merkle_root", "")),
+                         height=int(hd.get("height", 0)),
+                         raw=bytes.fromhex(hd["raw"]) if hd.get("raw") else b"")
+    ok, why = proof.verify(header)
+    if args.json:
+        print(_json.dumps({
+            "ok": ok, "reason": why,
+            "outpoint": proof.output.outpoint(),
+            "membership_pubkey": proof.membership_pubkey,
+            "membership_fee_sats": proof.output.satoshis,
+            "header_merkle_root": header.merkle_root,
+            "chain_validated": False,   # SPV: inclusion, not chain ownership
+        }, indent=2, sort_keys=True))
+        return 0 if ok else 1
+    if ok:
+        print(f"miembro: {proof.output.outpoint()} "
+              f"({proof.output.satoshis} sats) en el bloque "
+              f"{header.height or proof.inclusion.height}")
+        print(f"  clave : {proof.membership_pubkey}")
+        print("  aviso : SPV verifica la inclusión en ESTA cabecera, no que "
+              "sea la más larga. La confianza está en la cadena que tú eliges.")
+        return 0
+    print(f"rechazado: {why}", file=sys.stderr)
+    return 1
 
 
 def _mesh_observe(args: argparse.Namespace) -> int:
@@ -890,6 +970,21 @@ def build_parser() -> argparse.ArgumentParser:
     _mesh_common(m_rl)
     m_rl.add_argument("--reservation-id", required=True)
     m_rl.add_argument("--json", action="store_true")
+
+    m_mb = msub.add_parser(
+        "membership",
+        help="gate de pertenencia anclado en BSV")
+    msub_m = m_mb.add_subparsers(dest="membership_cmd", required=True)
+    m_mv = msub_m.add_parser(
+        "verify", help="verificar una MembershipProof contra una cabecera")
+    _mesh_common(m_mv)
+    m_mv.add_argument("--proof", required=True,
+                      help="fichero JSON de la MembershipProof")
+    m_mv.add_argument("--header", required=True,
+                      help="fichero JSON de la cabecera (la elige el operador, "
+                           "no la recibe del proof: la confianza está en la "
+                           "cadena que tú crees)")
+    m_mv.add_argument("--json", action="store_true")
 
     p_mesh.set_defaults(func=_cmd_mesh)
 

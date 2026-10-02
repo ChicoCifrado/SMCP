@@ -215,6 +215,65 @@ un *adversario económico* (mentir sale rentable), así que su no-garantía cent
     lee ese fichero, puede firmar como ese nodo — la misma confianza que en
     cualquier esquema de identidad por clave.
 
+### La pertenencia anclada (`membership.py`) — lo que el grafo decide y lo que no
+
+La pertenencia de un nodo se prueba con un output que cumple un lock, su
+prueba de inclusion, y la firma de la clave que **controla** ese output. Tres
+piezas, y las tres hacen falta: sin la firma, cualquiera que viera el outpoint
+en la cadena podria reclamarlo.
+
+**Lo que da la estructura, sin codigo:**
+
+| Propiedad | De donde sale |
+|---|---|
+| Dos rotaciones simultaneas -> una gana | doble gasto de UTXO |
+| La ascendencia ES la sucesion de claves | el grafo, no un registro |
+| No se puede renovar sin pagar un fee | hay que gastar un output |
+
+Eso es Sybil en la capa de identidad, y no esta en el codigo porque la
+estructura de la cadena ya lo impone. Un nodo no puede renovarse a si mismo
+infinidamente sin fees — y la trampa "rotar a la misma clave" (que si
+renovaria gratis) esta rechazada en las dos capas: al construir y al verificar,
+porque un `RotationProof` puede llegar de la red, no solo de este constructor.
+
+**Lo que NO cubre, y esta escrito para que no se lea al reves:**
+
+* **SPV no valida la cadena (BRC-96).** Verifica que la transaccion esta en
+  *esa* cabecera. Que esa cabecera sea la mas larga no lo comprueba nadie, y
+  por eso la confianza esta en la **cadena de cabeceras** que el verificador
+  elige, no en la prueba. Un gate de pertenencia alimentado con cabeceras de
+  un hostil acepta todo lo que el hostil firmo.
+* **La lock de confianza es del operador.** Si el lock es un lock de pubkey,
+  cualquiera despliega su propio SC y su propia malla, y las dos son
+  indistinguibles para un verificador. La lista de locks aceptados vive en el
+  cliente, no en la cadena.
+* **No parsea Bitcoin Script.** `MembershipLock.from_spent_output` lanza
+  `ProtocolError` en vez de devolver un lock. Verificar contra la cadena real
+  exige extraer el script del output gastado y hashear; el modulo no finge
+  hacerlo.
+* **El coste del join lo pone el minado, no el modulo.** Un join de 1 satoshi
+  sigue siendo una membresia valida. La presion economica la decide el
+  lock elegido, y sin ella el Sybil es barato. Hay test que lo fija.
+* **`MembershipSet` es una vista local.** `is_member` responde "lo que este
+  nodo ha visto". Un nodo desconectado puede tener una respuesta desactualizada,
+  y con ella la garantia de que la misma clave no siga siendo miembro en otro
+  sitio.
+
+**Lo que la mutacion encontro (20 trampas, 17 detectadas).** Cuatro de las
+que sobrevivieron en la primera ronda eran la garantia central — no
+rechazar un outpoint gastado, dejar la clave vieja como miembro, permitir
+rotar a si misma, y no verificar la inclusion — y las cuatro estaban
+escritas en el codigo sin estar sujetas. La de la inclusion era la mas
+interesante: mi mutacion sustituyo solo la ultima linea del metodo, y la
+guarda de cabecera la interceptaba antes, asi que la trampa era ciega por
+construccion y no por debilidad del test.
+
+Las tres que sobreviven en la ronda final tienen una **segunda guarda** en
+`bsv_keys.verify_public` (longitud de firma y de pubkey) o en el `int()` de
+la conversion de outpoint. Duplicar la guarda es defensa en profundidad entre
+capas; la consecuencia aceptada es que la mutacion no puede distinguir esa
+duplicacion de la redundancia. Documentado en el test, no escondido.
+
 ### Las reservas dedicadas (`reservation.py`) — fuera de capa
 
 `plan_placement` **planifica**. Esto **retiene**. Un plan es JSON, y dos planes

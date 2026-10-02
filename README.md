@@ -335,6 +335,7 @@ delm mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva"
 delm mesh plan "Qwen/Qwen3-32B"              # lo dimensiona llmfit y lo reparte
 delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64   # sin llmfit
 delm mesh plan "Qwen/Qwen3-32B" --memory-gb 400; echo $?     # 2 = no cabe
+delm mesh membership verify --proof proof.json --header header.json   # gate de pertenencia BSV
 delm mesh reserve --peer-id nodo-b --memory-gb 6     # tier de pago único
 delm mesh release  --reservation-id nodo-b#1
 delm mesh check                               # audita cadena y saldos
@@ -843,7 +844,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **926 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **976 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
