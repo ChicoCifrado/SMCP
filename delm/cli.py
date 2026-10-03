@@ -713,9 +713,10 @@ def _mesh_tiers(args: argparse.Namespace) -> int:
               "(100 000 / 100). En el empate gana el pago único: mismo precio, "
               "capacidad reservada.")
         print("BSV no tiene umbral de polvo: una salida de 1 satoshi es válida "
-              "y gastable, que es lo que hace posible 1sat ordinals. El freno "
-              "de Sybil del nivel gratuito es el fee, y es lineal: por eso "
-              "1 sat de entrada no escala con la malla.")
+              "y gastable, que es lo que hace posible 1sat ordinals (el ordinal "
+              "de la inscripción viaja dentro de la tx de inferencia). La entrada "
+              "es gratis (roster, off-chain): el freno de Sybil es la fee de "
+              "servir, lineal con el trabajo.")
         return 0
 
     # quote

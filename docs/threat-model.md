@@ -265,6 +265,9 @@ porque un `RotationProof` puede llegar de la red, no solo de este constructor.
 * **El coste del join lo pone el minado, no el modulo.** Un join de 1 satoshi
   sigue siendo una membresia valida. La presion economica la decide el
   lock elegido, y sin ella el Sybil es barato. Hay test que lo fija.
+  (v3 mueve el join al roster — off-chain y gratis,
+  :mod:`delm.core.join` — y el freno de Sybil pasa a ser la fee
+  de servir: lineal con el trabajo, no con las identidades.)
 * **`MembershipSet` es una vista local.** `is_member` responde "lo que este
   nodo ha visto". Un nodo desconectado puede tener una respuesta desactualizada,
   y con ella la garantia de que la misma clave no siga siendo miembro en otro

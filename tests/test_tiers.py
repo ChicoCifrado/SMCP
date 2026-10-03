@@ -16,9 +16,10 @@ Lo que estos tests sujetan:
 
 Y lo que queda abierto, escrito para que no se lea como resuelto:
 
-* **1 satoshi no frena a nadie.** Con el mismo dinero que paga un pago unico
-  (100 000 sats), uno compra 100 000 inscripciones. El coste de entrada no
-  escala con la malla. Hay test que mide exactamente eso.
+* **La entrada gratis no frena a nadie — y el satoshi tampoco
+  la frenaba.** El freno contra Sybil es el trabajo: cada
+  inferencia servida cuesta una fee que paga el servidor. Hay
+  tests que miden exactamente eso.
 * **El pago por uso no concede pertenencia.** Es un consumidor, y el gate de
   admision no debe tratarlo como un nodo que no hace su trabajo.
 """
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import pytest
 
+from delm.core.inscripcion import ORDINAL_SATOSHIS
 from delm.core.tiers import (
     DEDICATED_SATOSHIS,
     BSV_DUST_LIMIT_SATOSHIS,
@@ -48,14 +50,14 @@ from delm.core.tiers import (
 # Los precios, tal cual los fijaste
 # --------------------------------------------------------------------------
 def test_the_prices_are_the_ones_that_were_decided():
-    """1 sat de entrada, 100 000 por la dedicada, 100 por inferencia.
+    """Entrada gratis, 100 000 por la dedicada, 100 por inferencia.
 
     Escritos como constantes nombradas porque un numero suelto incrustado en
     un script es un numero que nadie vuelve a encontrar. Y en satoshis, porque
     el precio tiene que ser exacto: un float seria un error de redondeo con
     dinero.
     """
-    assert JOIN_SATOSHIS == 1
+    assert JOIN_SATOSHIS == 0
     assert DEDICATED_SATOSHIS == 100_000          # 0.001 BSV
     assert PER_INFERENCE_SATOSHIS == 100
 
@@ -187,14 +189,14 @@ def test_a_quote_rejects_negative_inferences():
 def test_a_node_that_offers_vram_enters_free_and_is_not_charged_for_its_own():
     """Cobrarle por su propia capacidad seria cobrar dos veces.
 
-    Publica GPU, paga 1 sat, y consume de lo suyo sin cargo por uso. El motivo
-    va en ``reasons`` para que "no se cobra" sea una decision visible y no un
-    total que hay que interpretar.
+    Publica GPU, entra gratis por el roster, y consume de lo suyo sin cargo
+    por uso. El motivo va en ``reasons`` para que "no se cobra" sea una
+    decision visible y no un total que hay que interpretar.
     """
     q = quote(inferences=5_000, offers_vram=True)
     assert q.tier_name == "free"
-    assert q.total_satoshis == JOIN_SATOSHIS
-    assert any("1 satoshi" in r for r in q.reasons)
+    assert q.total_satoshis == JOIN_SATOSHIS == 0
+    assert any("gratis" in r for r in q.reasons)
 
 
 def test_a_consumer_with_no_vram_is_metered():
@@ -258,17 +260,21 @@ def test_a_quote_shows_the_saving_against_paying_per_use():
 # --------------------------------------------------------------------------
 # El limite que los precios no resuelven
 # --------------------------------------------------------------------------
-def test_one_dedicated_payment_buys_one_hundred_thousand_joins():
-    """El problema real de "gratis", medido y no supuesto.
+def test_the_join_is_free_and_the_brake_is_the_work():
+    """El hueco que midio v2, y como v3 lo mueve de la puerta al trabajo.
 
-    100 000 sats / 1 sat = 100 000 entradas. El coste de inscripcion no escala
-    con la malla, asi que el freno economico de Sybil en el nivel gratuito es
-    *el mismo* que el de un pago unico. Hay test para que el dia que se arregle
-    (inscripcion por capacidad) este falle y obligue a revisar el diseno.
+    En v2, 100 000 sats / 1 sat = 100 000 entradas: el freno de
+    Sybil del nivel gratuito era *el mismo* que el de un pago unico,
+    y no escalaba con la malla. En v3 la entrada es off-chain y
+    gratis, y el freno es el trabajo: fabricar 100 000 inferencias
+    cuesta 100 000 fees que paga el servidor, no 100 000
+    inscripciones. El coste escala con lo que el nodo *hace*.
     """
-    ratio = DEDICATED_SATOSHIS // JOIN_SATOSHIS
-    assert ratio == 100_000
+    # La entrada ya no compra nada por si sola.
+    assert JOIN_SATOSHIS == 0
     assert TIER_FREE.join_satoshis == JOIN_SATOSHIS
+    # El freno es por inferencia servida, y es lineal.
+    assert PER_INFERENCE_SATOSHIS == 100
 
 
 def test_bsv_has_no_dust_limit_and_that_is_what_makes_one_sat_ordinals_work():
@@ -286,24 +292,25 @@ def test_bsv_has_no_dust_limit_and_that_is_what_makes_one_sat_ordinals_work():
     """
     assert BSV_DUST_LIMIT_SATOSHIS == 0
     assert BSV_SINGLE_SAT_OUTPUTS is True
-    assert JOIN_SATOSHIS == 1, "un satoshi es una salida valida en BSV"
+    assert ORDINAL_SATOSHIS == 1, "un satoshi es una salida valida en BSV"
 
 
-def test_no_dust_limit_makes_the_sybil_problem_worse_not_better():
+def test_no_dust_limit_and_the_sybil_brake_is_not_the_entry():
     """La ausencia de polvo no es un escudo: es la ausencia de un escudo.
 
     En una cadena con umbral de polvo, cien mil salidas minusculas cuestan
     porque el agregado satoshi-hora de la UTXO se dispara. En BSV no hay ese
-    freno. Que el fee de una inscripcion de 1 sat sea barato no es por tanto una
-    ventaja del nivel gratuito — es lo que hace que el problema de Sybil de
-    :func:`test_one_dedicated_payment_buys_one_hundred_thousand_joins` siga
-    exactamente igual en vez de atenuarse.
+    freno — que es lo que hace posible el ordinal de 1 sat *dentro* de la tx
+    de inferencia. Que el fee sea barato no es por tanto una ventaja del
+    nivel gratuito: el freno de Sybil no es la entrada (gratis, off-chain,
+    :func:`test_the_join_is_free_and_the_brake_is_the_work`) sino la fee de
+    servir, lineal con el trabajo.
     """
-    # sin polvo, el unico freno es el fee por transaccion, y son lineales
-    ratio = DEDICATED_SATOSHIS // JOIN_SATOSHIS
-    assert ratio == 100_000
-    # el nivel gratuito sigue siendo el mas barato de los tres, sin atenuacion
-    assert TIER_FREE.join_satoshis == JOIN_SATOSHIS
+    # sin polvo, el ordinal de 1 sat de la inscripcion es posible
+    assert BSV_DUST_LIMIT_SATOSHIS == 0
+    assert ORDINAL_SATOSHIS == 1
+    # la entrada es gratis: el freno no puede estar en la puerta
+    assert TIER_FREE.join_satoshis == JOIN_SATOSHIS == 0
     assert TIER_FREE.join_satoshis < TIER_DEDICATED.join_satoshis
 
 # --------------------------------------------------------------------------

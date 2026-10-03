@@ -5,7 +5,7 @@ Los tres niveles y lo que compra cada uno
 =========  ==================  ==========================  ==================
 Nivel      Coste                Que compra                  Que puede dar
 =========  ==================  ==========================  ==================
-``free``   1 sat (ordinal)     entrar en la malla          compartir GPU
+ ``free``   gratis (roster)  entrar en la malla          compartir GPU
 ``ded``    100 000 sats         VRAM dedicada por un rato    capacidad aislada
 ``metered``100 sats/inferencia  inferencia de pago por uso  **nada**: puede
                                  ser 0 GB de VRAM publicados
@@ -33,30 +33,43 @@ elimina), que sea una decision y no un accidente de division.
 
 Lo que un nivel NO compra
 -------------------------
-* ``free`` **no** es gratis de verdad: 1 satoshi por inscripcion es el unico
-  freno economico contra Sybil, y es debilisimo. Ver abajo.
+* ``free`` **no** es gratis de verdad: entrar es gratis, pero servir
+  no lo es — cada inferencia servida exige una tx con fee, y la fee
+  la paga el servidor. El freno contra Sybil es el trabajo, no la
+  entrada. Ver abajo.
 * ``metered`` no compra pertenencia ni capacidad. Un nodo con 0 GB publicados
   que paga por inferencia es un consumidor, no un proveedor — y por eso
   :mod:`delm.core.wiring` no lo trata como miembro.
 
-El limite que no se va: 1 satoshi no es un obstaculo
----------------------------------------------------
-Una inscripcion cuesta 1 satoshi. Comprar 100 000 cuesta 100 000 sats, que es
-exactamente lo que cuesta un pago unico: con la misma dinero uno compra un
-pago unico o cien mil inscripciones. **El coste de inscripcion no escala con la
-malla, y un atacante con presupuesto de un solo pago unico puede inflar la malla
-en cuatro ordenes de magnitud.**
+El limite que no se va: la entrada gratis no es un obstaculo
+-------------------------------------------------------------
+Entrar cuesta 0: un roster off-chain, un intercambio de claves, un
+aval mutuo (:mod:`delm.core.join`). Y tampoco lo era con 1 satoshi:
+con el precio de un pago unico uno compraba cien mil inscripciones.
+**El coste de entrada no escala con la malla, punto — el freno no
+puede estar en la puerta.**
 
-Eso no se arregla con un precio mas alto sin volver el nivel "gratis" una
-mentira. Se arregla de dos formas, y las dos estan pendientes de tu decision:
+El freno esta en el trabajo, y es lineal: servir una inferencia
+exige una tx con fee que paga el servidor
+(:mod:`delm.core.intercambio`), asi que fabricar *N* inferencias
+cuesta *N* fees. El coste escala con lo que el nodo *hace*, no con
+lo que *dice ser*. Y un nodo sin VRAM publicada no sirve nada: el
+historial no cuenta una inferencia de quien no es proveedor, y el
+ranking ordena por inferencias servidas, no por identidades.
 
-1. **La inscripcion paga por capacidad, no por entrada.** Un nodo que publica
-   16 GB paga distinto que uno que publica 0. Entonces el coste si escala con
-   lo que el nodo realmente aporta, y un Sybil de entradas vacias no compra
+Eso no quita el hueco, que se deja explicito. Se arregla de dos
+formas, y las dos estan pendientes de tu decision:
+
+1. **La inscripcion paga por capacidad, no por entrada.** Un nodo que
+   publica 16 GB podria pagar distinto que uno que publica 0. Entonces
+   el coste escala con lo que el nodo realmente aporta desde antes de
+   la primera inferencia, y un Sybil de entradas vacias no compra
    nada.
-2. **El 1 satoshi compra la identidad, y la capacidad se mide aparte.** Que es
-   lo que hace este modulo, pero deja el hueco explicito: hoy el modulo *sabe*
-   cuanto cuesta entrar y no puede aplicarlo a la capacidad.
+2. **El trabajo es el freno, y la capacidad se mide aparte.** Que es
+   lo que hace este modulo: sabe cuanto cuesta servir, y no puede
+   aplicarlo a la entrada porque la entrada es gratis — deja el hueco
+   explicito: hoy el modulo *sabe* cuanto cuesta el trabajo y no
+   puede aplicarlo a la capacidad.
 
 Donde x402 encaja, y donde no — que es la pregunta que se hizo
 ----------------------------------------------------------------
@@ -87,9 +100,9 @@ Para los otros dos, x402 **no aporta y estorba**:
 Y hay un argumento tecnico mas, independiente de la intencion: la
 ``amount_sats`` de un proof de x402 esta atada a un challenge concreto, con su
 nonce del servidor. Para ``metered`` eso encaja (100 sats, peticion a peticion).
-Para una inscripcion de 1 sat **o** para una reserva de 100 000, el importe
-esta en el **contrato**, no en el proof — asi que el proof de x402 no lleva
-informacion que_verify_, y el gasto de un proof por operacion no compra nada.
+Para la entrada (gratis, en el roster) **o** para una reserva de 100 000, el
+importe esta en el **contrato**, no en el proof — asi que el proof de x402 no
+lleva informacion que_verify_, y el gasto de un proof por operacion no compra nada.
 
 Lo que si tiene sentido para los tres: **x402 como opcion de transporte** (que
 un cliente pueda pagar por una inference de un nodo que no conoce la malla), no
@@ -97,8 +110,10 @@ como mecanismo de pertenencia. Eso es distinto y no esta decidido.
 
 Lo que este modulo NO verifica
 -------------------------------
-No toca la cadena. :mod:`delm.core.membership` verifica la prueba de inclusion;
-este modulo solo **nombra** los precios y dice cual de los tres corresponde a
+No toca la cadena. La membresia es del roster
+(:mod:`delm.core.roster`, :mod:`delm.core.join`) o, en v2, de la
+prueba de inclusion (:mod:`delm.core.membership`); este modulo solo
+**nombra** los precios y dice cual de los tres corresponde a
 un caso. Cobrar es de otra capa.
 
 Y sobre el polvo, que es donde la primera version se equivoco
@@ -116,9 +131,10 @@ numero, y un valor con nombre documenta el numero mientras que la ausencia de
 nombre solo deja el numero suelto.
 
 Y por que importa mas alla de la inscripcion: **la ausencia de polvo no
-desampara al nivel gratuito, lo deja igual**. En una cadena con umbral, cien mil
-salidas minusculas se pagan solas porque el agregado se dispara; en BSV no hay
-ese freno, y el unico freno de Sybil sigue siendo el fee, que es lineal.
+desampara al nivel gratuito, porque el freno nunca estuvo en la entrada**. El
+polvo importaba mientras la entrada era el freno (cien mil salidas de 1
+satoshi); hoy la entrada es off-chain y el freno de Sybil es la fee de
+servir, que es lineal con el trabajo — no con las identidades.
 """
 from __future__ import annotations
 
@@ -131,8 +147,11 @@ TierName = Literal["free", "ded", "metered"]
 # Los precios. Named, y referenciados por los tests — no numeros sueltos.
 # ---------------------------------------------------------------------------
 
-#: Inscripcion: un satoshi. La identidad mas barata que se puede anclar.
-JOIN_SATOSHIS = 1
+#: Entrada: **gratis**. Desde v3 el join es off-chain (roster,
+#: avales mutuos — :mod:`delm.core.join`), no una inscripcion.
+#: :data:`ORDINAL_SATOSHIS` sigue siendo 1 sat, pero es el
+#: ordinal *dentro* de la tx de inferencia, no una entrada.
+JOIN_SATOSHIS = 0
 
 #: Pago unico por VRAM dedicada, en satoshis (0.001 BSV). **Incluye la
 #: entrada**: es un pago unico, no una entrada mas una reserva. Sumar ambos
@@ -279,7 +298,8 @@ class Tier:
         }
 
 
-#: Entrada con un satoshi. Comparte GPU y recibe acceso a la malla.
+#: Entrada gratis (roster, off-chain). Comparte GPU y recibe acceso a
+#: la malla; el freno Sybil es el trabajo servido, no la entrada.
 TIER_FREE = Tier(
     name="free",
     join_satoshis=JOIN_SATOSHIS,
@@ -291,8 +311,9 @@ TIER_FREE = Tier(
     x402_suitable=False,
     x402_note="No hay nada que cobrar. Un verificador de pagos sobre un nivel "
               "gratuito solo puede impedirlo.",
-    description="Entrada con 1 satoshi (ordinal). Comparte su GPU; el coste "
-                "es que la inscripcion no escala con lo que aporta.",
+    description="Entrada gratis por el roster (off-chain). Comparte su "
+                "GPU; el freno Sybil es el trabajo servido, no "
+                "la entrada.",
 )
 
 #: Pago unico por VRAM dedicada.
@@ -383,7 +404,8 @@ def quote(*, inferences: int, wants_dedicated: bool = False,
 
     La eleccion tiene una sola pregunta: **¿va a compartir VRAM?**
 
-    * si ofrece VRAM -> entra en ``free`` (1 sat) y consume su propia capacidad;
+    * si ofrece VRAM -> entra en ``free`` (gratis, roster) y consume su
+      propia capacidad;
     * si no ofrece nada y solo quiere inferencia -> ``metered``;
     * si quiere capacidad aislada por un rato -> ``ded``, y solo tiene sentido
       si el plan justifica los 100 000 sats.
@@ -431,8 +453,8 @@ def quote(*, inferences: int, wants_dedicated: bool = False,
     elif offers_vram:
         chosen = TIER_FREE
         reasons.append(
-            "ofrece VRAM: entra con 1 satoshi y consume su propia capacidad, "
-            "así que no se le cobra por uso")
+            "ofrece VRAM: entra gratis por el roster y consume su propia "
+            "capacidad, así que no se le cobra por uso")
     else:
         chosen = TIER_METERED
         reasons.append(

@@ -13,17 +13,18 @@ con ningún RPC de nodo: ARC es la vía.
 `intercambio.py` es la **secuencia** de punta a punta (la migración
 del flujo): pedido -> inferencia -> `PaymentTerms` -> `Payment`
 firmada -> emisión por ARC -> `PaymentACK` -> y solo entonces
-`record_inference` y el ranking. Sigue sin cablear: el **join v3**
-(gratis, off-chain) en el roster (`delm.core.roster` existe, pero
-ningún flujo lo usa todavía) — y por eso `JOIN_SATOSHIS` sigue en 1
-(ver `tiers.py`).
+`record_inference` y el ranking. Y el **join v3** (gratis,
+off-chain) está cableado en el roster: `delm.core.join` es la
+secuencia de emparejamiento (intercambio de claves, avales
+mutuos, reconciliación) sobre `delm.core.roster` — y por eso
+`JOIN_SATOSHIS` pasó de 1 a 0 (ver `tiers.py`).
 v2 (`delm/core/anchor.py`, `membership.py`, `tiers.py`) sigue en verde y
 sin tocar: v3 es un formato nuevo que convive con v2 — no lo reemplaza
 hasta que una decisión lo haga. Lo que v3 **no** cambia todavía: el
 flujo de la malla sigue contando inferencias por `record_inference` con
-el txid de la inscripción, y el join v3 (gratis, off-chain) no está
-cableado en el roster — el template y su verificación son el primero,
-la migración del flujo es el paso siguiente.
+el txid de la inscripción, y el intercambio sigue sin propagarse por
+la red — el template, su verificación y la secuencia son el primero,
+el transporte es el paso siguiente.
 
 ## De dónde viene
 
@@ -183,10 +184,11 @@ consumo con este mecanismo.
 El cambio contra v2 es uno: `JOIN_SATOSHIS` de `free`, de 1 a 0.
 
 **La consecuencia honesta, escrita donde vive hoy** (`tiers.py` dice:
-"1 satoshi por inscripción es el único freno económico contra Sybil, y
-es debilisísimo"): v3 quita incluso ese freno. El freno se mueve de la
-identidad al trabajo: cada inferencia servida exige una tx con fee que
-paga el servidor, así que fabricar *N* inferencias cuesta *N* fees —
+"entrar es gratis, pero servir no lo es — cada inferencia servida
+exige una tx con fee, y la fee la paga el servidor"): el freno
+se mueve de la identidad al trabajo: cada inferencia servida exige
+una tx con fee que paga el servidor, así que fabricar *N* inferencias
+cuesta *N* fees —
 el coste escala linealmente con el fraude, que es la propiedad que
 importa. Y como la reputación cuenta inferencias *servidas* (no nodos),
 y una inferencia local no ancla ni paga nada, el Sybil no gana nada
@@ -229,9 +231,16 @@ frenado por coste de entrada.
   La tesis del intercambio, offline, en `tests/test_intercambio.py`
   (el patrón de `test_exchange_thesis.py` de v2).
 * **`tiers.py`**: `JOIN_SATOSHIS` de `free` 1 → 0, y su docstring —
-  el freno Sybil cambia de sitio, y ese es el sitio donde está
-  documentado hoy. **Pendiente**: la constante sigue en 1 hasta que el
-  flujo de join v3 esté cableado en el roster.
+  el freno Sybil cambia de sitio (de la entrada al trabajo), y ese
+  es el sitio donde está documentado hoy.
+* **`delm/core/join.py`** — el join v3, cableado en el roster:
+  `found` funda el roster de un nodo (el fundador es su propio
+  primer avalado) y `pair` es la secuencia de emparejamiento —
+  intercambio de claves, avales mutuos, reconciliación de rosters
+  confiando solo en lo que ya se confía, y la prueba de confianza
+  mutua verificada. Todo off-chain, sin gastar nada. Offline, en
+  `tests/test_join.py` (el join y el intercambio componen el flujo
+  v3: la misma identidad por `peer_id`).
 * **`membership.py`**: sin cambios (v2). El join v3 es el roster
   (`delm.core.roster`): intercambio de claves firmado entre pares.
 * **`anchor.py`**: sin cambios (v2). v3 es formato nuevo con su
