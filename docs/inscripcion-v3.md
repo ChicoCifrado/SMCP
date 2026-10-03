@@ -2,10 +2,15 @@
 
 ## Estado
 
-Propuesta de diseño. **No implementada.** v2 (`delm/core/anchor.py`,
-`membership.py`, `tiers.py`) sigue en verde y sin tocar: v3 es un formato
-nuevo que, cuando se implemente, se suma al repo con su propia versión —
-no reemplaza a v2 hasta que una decisión lo haga.
+**Implementada** (`delm/core/inscripcion.py` + `delm/core/txbuild.py`,
+con tests offline: `tests/test_inscripcion.py`, `tests/test_txbuild.py`).
+v2 (`delm/core/anchor.py`, `membership.py`, `tiers.py`) sigue en verde y
+sin tocar: v3 es un formato nuevo que convive con v2 — no lo reemplaza
+hasta que una decisión lo haga. Lo que v3 **no** cambia todavía: el
+flujo de la malla sigue contando inferencias por `record_inference` con
+el txid de la inscripción, y el join v3 (gratis, off-chain) no está
+cableado en el roster — el template y su verificación son el primero,
+la migración del flujo es el paso siguiente.
 
 ## De dónde viene
 
@@ -174,14 +179,24 @@ inflando entradas: solo inflando trabajo real, que es justo lo que el
 ranking mide. Lo que se pierde: el número de *nodos* deja de estar
 frenado por coste de entrada.
 
-## Lo que cambia en el código (cuando se implemente)
+## Lo que cambia en el código (implementado)
 
-* **Nuevo módulo** (p. ej. `delm/core/inscripcion.py`): el template
-  SMCP3, el envelope BRC-160, la firma BRC-77, la construcción DPP de
-  la tx, y la verificación del comprobante (firma + inclusión).
+* **`delm/core/txbuild.py`** — el serializador de transacciones que
+  `membership.py` anticipó: formato legacy (BSV no tiene segwit),
+  varints, pushes, P2PKH, DER desde `r‖s`, txid, y el sighash legacy
+  completo (ALL/NONE/SINGLE/ANYONECANPAY, `FindAndDelete` de
+  OP_CODESEPARATOR) validado contra los vectores de
+  `sighash.json` de Bitcoin Core.
+* **`delm/core/inscripcion.py`** — el template SMCP3: `H` con prefijo
+  de longitud, el envelope BRC-160 (campos 1, 2, 3, 4, 5 y el body 0
+  de último), la construcción DPP (`build_payment_terms` →
+  `sign_requester_input`) y la verificación del comprobante
+  (`verify_payment_terms` antes de emitir, `verify_inscription` con
+  la prueba de inclusión después).
 * **`tiers.py`**: `JOIN_SATOSHIS` de `free` 1 → 0, y su docstring —
   el freno Sybil cambia de sitio, y ese es el sitio donde está
-  documentado hoy.
+  documentado hoy. **Pendiente**: la constante sigue en 1 hasta que el
+  flujo de join v3 esté cableado en el roster.
 * **`membership.py`**: sin cambios (v2). El join v3 es el roster
   (`delm.core.roster`): intercambio de claves firmado entre pares.
 * **`anchor.py`**: sin cambios (v2). v3 es formato nuevo con su
