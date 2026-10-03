@@ -19,6 +19,35 @@ contribuyen con su VRAM y, a cambio, obtienen acceso a la inferencia de la malla
 — y si esa VRAM se reparte bien, entre todos pueden correr modelos que no caben
 en ninguna máquina sola.**
 
+## Smart contract BSV (protocolo permissionless)
+
+`delm/core/contract.py` — el "smart contract" en BSV no es un
+programa que se ejecuta en la cadena (BSV no tiene EVM). Es un
+**locking script** que gobierna quien puede gastar un output:
+
+    P2PKH(nodeKey)   --  OP_DUP OP_HASH160 <20> OP_EQUALVERIFY
+                             OP_CHECKSIG
+
+El output del contract solo lo gasta el nodo cuya clave esta en
+el locking script. La cadena garantiza que el bounty lo cobra el
+nodo que resolvio la tarea, y nadie mas.
+
+**Protocolo permissionless**: nadie controla la red; todos
+colaboran haciendo inferencia para recibir satoshis:
+
+1. Treasury fondea un output P2PKH(nodeKey) con `bounty` sats.
+2. Cualquier nodo (permissionless) resuelve la tarea y propone
+   un gist.
+3. La malla verifica el gist (n-grams >=4) y lo firma (ed25519).
+4. El nodo cobra via `POST /api/contract/claim`: construye y
+   firma la tx que gasta el output del contract y paga el bounty
+   al nodo. El gasto es la **tx de anclaje** (outpoint de
+   atribucion al nodo).
+5. La tx se difunde via ARC.
+
+Cubierto por `tests/test_contract.py` (9 tests): P2PKH, firma,
+pago al nodo, cambio, UTXO insuficiente, roundtrip.
+
 ## Release 0.4.0 — La malla en vivo
 
 La malla deja de ser una biblioteca de pruebas y se convierte
@@ -913,7 +942,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1173 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1186 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1224,6 +1253,7 @@ delm/
     hci.py             Headroom-Closed Index             (métrica de mejora)
     run_store.py       persistencia de runs en disco (SQLite)
     benchmark.py       throughput vs nodos, latencia p50/p95
+    multi_node_bench.py  cada worker con SU modelo (malla real)
     rsi.py             RSILoop + Successor               (loop RSI L1)
     llmfit.py          LlmfitRunner + FitReport/veredicto (dimensionar el modelo local)
      contrib.py         Challenge/CapacityReport + ContributionLedger

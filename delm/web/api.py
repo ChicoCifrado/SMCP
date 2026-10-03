@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from delm.config import DEFAULT_CONFIG_PATH, build_client, load_config
 from delm.web import REPO_ROOT
 from delm.core.benchmark import scale_sweep, summarize
+from delm.core.contract import InferenceBounty, build_claim_tx
 from delm.core.contrib import (
     default_identity_path,
     default_state_path,
@@ -1766,3 +1767,80 @@ def get_mesh_check(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
                        "hardware; es una afirmación firmada y auditable"),
     })
     return view
+
+
+# ---------------------------------------------------------------------------
+# Smart contract BSV (protocolo permissionless)
+# ---------------------------------------------------------------------------
+
+class ContractClaim(BaseModel):
+    """Una inferencia verificada, lista para cobrar el bounty.
+
+    La malla ya admitio el gist (n-grams >=4 en el
+    trajectory). Aqui se construye la tx que gasta el
+    output del contract (P2PKH del nodo) y paga el
+    bounty al nodo.
+    """
+
+    gist_digest: str = Field(min_length=64, max_length=64)
+    node_pubkey: str = Field(min_length=66, max_length=66)
+    verifier_pubkey: str = Field(min_length=66, max_length=66)
+    satoshis: int = Field(gt=0, le=100_000_000)
+    task_digest: str = Field(default="", max_length=64)
+    #: UTXO del contract que se gasta.
+    prev_txid: str = Field(min_length=64, max_length=64)
+    prev_vout: int = Field(ge=0)
+    prev_satoshis: int = Field(gt=0)
+    #: Clave privada del nodo (para firmar el gasto).
+    node_privkey: str = Field(min_length=64, max_length=64)
+    fee_satoshis: int = Field(default=500, ge=0, le=100_000)
+
+
+@router.post("/contract/claim")
+def post_contract_claim(body: ContractClaim) -> dict[str, Any]:
+    """Cobra el bounty de una inferencia verificada.
+
+    Construye y firma la tx que gasta el output del
+    contract (``P2PKH(nodeKey)``) y paga el bounty al
+    nodo. El gasto de ese output es la **tx de anclaje**:
+    su outpoint ata la inferencia al nodo, y su existencia
+    prueba que ocurrio. La tx esta lista para difundir
+    via ARC.
+
+    Permissionless: cualquier nodo con su clave BSV puede
+    cobrar; la cadena garantiza (via el locking script)
+    que solo el nodo que resolvio la tarea recibe los
+    satoshis.
+    """
+    from delm.core.bsv_keys import Secp256k1KeyPair
+
+    # clave del nodo (para firmar el gasto del UTXO)
+    node_key = Secp256k1KeyPair.from_private_bytes(
+        "claim", bytes.fromhex(body.node_privkey))
+
+    bounty = InferenceBounty(
+        gist_digest=body.gist_digest,
+        node_pubkey=body.node_pubkey,
+        verifier_pubkey=body.verifier_pubkey,
+        satoshis=body.satoshis,
+        task_digest=body.task_digest,
+    )
+    # el cambio vuelve a la clave del nodo
+    tx, registro = build_claim_tx(
+        bounty, node_key,
+        prev_txid=body.prev_txid,
+        prev_vout=body.prev_vout,
+        prev_satoshis=body.prev_satoshis,
+        change_address_pubkey=node_key.public_key,
+        fee_satoshis=body.fee_satoshis,
+    )
+    return {
+        "ok": True,
+        "reason": "claim firmado (listo para ARC)",
+        "txid": registro["txid"],
+        "outpoint": registro["outpoint"],
+        "satoshis": registro["satoshis"],
+        "fee_satoshis": registro["fee_satoshis"],
+        "gist_digest": registro["gist_digest"],
+        "raw_hex": registro["raw_hex"],
+    }
