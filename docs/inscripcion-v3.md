@@ -47,9 +47,9 @@ Del registro (bsv.brc.dev), con lo que cada uno aporta:
 |---|---|
 | **BRC-159** (1Sat Ordinals) | El ordinal de 1 sat como comprobante: el token es la cadena de outputs de 1 sat, su *origin* es el outpoint, y la transferencia la da el orden de satoshis. El ordinal viaja a Alice y es el receipt. |
 | **BRC-160** (Inscription Envelopes) | El formato del envelope: `OP_FALSE OP_IF "ord" … OP_ENDIF` **en el script de bloqueo del output de 1 sat**, con content-type (campo 1), body (campo 0), parent (campo 3) y campos de aplicación adicionales antes del body. **Corrige la idea de "datos en OP_RETURN"**: el sitio estándar de una inscripción de 1 sat es el envelope en el locking script, no un output OP_RETURN. OP_RETURN queda como sitio opcional para metadatos MAP. |
-| **BRC-220** (NotaryHash) | El modelo de notarización de hash firmado: el firmante hashea localmente, firma localmente, y la cadena lleva el hash y la firma — nunca el contenido. Adoptamos su **lección de determinismo** (codificación binaria length-prefixed, nunca `JSON.stringify`) para todo lo que se firma o se hashea, y su modelo de certificado verificable offline contra cabeceras de bloque. Su modo *batch* (merkle root de muchas pruebas en una tx) queda como optimización futura. |
+| **BRC-220** (NotaryHash) | El modelo de notarización de hash firmado — **y el repo ya lo implementa**: `bsv_keys.py` (ECDSA-secp256k1, firmas de 64 bytes `r‖s`), `ledger_canon.py` (prefijos de longitud `u32be`) y `timechain.py` (certificados) citan BRC-220, y el registro lo confirma: define `ECDSA-secp256k1`, permite firmas de 64 bytes `r‖s` **o DER**, y canonicaliza con prefijos de longitud. v3 lo usa tal cual: el servidor hashea `H` localmente, lo firma localmente, y la cadena lleva el hash y la firma — nunca el contenido. Su modo *batch* (merkle root de muchas pruebas en una tx) queda como optimización futura. |
 | **BRC-27** (DPP) | El flujo de pago: el comerciante construye la tx (`PaymentTerms`), el cliente firma su input (`Payment`), el comerciante emite y confirma (`PaymentACK`). Es exactamente el flujo de la tx única: Bob construye, Alice firma su UTXO, Bob emite. |
-| **BRC-77** (Message Signature) | La firma del servidor sobre el hash: construida sobre BRC-42/43 (que el repo ya implementa en `bsv_keys.py`), con estructura auto-descriptiva (lleva la pubkey del firmante, el key ID y la firma DER) — cualquier auditor verifica sin claves extra. `verifierID = 0x00` (verificable por cualquiera). |
+| **BRC-77** (Message Signature) | Opción de interoperabilidad futura, no necesaria para v3.0: firma con claves derivadas por contraparte sobre BRC-42/43 (que el repo ya implementa en `spv.py`). Para v3.0 basta la firma BRC-220 con la pubkey del servidor incrustada en la inscripción — la inscripción ya es pública, así que el secreto por contraparte de BRC-77 no aporta aquí. |
 | **BRC-10 / BRC-11** (TSC merkle proof) | El formato del certificado de inclusión. La `InclusionProof` actual ya tiene los mismos campos (`txid`, `index`, `path`, `merkle_root`, `height`); alinear nombres y serialización. |
 | **BRC-36** (outpoints) | Forma canónica de escribir outpoints. El repo usa `txid:vout`; verificar la forma canónica de BRC-36 al implementar. |
 | **BRC-42 / 43 / 75** | Ya adoptados (derivación, keyId, mnemónico). Se quedan. |
@@ -60,10 +60,6 @@ auditable con pre-commitment por época y merkle root de registros. Su
 patrón (`OP_FALSE OP_RETURN "ARIA" <json>`) y sus reglas de JSON
 canónico son útiles, pero su modelo de épocas es otra arquitectura;
 queda como referencia para el batching futuro.
-
-**Discrepancia a corregir:** `bsv_keys.py` y docs etiquetan la identidad
-secp256k1 como "BRC-220". En el registro, BRC-220 es NotaryHash; la
-identidad es BRC-42/43/75. Corregir la etiqueta.
 
 ## La transacción
 
@@ -77,9 +73,10 @@ Una tx, construida por Bob (DPP), firmada por Alice, emitida por Bob:
   OP_FALSE OP_IF
     "ord"
     OP_1  0x0a "text/plain"     # content-type del body
+    OP_2  <33B pubkey servidor> # quién sirvió (BRC-220: comprimida)
     OP_3  <36B outpoint>        # parent: el outpoint del input que paga
     OP_4  0x03                  # versión de formato: SMCP3
-    OP_5  <estructura BRC-77>   # firma del servidor sobre el hash
+    OP_5  <64B r‖s>             # firma secp256k1 sobre H (BRC-220)
     OP_0  <64B ASCII hex>       # body: H, el hash, en texto plano
   OP_ENDIF
   <P2PKH(Alice)>
@@ -119,7 +116,8 @@ este mesh, para este solicitante, servida por este nodo* — no qué dijo.
 
 1. **Alice → Bob** (por QUIC; x402 como opción de transporte): la
    petición — prompt, `mesh_id`, su pubkey de solicitante.
-2. **Bob**: ejecuta la inferencia, calcula `H`, firma `H` (BRC-77),
+2. **Bob**: ejecuta la inferencia, calcula `H`, la firma (secp256k1,
+   64 bytes `r‖s` — la convención BRC-220 del repo),
    construye la tx (`PaymentTerms`): input de Alice (100 sats),
    outputs [1 sat → Alice con envelope, 99−fee → Bob].
 3. **Alice**: verifica `H` (lo recomputa de `mesh_id` y su pubkey),
@@ -137,8 +135,8 @@ este mesh, para este solicitante, servida por este nodo* — no qué dijo.
 
 ## Qué prueba el comprobante, y qué no
 
-Prueba: que el poseedor de la clave que firmó (identificada por la
-estructura BRC-77) ancló `H`; que `H` compromete (`mesh_id`,
+Prueba: que el poseedor de la clave que firmó (la pubkey de 33 bytes
+incrustada en la inscripción) ancló `H`; que `H` compromete (`mesh_id`,
 solicitante); que la tx movió 100 sats de Alice a (1 sat ordinal a
 Alice + 99−fee a Bob) — el grafo de la tx dice quién pagó y quién
 cobró; que Alice posee el ordinal; y, con el certificado, en qué altura
@@ -189,8 +187,9 @@ frenado por coste de entrada.
 * **`anchor.py`**: sin cambios (v2). v3 es formato nuevo con su
   propia versión (`OP_4 = 3`).
 * **`x402.py`**: alinear con BRC-120 (follow-up).
-* **`bsv_keys.py` / docs**: corregir la etiqueta "BRC-220" → la
-  identidad es BRC-42/43/75.
+* **`bsv_keys.py` / `ledger_canon.py`**: sin cambios — v3 reutiliza las
+  primitivas BRC-220 que ya existen (firma `r‖s`, prefijos `u32be`);
+  no hay nuevo código criptográfico para la firma.
 
 ## Abierto
 
@@ -208,6 +207,8 @@ frenado por coste de entrada.
 4. **Identidad en el join** — BRC-52 (identity certificates) o
    BRC-103 (auth mutua) para que el intercambio de claves off-chain
    demuestre quién es quién; hoy es intercambio simple.
-5. **BRC-77 vs firma cruda** — esta spec adopta BRC-77. Si la
-   implementación empieza con la convención cruda de 64 bytes del repo,
-   migrar después es un cambio de formato versionado.
+5. **BRC-77** — v3.0 adopta la convención BRC-220 que ya tiene el repo
+   (64 bytes `r‖s`, pubkey incrustada). BRC-77 (firmas con claves
+   derivadas, BRC-42/43) queda como opción de interoperabilidad con el
+   ecosistema de mensajes de BSV; migrar es un cambio de formato
+   versionado (`OP_4`).
