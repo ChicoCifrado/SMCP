@@ -50,7 +50,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import aiohttp
 
@@ -65,6 +65,7 @@ __all__ = [
     "ArcRejectedError",
     "ArcTimeoutError",
     "ArcTxStatus",
+    "Broadcaster",
     "broadcast_transaction",
     "ACCEPTED_BY_NETWORK",
     "ACCEPTED_STATUSES",
@@ -475,7 +476,25 @@ class ArcClient:
         )
 
 
-async def broadcast_transaction(tx: Transaction, client: ArcClient,
+class Broadcaster(Protocol):
+    """Lo que la emisión necesita: emitir una tx y esperar su aceptación.
+
+    :class:`ArcClient` lo satisface estructuralmente; un doble en
+    proceso lo sustituye en los tests sin red (el contrato de wire
+    de ARC lo sujetan ``tests/test_arc.py``).
+    """
+
+    async def broadcast(
+        self,
+        tx_hex: str,
+        *,
+        target: frozenset[str] = ...,
+        poll_interval: float = ...,
+        deadline: float = ...,
+    ) -> ArcTxStatus: ...
+
+
+async def broadcast_transaction(tx: Transaction, client: Broadcaster,
                                 **kwargs: Any) -> ArcTxStatus:
     """Emite una tx construida localmente y verifica su identidad.
 

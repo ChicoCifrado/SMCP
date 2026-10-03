@@ -3,12 +3,20 @@
 ## Estado
 
 **Implementada** (`delm/core/inscripcion.py` + `delm/core/txbuild.py`
-+ `delm/core/arc.py`, con tests offline: `tests/test_inscripcion.py`,
-`tests/test_txbuild.py`, `tests/test_arc.py`).
++ `delm/core/arc.py` + `delm/core/intercambio.py`, con tests
+offline: `tests/test_inscripcion.py`, `tests/test_txbuild.py`,
+`tests/test_arc.py`, `tests/test_intercambio.py`).
 `arc.py` es la capa de emisión que el flujo pide en el paso 4:
 cliente HTTP de ARC (el servicio de emisión de BSV) — emite la tx
 firmada y sondea hasta el `PaymentACK`. No habla con Bitcoin Core ni
 con ningún RPC de nodo: ARC es la vía.
+`intercambio.py` es la **secuencia** de punta a punta (la migración
+del flujo): pedido -> inferencia -> `PaymentTerms` -> `Payment`
+firmada -> emisión por ARC -> `PaymentACK` -> y solo entonces
+`record_inference` y el ranking. Sigue sin cablear: el **join v3**
+(gratis, off-chain) en el roster (`delm.core.roster` existe, pero
+ningún flujo lo usa todavía) — y por eso `JOIN_SATOSHIS` sigue en 1
+(ver `tiers.py`).
 v2 (`delm/core/anchor.py`, `membership.py`, `tiers.py`) sigue en verde y
 sin tocar: v3 es un formato nuevo que convive con v2 — no lo reemplaza
 hasta que una decisión lo haga. Lo que v3 **no** cambia todavía: el
@@ -208,6 +216,18 @@ frenado por coste de entrada.
   la petición con `X-WaitFor` y sondean hasta el objetivo —
   comparando el txid de ARC con el de la tx local. Todo contra un
   ARC falso en localhost (`tests/test_arc.py`), sin red.
+* **`delm/core/intercambio.py`** — la secuencia de punta a punta:
+  `InferenceServer.serve` ejecuta la inferencia y construye los
+  `PaymentTerms` (la respuesta viaja fuera de cadena, como en v2);
+  `sign_payment` verifica y firma del lado del solicitante;
+  `InferenceServer.settle` re-verifica la `Payment` firmada, exige
+  el input firmado, emite por ARC, espera el estado aceptado y —
+  solo entonces— cuenta con `record_inference` (y lanza si el
+  historial no cuenta: nodo sin VRAM anunciada o txid repetido).
+  `Broadcaster` (en `arc.py`) es la vía de emisión inyectable:
+  `ArcClient` en producción, un doble en proceso en los tests.
+  La tesis del intercambio, offline, en `tests/test_intercambio.py`
+  (el patrón de `test_exchange_thesis.py` de v2).
 * **`tiers.py`**: `JOIN_SATOSHIS` de `free` 1 → 0, y su docstring —
   el freno Sybil cambia de sitio, y ese es el sitio donde está
   documentado hoy. **Pendiente**: la constante sigue en 1 hasta que el

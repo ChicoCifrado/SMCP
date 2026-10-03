@@ -881,7 +881,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1145 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1151 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -940,6 +940,9 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
    `X-WaitFor`/`X-MaxTimeout`/`Authorization`, *problem details*
    RFC 7807, sondeo hasta el `PaymentACK` y el chequeo de txid
    contra la tx local) +
+   6 intercambio (la secuencia v3 de punta a punta: pedido,
+   inferencia, PaymentTerms, Payment firmada, emisión por ARC,
+   PaymentACK y solo entonces el historial y el ranking) +
   21 ACP (`smcp-serve`: handshake, ciclo de vida, el contrato de firmas de los
   overrides contra `acp.Agent`, prompt con el pipeline real, cancelación, smoke
   JSON-RPC por stdio) +
@@ -1142,6 +1145,7 @@ delm/
       txbuild.py         serializador de tx BSV (legacy; sighash contra vectores de Core)
        inscripcion.py     template SMCP3 v3: una tx paga e inscribe (BRC-160/220/27)
        arc.py             cliente ARC: emisión por HTTP (el PaymentACK de DPP)
+       intercambio.py     la secuencia v3 de punta a punta (DPP + ARC + historial)
      reservation.py     reserva atomica de VRAM dedicada (tier de pago unico)
      reservation_ipc.py el cerrojo entre procesos de la reserva
      wiring.py          el camino de admision que une reserva y ledger
@@ -1161,7 +1165,7 @@ delm/
     run_taint_demo.py      demo Capa 5
     run_multihost_demo.py  demo multi-host (QUIC / Nostr)
     run_rsi_demo.py        demo RSI L1 (mide HCI)
-  tests/   (63 archivos — ver lista arriba)
+  tests/   (64 archivos — ver lista arriba)
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa
