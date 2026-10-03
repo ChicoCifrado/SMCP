@@ -19,6 +19,35 @@ contribuyen con su VRAM y, a cambio, obtienen acceso a la inferencia de la malla
 — y si esa VRAM se reparte bien, entre todos pueden correr modelos que no caben
 en ninguna máquina sola.**
 
+## Release 0.4.0 — La malla en vivo
+
+La malla deja de ser una biblioteca de pruebas y se convierte
+en una **superficie operativa de punta a punta**: un operador
+abre la consola, ve la malla en 3D con nodos reales, lanza un
+run contra un modelo local y cada inferencia admitida queda
+anclada a la cadena de bloques BSV con su timestamp.
+
+- **Consola Motor** — runs asincronos por SSE con cancelacion
+  en vivo (ya no hay una peticion que bloquea 240 s); modo
+  Proyecto intacto.
+- **Malla 3D** — peers reales de `/api/mesh`: tamano = raiz de
+  la VRAM, color vivo/muerto, halo ambar por VRAM reservada,
+  posicion estable por identidad, ficha completa por nodo.
+- **Persistencia de runs** — al recargar, el run activo se
+  reanuda en vivo (SSE con replay).
+- **Inferencia real admitida** — el gist es un span literal del
+  trajectory; el pipeline contra Qwen3.8-27B-GGUF local admite
+  en 1 intento (46.6 s, gist firmado ed25519, contexto size 1).
+- **Anclaje BSV** — una transaccion por inferencia, sin hashear
+  el contenido; firma secp256k1, inclusion Merkle, verificacion
+  contra cabecera.
+- **Tres tiers** — precios que se cruzan en 1.000 inferencias;
+  x402 en el tier metered.
+
+Detalle por cambio: [`CHANGELOG.md`](CHANGELOG.md).
+
+---
+
 No es una copia del repositorio de referencia de DeLM: es una re-derivación del
 mismo núcleo, expresada como una librería pequeña y testeable, con una capa de
 seguridad (proveniencia, integridad y anti prompt-injection) que el paper no
