@@ -31,6 +31,7 @@ from delm.core.llm import FakeLLMClient, LLMClient
 from delm.core.metrics import TaskMetrics
 from delm.core.placement import DEFAULT_MESH_ENDPOINT
 from delm.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
+from delm.core.run_store import RunStore, StoredRun
 from delm.core.task_queue import Task, TaskState
 from delm.core.taint import TaintLevel
 from delm.core.unfolding import Unfolding, Unfolded
@@ -198,8 +199,13 @@ class RunSession:
         self._llm: LLMClient | None = None
         self.model_info: dict[str, Any] = {}
         self.rounds = 0
+        # Header exacto archivado (runs recuperados de disco):
+        # si existe, header() lo sirve tal cual.
+        self._stored: dict[str, Any] | None = None
 
     def header(self) -> dict[str, Any]:
+        if self._stored is not None:
+            return self._stored
         return {
             "id": self.id,
             "status": self.status,
@@ -267,6 +273,40 @@ class RunManager:
         self._history = [s for s in self._history if s is not session]
         self._history.append(session)
         del self._history[:-MAX_HISTORY]
+        self._persist(session)
+
+    def _persist(self, session: RunSession) -> None:
+        """Archiva el run en disco (append-only por id).
+
+        El pipeline lleva el contexto vivo; aqui se guardan
+        los gists que ese run aporto, para reconstruir el
+        contexto o auditarlo despues de un reinicio.
+        """
+        gists = []
+        pipe = session.pipeline
+        if pipe is not None:
+            for g in pipe.ctx.snapshot():
+                gists.append({
+                    "label": g.label,
+                    "gist": g.gist,
+                    "kind": getattr(g.kind, "value", str(g.kind)),
+                    "author_id": getattr(g, "author_id", None),
+                    "digest": getattr(g, "digest", None),
+                    "taint": getattr(g, "taint", None),
+                })
+        try:
+            RUN_STORE.save(StoredRun(
+                id=session.id,
+                header=session.header(),
+                outcome=(dataclasses.asdict(session.outcome)
+                         if session.outcome else None),
+                events=list(session.events),
+                gists=gists,
+                created_at=session.created_at,
+                updated_at=time.time(),
+            ))
+        except Exception:  # noqa: BLE001 — nunca fallar el run por persistir
+            pass
 
     async def cancel(self, run_id: str) -> dict[str, Any]:
         s = self.get(run_id)
@@ -292,7 +332,29 @@ class RunManager:
         self._history = [x for x in self._history if x is not s]
 
 
+# Persistencia en disco: el historial sobrevive a un reinicio.
+RUN_STORE = RunStore()
 MANAGER = RunManager()
+# Recuperar el historial archivado (sin estado vivo, solo header+gists).
+for _stored in RUN_STORE.history(MAX_HISTORY):
+    _sess = RunSession(
+        backend=_stored.header.get("backend", "fake"),
+        n_workers=_stored.header.get("n_workers", 1),
+        max_rounds=_stored.header.get("max_rounds", 1),
+        tasks=[],
+    )
+    _sess.id = _stored.id
+    _sess._stored = _stored.header
+    _sess.status = _stored.header.get("status", "done")
+    _sess.error = _stored.header.get("error")
+    _sess.created_at = _stored.created_at
+    _sess.started_at = _stored.header.get("started_at")
+    _sess.finished_at = _stored.header.get("finished_at")
+    _sess.rounds = _stored.header.get("rounds", 0)
+    _sess.model_info = _stored.header.get("model", {})
+    _sess.events = _stored.events
+    _sess.outcome = None
+    MANAGER._history.append(_sess)
 
 
 def _push(session: RunSession, type_: str, **payload: Any) -> None:

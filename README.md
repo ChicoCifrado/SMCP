@@ -913,7 +913,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1160 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1168 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1222,6 +1222,7 @@ delm/
     quic_host.py       QUIC host server/client           (transporte entre hosts)
     harness_client.py  HarnessLLMClient                  (DeepSeek Harness, opt-in)
     hci.py             Headroom-Closed Index             (métrica de mejora)
+    run_store.py       persistencia de runs en disco (SQLite)
     rsi.py             RSILoop + Successor               (loop RSI L1)
     llmfit.py          LlmfitRunner + FitReport/veredicto (dimensionar el modelo local)
      contrib.py         Challenge/CapacityReport + ContributionLedger
