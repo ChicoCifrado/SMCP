@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from delm.config import DEFAULT_CONFIG_PATH, build_client, load_config
 from delm.web import REPO_ROOT
+from delm.core.benchmark import scale_sweep, summarize
 from delm.core.contrib import (
     default_identity_path,
     default_state_path,
@@ -893,6 +894,39 @@ def get_ledger(run: str | None = None) -> dict[str, Any]:
         "chain_ok": ledger.verify_chain(),
         "entries": entries,
     }
+
+
+@router.post("/benchmark")
+async def run_benchmark(
+    workers: str = "1,2,4",
+    tasks_per_worker: int = 1,
+    body: str = "State one concrete fact.",
+) -> dict[str, Any]:
+    """Benchmark de la malla: throughput vs nodos y latencia.
+
+    Barre niveles de workers (nodos) y mide, para cada uno,
+    throughput (tareas/s), latencia p50/p95 y tokens/s. La
+    carga por nodo es constante (tasks_per_worker * W), asi
+    el throughput es comparable entre niveles de paralelismo.
+    Requiere backend=real configurado.
+    """
+    counts = [int(w) for w in workers.split(",") if w.strip().isdigit()]
+    if not counts:
+        raise HTTPException(status_code=400, detail="workers invalido")
+    llm, _info = _build_llm("real")
+    try:
+        points = await scale_sweep(
+            llm, worker_counts=counts,
+            tasks_per_worker=tasks_per_worker, body=body,
+        )
+        return summarize(points)
+    finally:
+        close = getattr(llm, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                res = close()
+                if asyncio.iscoroutine(res):
+                    await res
 
 
 @router.get("/metrics")
