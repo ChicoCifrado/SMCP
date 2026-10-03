@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#090a09" />
+<title>Malla 3D — SMCP</title>
+<link rel="stylesheet" href="assets/style.css" />
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; background: #090a09; }
+  #scene { position: fixed; inset: 0; display: block; }
+
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 20px;
+    background: linear-gradient(180deg, rgba(9,10,9,.88), rgba(9,10,9,0));
+    pointer-events: none;
+  }
+  #hud .brand { display: flex; align-items: center; gap: 10px; font: 600 15px var(--font-mono); color: var(--text); }
+  #hud .brand .mark {
+    display: inline-block; width: 72px; height: 18px;
+    background-color: var(--glyph-ink);
+    -webkit-mask: url('/assets/smcp-mark.svg') no-repeat center / contain;
+    mask: url('/assets/smcp-mark.svg') no-repeat center / contain;
+  }
+  #hud .hint { font: 12px var(--font-mono); color: var(--muted); margin-left: auto; }
+  #hud nav { display: flex; gap: 14px; flex-wrap: wrap; pointer-events: auto; }
+  #hud nav a { color: var(--muted); border: none; text-decoration: none; font: 12px var(--font-mono); }
+  #hud nav a.here { color: var(--accent); }
+
+  /* tarjetas de cuentas */
+  #accounts {
+    position: fixed; left: 18px; top: 76px; z-index: 5;
+    display: flex; flex-direction: column; gap: 8px;
+    pointer-events: none;
+  }
+  #accounts .card {
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px;
+    min-width: 160px;
+  }
+  #accounts .card .n { font-size: 19px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+  #accounts .card .n.bad { color: #ff6b5b; }
+  #accounts .card .l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+
+  /* ficha del peer */
+  #peer-card {
+    position: fixed; right: 18px; top: 76px; z-index: 5;
+    width: min(330px, 34vw);
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; display: none;
+    backdrop-filter: blur(8px);
+    font: 12.5px var(--font-mono);
+  }
+  #peer-card.on { display: block; }
+  #peer-card h3 { margin: 0 0 10px; font-size: 13px; color: var(--text); word-break: break-all; }
+  #peer-card .row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  #peer-card .row:last-child { border-bottom: none; }
+  #peer-card .k { color: var(--muted); }
+  #peer-card .v { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { border-color: var(--accent-soft); color: var(--accent); }
+  .pill.bad { border-color: #ff6b5b; color: #ff6b5b; }
+
+  #legend {
+    position: fixed; left: 18px; bottom: 18px; z-index: 5;
+    display: flex; flex-direction: column; gap: 6px;
+    font: 11.5px var(--font-mono); color: var(--muted);
+    pointer-events: none;
+  }
+  #legend .row { display: flex; align-items: center; gap: 8px; }
+  #legend .sw { width: 12px; height: 12px; border-radius: 3px; }
+
+  #mesh-status { position: fixed; right: 18px; bottom: 18px; z-index: 5; font: 11px var(--font-mono); color: var(--muted); pointer-events: none; }
+
+  #loading {
+    position: fixed; inset: 0; z-index: 9; display: grid; place-items: center;
+    background: #090a09; color: var(--muted); font: 13px var(--font-mono);
+    transition: opacity .4s;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="hud">
+    <div class="brand"><span class="mark" role="img" aria-label="SMCP"></span><span style="color:var(--accent)">SMCP</span><span style="color:var(--muted)">·</span><span>Malla de intercambio 3D</span></div>
+    <nav>
+      <a href="index.html">Inicio</a>
+      <a href="nucleo.html">Núcleo</a>
+      <a href="seguridad.html">Seguridad</a>
+      <a href="demos.html">Demos</a>
+      <a href="arquitectura.html">Arquitectura</a>
+      <a href="play.html">Lab</a>
+      <a href="context.html">Contexto</a>
+      <a href="ledger.html">Ledger</a>
+      <a href="estado.html">Estado</a>
+      <a href="malla.html">Malla 2D</a>
+      <a href="console.html">Consola</a>
+      <a href="mesh3d.html" class="here">Malla 3D</a>
+    </nav>
+    <div class="hint">arrastra para orbitar · rueda para zoom · clic en un nodo para verlo</div>
+  </div>
+
+  <div id="accounts">
+    <div class="card"><div class="n" id="mv-verified">0 GB</div><div class="l">VRAM verificada</div></div>
+    <div class="card"><div class="n" id="mv-declared">0 GB</div><div class="l">VRAM declarada</div></div>
+    <div class="card"><div class="n" id="mv-reserved">0 GB</div><div class="l">VRAM reservada (tier 2)</div></div>
+    <div class="card"><div class="n" id="mv-peers">0</div><div class="l">peers</div></div>
+    <div class="card"><div class="n" id="mv-chain">—</div><div class="l">cadena de evidencia</div></div>
+    <div class="card"><div class="n" id="mv-digest" style="font-size:13px">—</div><div class="l">digest de estado</div></div>
+  </div>
+
+  <div id="peer-card">
+    <h3 id="pp-id">peer</h3>
+    <div class="row"><span class="k">estado</span><span class="pill" id="pp-alive">—</span></div>
+    <div class="row"><span class="k">VRAM compartida</span><span class="v" id="pp-vram">—</span></div>
+    <div class="row"><span class="k">VRAM libre</span><span class="v" id="pp-free">—</span></div>
+    <div class="row"><span class="k">VRAM reservada</span><span class="v" id="pp-res">—</span></div>
+    <div class="row"><span class="k">inferencias servidas</span><span class="v" id="pp-inf">—</span></div>
+    <div class="row"><span class="k">satoshis ganados</span><span class="v" id="pp-sat">—</span></div>
+    <div class="row"><span class="k">rechazos</span><span class="v" id="pp-rej">—</span></div>
+    <div class="row"><span class="k">segundos observado</span><span class="v" id="pp-obs">—</span></div>
+  </div>
+
+  <div id="legend">
+    <div class="row"><span class="sw" style="background:#8fbf3f"></span> Peer vivo (verificado)</div>
+    <div class="row"><span class="sw" style="background:#58624b"></span> Peer muerto / no verificado</div>
+    <div class="row"><span class="sw" style="background:#ffc233"></span> VRAM reservada (tier 2)</div>
+    <div class="row"><span class="sw" style="background:transparent;border:1px solid #8fbf3f"></span> Tamaño = VRAM compartida</div>
+  </div>
+
+  <div id="mesh-status">sondeando…</div>
+
+  <div id="loading">inicializando malla…</div>
+
+  <script src="/js/three.min.js"></script>
+  <script src="/assets/mesh3d.js"></script>
+</body>
+</html>

@@ -1147,6 +1147,7 @@ delm/
     static/                11 páginas (nav común en todas) + assets
       index.html nucleo.html seguridad.html demos.html arquitectura.html
       play.html context.html ledger.html estado.html malla.html console.html
+      mesh3d.html
       js/                   three.min.js (la escena 3D de `console.html`)
       console.js            consola 3D: motor DeLM en vivo (SSE) + funciones
       assets/
@@ -1157,6 +1158,8 @@ delm/
         estado.js            estado en vivo: señales, config, runs, acciones
         fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
         malla.js             la malla: intercambio, reparto y auditoría
+        mesh3d.js            la malla en 3D: peers reales, VRAM, reservas
+        runs.js              cliente del motor de runs (SSE, reconexion)
         context.js ledger.js play.js demos.js seguridad.js   una por página
         style.css            design system · OpenCode.otf · smcp-mark.svg
   core/

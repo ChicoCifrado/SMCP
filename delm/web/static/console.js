@@ -699,6 +699,30 @@
       spawnWorkers(2);       // modo por defecto: motor
       loadFunctions();       // cache para el modo proyecto
 
+      // Persistencia: si hay un run activo al recargar, se reanuda
+      // en vivo — el stream hace replay de los eventos ya ocurridos.
+      SMCPRuns.reconnect({
+        onCreate: function (hdr) {
+          clearFuncNodes();
+          spawnWorkers(hdr.n_workers || 2);
+          clearGists(); clearTaint();
+          dot.classList.add("on");
+          ttl.textContent = "Run " + (hdr.tasks && hdr.tasks[0] ? String(hdr.tasks[0].body || hdr.tasks[0].label || "").slice(0, 26) : "reanudado");
+          st.textContent = "run " + String(hdr.id).slice(4, 10) + " · vivo (reconectado)";
+          st.className = "st ok";
+          runBtn.disabled = true;
+          cancelBtn.classList.add("on");
+          out.innerHTML = '<span class="dim">reconectado al run activo — replay de eventos</span>\n';
+          run = { ctrl: { id: hdr.id, _closed: false }, nw: hdr.n_workers || 2 };
+        },
+        onEvent: function (ev) { handleEvent(ev, run ? run.nw : 2); },
+        onEnd: function (status) { endRun(status); },
+        onError: function (e) {
+          endRun("error");
+          printLine('<span class="err">error: ' + fmt(e.message || String(e)) + "</span>");
+        },
+      }).catch(function () {});
+
       el("m-motor").addEventListener("click", function () { setMode("motor"); });
       el("m-proy").addEventListener("click", function () { setMode("proy"); });
       runBtn.addEventListener("click", launchRun);

@@ -119,5 +119,29 @@
     return fetch("/api/runs").then(function (r) { return r.json(); });
   }
 
-  window.SMCPRuns = { start: start, cancel: cancel, state: state, drop: drop, list: list };
+  /**
+   * Reconectar al run activo tras recargar la pagina.
+   * La API lista los runs; el activo se sigue como si se hubiera
+   * lanzado aqui — el stream hace replay desde el evento 0.
+   * Devuelve null si no hay run activo.
+   */
+  function reconnect(handlers) {
+    return list().then(function (j) {
+      var active = j.active;
+      if (!active) return null;
+      var h = handlers || {};
+      var ctrl = { id: active, cancelled: false, _es: null, _closed: false, reconnected: true };
+      if (h.onCreate) {
+        // el header completo para el reconectado
+        fetch("/api/runs/" + active)
+          .then(function (r) { return r.json(); })
+          .then(function (hdr) { if (h.onCreate) h.onCreate(hdr); })
+          .catch(function () {});
+      }
+      follow(ctrl, h);
+      return ctrl;
+    });
+  }
+
+  window.SMCPRuns = { start: start, cancel: cancel, state: state, drop: drop, list: list, reconnect: reconnect };
 })();
