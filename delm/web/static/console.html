@@ -8,12 +8,13 @@
 <style>
   html, body { height: 100%; margin: 0; overflow: hidden; background: #090a09; }
   #scene { position: fixed; inset: 0; display: block; }
+
   /* HUD superior */
   #hud {
     position: fixed; top: 0; left: 0; right: 0; z-index: 5;
-    display: flex; align-items: center; gap: 16px;
-    padding: 14px 22px;
-    background: linear-gradient(180deg, rgba(9,10,9,.85), rgba(9,10,9,0));
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 20px;
+    background: linear-gradient(180deg, rgba(9,10,9,.88), rgba(9,10,9,0));
     pointer-events: none;
   }
   #hud .brand { display: flex; align-items: center; gap: 10px; font: 600 15px var(--font-mono); color: var(--text); letter-spacing: .02em; }
@@ -26,11 +27,22 @@
   }
   #hud .brand .sep { color: var(--muted); font-weight: 400; }
   #hud .hint { font: 12px var(--font-mono); color: var(--muted); margin-left: auto; }
-  /* Panel de salida */
+
+  /* conmutador de modo */
+  #modes { display: flex; gap: 6px; pointer-events: auto; }
+  #modes button {
+    font: 600 11px var(--font-mono); letter-spacing: .05em; text-transform: uppercase;
+    padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  }
+  #modes button.on { border-color: var(--accent); color: var(--accent); }
+  #modes button:hover { border-color: var(--accent-soft); }
+
+  /* Panel lateral derecho */
   #panel {
-    position: fixed; right: 18px; bottom: 18px; z-index: 5;
-    width: min(560px, 46vw); min-height: 120px; max-height: 52vh;
-    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    position: fixed; right: 18px; top: 76px; bottom: 18px; z-index: 5;
+    width: min(430px, 40vw);
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
     border: 1px solid var(--line); border-radius: 12px;
     box-shadow: 0 12px 40px rgba(0,0,0,.5);
     display: flex; flex-direction: column; overflow: hidden;
@@ -38,31 +50,76 @@
   }
   #panel .bar {
     display: flex; align-items: center; gap: 8px;
-    padding: 9px 13px; border-bottom: 1px solid var(--line);
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
     font: 12px var(--font-mono); color: var(--muted);
   }
-  #panel .bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+  #panel .bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); flex: none; }
   #panel .bar .dot.on { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
   #panel .bar .ttl { color: var(--text); font-weight: 600; }
   #panel .bar .st { margin-left: auto; color: var(--muted); }
   #panel .bar .st.ok { color: var(--accent); }
   #panel .bar .st.err { color: #ff6b5b; }
-  #out {
-    padding: 12px 14px; overflow: auto; flex: 1;
-    font: 12.5px/1.55 var(--font-mono); color: var(--text); white-space: pre-wrap;
+  #panel .bar .cancel {
+    margin-left: 8px; font: 600 10px var(--font-mono); text-transform: uppercase;
+    padding: 4px 9px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #ff6b5b; background: transparent; color: #ff6b5b; display: none;
   }
+  #panel .bar .cancel.on { display: inline-block; }
+  #panel .bar .cancel:hover { background: #ff6b5b; color: #090a09; }
+
+  /* formulario de run */
+  #runform { padding: 12px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 9px; }
+  #runform .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #runform label { display: flex; flex-direction: column; gap: 3px; font: 11px var(--font-mono); color: var(--muted); }
+  #runform input, #runform select {
+    font: 12.5px var(--font-mono); padding: 6px 9px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--code-bg); color: var(--text);
+  }
+  #runform input:focus, #runform select:focus { outline: none; border-color: var(--accent-soft); }
+  #runform .go {
+    font: 600 12px var(--font-mono); letter-spacing: .04em;
+    padding: 9px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #090a09;
+  }
+  #runform .go:disabled { opacity: .45; cursor: not-allowed; }
+  #runform .go:not(:disabled):hover { filter: brightness(1.1); }
+  #runform .go.ghost { background: transparent; color: var(--accent); border-color: var(--line); }
+
+  /* salida */
+  #out { padding: 12px 14px; overflow: auto; flex: 1; font: 12.5px/1.55 var(--font-mono); color: var(--text); white-space: pre-wrap; }
   #out .ok { color: var(--accent); font-weight: 600; }
   #out .dim { color: var(--muted); }
   #out .err { color: #ff6b5b; font-weight: 600; }
+  #out .ev { color: var(--text); }
+  #out .ev .k { color: var(--muted); }
+  #out .gist { color: #b8d98a; }
+  #out .taint { color: #ffc233; }
+
   /* Leyenda inferior-izq */
   #legend {
     position: fixed; left: 18px; bottom: 18px; z-index: 5;
-    display: flex; flex-direction: column; gap: 7px;
+    display: flex; flex-direction: column; gap: 6px;
     font: 11.5px var(--font-mono); color: var(--muted);
     pointer-events: none;
   }
   #legend .row { display: flex; align-items: center; gap: 8px; }
   #legend .sw { width: 12px; height: 12px; border-radius: 3px; }
+
+  /* metricas flotantes (modo motor) */
+  #metrics {
+    position: fixed; left: 18px; top: 76px; z-index: 5;
+    display: none; flex-direction: column; gap: 8px;
+    font: 11.5px var(--font-mono); color: var(--muted);
+    pointer-events: none;
+  }
+  #metrics .card {
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px;
+    min-width: 150px;
+  }
+  #metrics .card .n { font-size: 20px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+  #metrics .card .l { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+
   #loading {
     position: fixed; inset: 0; z-index: 9; display: grid; place-items: center;
     background: #090a09; color: var(--muted); font: 13px var(--font-mono);
@@ -75,8 +132,12 @@
   <canvas id="scene"></canvas>
 
   <div id="hud">
-    <div class="brand"><span class="mark" role="img" aria-label="SMCP"></span><span>SMCP</span><span class="sep">·</span><span>Consola de control 3D</span></div>
-    <nav class="topnav" style="display:flex;gap:14px;flex-wrap:wrap;margin-left:8px;pointer-events:auto">
+    <div class="brand"><span class="mark" role="img" aria-label="SMCP"></span><span>SMCP</span><span class="sep">·</span><span>Consola 3D</span></div>
+    <div id="modes">
+      <button id="m-motor" class="on">Motor</button>
+      <button id="m-proy">Proyecto</button>
+    </div>
+    <nav class="topnav" style="display:flex;gap:14px;flex-wrap:wrap;pointer-events:auto">
       <a href="index.html" style="color:var(--muted);border:none">Inicio</a>
       <a href="play.html" style="color:var(--muted);border:none">Lab</a>
       <a href="context.html" style="color:var(--muted);border:none">Contexto</a>
@@ -85,27 +146,63 @@
       <a href="malla.html" style="color:var(--muted);border:none">Malla</a>
       <a href="console.html" style="color:var(--accent);border:none">Consola</a>
     </nav>
-    <div class="hint">arrastra para orbitar · rueda para zoom · clic en un nodo para ejecutar</div>
+    <div class="hint" id="hint">arrastra para orbitar · rueda para zoom</div>
+  </div>
+
+  <div id="metrics">
+    <div class="card"><div class="n" id="mx-rounds">0</div><div class="l">rounds</div></div>
+    <div class="card"><div class="n" id="mx-gists">0</div><div class="l">gists admitidos</div></div>
+    <div class="card"><div class="n" id="mx-pending">0</div><div class="l">pendientes</div></div>
+    <div class="card"><div class="n" id="mx-workers">0</div><div class="l">workers</div></div>
   </div>
 
   <div id="legend">
-    <div class="row"><span class="sw" style="background:#8fbf3f"></span> Núcleo SMCP (contexto verificado)</div>
-    <div class="row"><span class="sw" style="background:#58624b"></span> Función ejecutable (botón 3D)</div>
-    <div class="row"><span class="sw" style="background:#285b22"></span> Worker / agente (orbita)</div>
+    <div class="row"><span class="sw" style="background:#8fbf3f"></span> Núcleo (run activo)</div>
+    <div class="row"><span class="sw" style="background:#58624b"></span> Worker resolviendo</div>
+    <div class="row"><span class="sw" style="background:#b8d98a"></span> Gist admitido</div>
+    <div class="row"><span class="sw" style="background:#ffc233"></span> Taint</div>
   </div>
 
   <div id="panel">
     <div class="bar">
       <span class="dot" id="dot"></span>
-      <span class="ttl" id="ttl">En espera</span>
-      <span class="st" id="st">elige una función</span>
+      <span class="ttl" id="ttl">Motor DeLM</span>
+      <span class="st" id="st">en reposo</span>
+      <button class="cancel" id="btn-cancel">cancelar</button>
     </div>
-    <div id="out"><span class="dim">Clic en un nodo de la órbita para ejecutar una función del proyecto. La salida aparece aquí.</span></div>
+
+    <!-- modo motor: crear run -->
+    <div id="runform">
+      <label>Tarea
+        <input id="f-task" type="text" value="resolver el error de sincronización" />
+      </label>
+      <div class="row2">
+        <label>Backend
+          <select id="f-backend">
+            <option value="fake" selected>fake (local)</option>
+            <option value="real">real (modelo)</option>
+          </select>
+        </label>
+        <label>Workers
+          <input id="f-workers" type="number" min="1" max="8" value="2" />
+        </label>
+      </div>
+      <div class="row2">
+        <label>Rounds máx
+          <input id="f-rounds" type="number" min="1" max="10" value="1" />
+        </label>
+        <label>&nbsp;</label>
+      </div>
+      <button class="go" id="btn-run">Ejecutar run</button>
+    </div>
+
+    <div id="out"><span class="dim">Pulsa «Ejecutar run» para lanzar el motor DeLM. El streaming llega en vivo por SSE; cada worker, gist y ronda se dibuja en la escena.</span></div>
   </div>
 
   <div id="loading">inicializando escena…</div>
 
   <script src="/js/three.min.js"></script>
+  <script src="/assets/runs.js"></script>
   <script src="/console.js"></script>
 </body>
 </html>

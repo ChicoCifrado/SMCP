@@ -1148,10 +1148,12 @@ delm/
       index.html nucleo.html seguridad.html demos.html arquitectura.html
       play.html context.html ledger.html estado.html malla.html console.html
       js/                   three.min.js (la escena 3D de `console.html`)
-      console.js            el visor 3D de la malla (sin three, propio)
+      console.js            consola 3D: motor DeLM en vivo (SSE) + funciones
       assets/
         app.js               tema dark/light + recordar última página
         api.js               fetch/JSON/SSE + pip de salud (compartido)
+        runs.js              cliente del motor de runs (POST /api/runs, SSE,
+                             cancelacion en vivo) — usado por la consola
         estado.js            estado en vivo: señales, config, runs, acciones
         fit.js               sección llmfit: tabla, veredicto y "usar" un modelo
         malla.js             la malla: intercambio, reparto y auditoría
