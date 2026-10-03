@@ -95,10 +95,13 @@ determinista** que se puede loguear y comparar entre observadores.
 ## Qué incluye
 
 > **Doc de referencia:** [`docs/architecture.md`](docs/architecture.md) — la
-> arquitectura por capa (piezas, interfaces, flujos) y
+> arquitectura por capa (piezas, interfaces, flujos),
 > [`docs/threat-model.md`](docs/threat-model.md) — quién es el adversario, qué
-> garantiza cada capa de seguridad y **qué no**. Este README es el "qué es";
-> los dos docs son el "cómo está montado" y el "qué está garantizado".
+> garantiza cada capa de seguridad y **qué no**, y
+> [`docs/inscripcion-v3.md`](docs/inscripcion-v3.md) — la especificación de
+> la inscripción de inferencia v3 (el template de la tx, los BRC que adopta
+> y lo que queda abierto). Este README es el "qué es";
+> los docs son el "cómo está montado" y el "qué está garantizado".
 
 ### Núcleo DeLM (los mecanismos de carga)
 
@@ -927,11 +930,26 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   y el que fija que observar no acredita +
   32 del ancla (el solicitante es obligatorio y distinto del nodo: sin eso,
   inferencia local y petición de red serían lo mismo) +
-  60 anclaje a BSV (Fase 1): 26 bytes canónicos del ledger (v1/v2 y por qué v1
-  no era reproducible), 18 wallet SPV (BRC-75 maestro, BRC-42 derivación,
-  BRC-43 `keyId`) + 16 anclaje (identidad secp256k1, reloj del nodo,
-  rebroadcast frente a reemplazo en mempool) +
-  6 de tesis del intercambio encadenada de punta a punta (publicar capacidad
+   60 anclaje a BSV (Fase 1): 26 bytes canónicos del ledger (v1/v2 y por qué v1
+   no era reproducible), 18 wallet SPV (BRC-75 maestro, BRC-42 derivación,
+   BRC-43 `keyId`) + 16 anclaje (identidad secp256k1, reloj del nodo,
+   rebroadcast frente a reemplazo en mempool) +
+   38 del template SMCP3 (v3): 23 inscripción (el hash `H` compromete
+   (mesh_id, solicitante) con prefijo de longitud y nada más; el envelope
+   BRC-160 rueda construir→parsear con el body de último; el flujo DPP
+   construye una tx que verifica; cada manipulación —hash, firma, fondeo,
+   cerradura, inclusión— se rechaza con su motivo) + 15 txbuild (el
+   serializador BSV —legacy, BSV no tiene segwit—: varints, pushes, P2PKH,
+   DER desde `r‖s`, txid; y el sighash legacy completo —ALL/NONE/SINGLE/
+   ANYONECANPAY, `FindAndDelete` de OP_CODESEPARATOR— contra los vectores
+   de `sighash.json` de Bitcoin Core) +
+   41 del roster (membresia explícita por avales firmados: el fundador es
+   su propio primer avalado; la reconciliación pinnea solo lo que un miembro
+   que ya se tiene avaló —iteración a punto fijo, confianza transitiva,
+   acotada por profundidad—; un aval de un extraño no pinnea nada; re-key y
+   cluster ajeno se rechazan; el epoch es monotonicidad firmada, no reloj;
+   y el fingerprint no es la autoridad —la clave completa sí—) +
+   6 de tesis del intercambio encadenada de punta a punta (publicar capacidad
   firmado → la malla coloca carga → otro nodo pide una inferencia → el ancla lo
   demuestra contra la cabecera → y solo entonces el historial sube), y el
    caso que la hipótesis descartaba: un ancla auto-solicitada no llega a
@@ -994,9 +1012,42 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   esto, cada `contribute` regeneraría la clave y ninguna contribución sería
   atribuible a un nodo. **Rechaza persistir una clave HMAC**: su mitad privada
   *es* el secreto compartido, o sea, el trust anchor del verificador.
+- **La inscripción de inferencia v3 (SMCP3)** — `inscripcion.py` +
+  `txbuild.py`: una tx por inferencia — pago y anclaje son la misma
+  transacción. Alice paga 100 sats; el ordinal de 1 sat es el comprobante
+  (envelope BRC-160 en el locking script: `H = SHA-256(len‖mesh_id‖
+  solicitante)` + la firma del servidor sobre `H`, BRC-220) y viaja a
+  Alice; Bob cobra el resto menos la fee de la tx. El **txid** es la clave
+  que cuenta el historial: una inferencia = una inscripción = un txid.
+  38 tests.
+- **Emisión por ARC y la secuencia completa** — `arc.py` +
+  `intercambio.py`: DPP (BRC-27) sobre ARC (el servicio de emisión de BSV,
+  no un nodo): `serve` ejecuta la inferencia y construye los `PaymentTerms`
+  (la respuesta viaja off-chain); `sign_payment` verifica antes de firmar
+  del lado del solicitante; `settle` emite por ARC (`POST /v1/tx`, hex
+  crudo, `X-WaitFor`), espera el estado aceptado —el `PaymentACK`— y
+  **solo entonces** cuenta con `record_inference` (sin VRAM anunciada o
+  txid repetido, lanza). 21 tests.
+- **El join v3: gratis y off-chain** — `join.py` sobre `roster.py`: dos
+  nodos se emparejan (intercambio de claves, avales mutuos,
+  reconciliación confiando solo en lo que ya se confía) y la confianza
+  mutua queda **verificada** sin gastar nada. `JOIN_SATOSHIS` pasó de 1 a
+  0: el freno Sybil es el trabajo —cada inferencia servida cuesta una fee
+  que paga el servidor, lineal con el fraude—, no la entrada. 5 tests.
+- **x402, ahora BRC-120** — `x402.py`: el verificador del role de
+  verifier de la x402 v1.0 congelada (challenge/proof en
+  `X402-Challenge`/`X402-Proof`, binding determinista de la petición,
+  protección de replay por el nonce UTXO de la capa de liquidación, sin
+  estado por cliente). Es el mecanismo natural de `metered`, y solo de
+  él. 67 tests.
 
 **En construcción / pendiente:**
 
+- **La inscripción v3: lo abierto, decidido y escrito** —
+  `docs/inscripcion-v3.md` §Abierto: `hash(resultado)` (SMCP4), batching
+  (BRC-220 modo *batch*, BRC-122 — rompe "una inferencia = una tx"), la
+  fee de relay contra 99 sats a tarifas actuales, la identidad en el join
+  (BRC-52/BRC-103) y BRC-77 como opción de interoperabilidad.
 - **Dónde y cómo entra el RSI** — el código de exploración (`rsi.py`, `hci.py`,
   `run_rsi_demo.py`, sus tests) sigue en el repo y en verde, pero **no es parte
   de la tesis** ni de la hoja de ruta. Está por decidir si el bucle de mejora
@@ -1173,6 +1224,8 @@ delm/
 docs/
   architecture.md     arquitectura por capa (piezas, interfaces, flujos)
   threat-model.md     adversario / garantías / NO-garantías por capa
+  inscripcion-v3.md   especificación de la inscripción de inferencia v3
+                      (el template de la tx, los BRC adoptados, lo abierto)
 scripts/
   check_readme_count.py   gate de conciliación README ↔ pytest (`delm gates readme`)
 Makefile
