@@ -2,8 +2,13 @@
 
 ## Estado
 
-**Implementada** (`delm/core/inscripcion.py` + `delm/core/txbuild.py`,
-con tests offline: `tests/test_inscripcion.py`, `tests/test_txbuild.py`).
+**Implementada** (`delm/core/inscripcion.py` + `delm/core/txbuild.py`
++ `delm/core/arc.py`, con tests offline: `tests/test_inscripcion.py`,
+`tests/test_txbuild.py`, `tests/test_arc.py`).
+`arc.py` es la capa de emisión que el flujo pide en el paso 4:
+cliente HTTP de ARC (el servicio de emisión de BSV) — emite la tx
+firmada y sondea hasta el `PaymentACK`. No habla con Bitcoin Core ni
+con ningún RPC de nodo: ARC es la vía.
 v2 (`delm/core/anchor.py`, `membership.py`, `tiers.py`) sigue en verde y
 sin tocar: v3 es un formato nuevo que convive con v2 — no lo reemplaza
 hasta que una decisión lo haga. Lo que v3 **no** cambia todavía: el
@@ -129,9 +134,11 @@ este mesh, para este solicitante, servida por este nodo* — no qué dijo.
    la firma contra la identidad de Bob, y los outputs (¿1 sat a mí con
    el envelope? ¿99−fee a Bob? ¿el input es mío?). Firma su input
    (`Payment`) y devuelve la tx.
-4. **Bob**: emite, espera confirmación, envía a Alice el **txid** y el
-   certificado (`path`, `merkle_root`, `height` — BRC-10/11). Es el
-   `PaymentACK`.
+4. **Bob**: emite por ARC (`delm.core.arc`: `POST /v1/tx`,
+   `X-WaitFor` hasta `ACCEPTED_BY_NETWORK` y sondeo
+   `GET /v1/tx/{txid}` después), espera confirmación, envía a Alice
+   el **txid** y el certificado (`path`, `merkle_root`, `height` —
+   BRC-10/11). Es el `PaymentACK`.
 5. **Alice**: receipt = (txid, ordinal en su wallet, certificado).
    Verificación offline: firma sobre `H` + inclusión contra una
    cabecera de bloque que ella confíe.
@@ -193,6 +200,14 @@ frenado por coste de entrada.
   `sign_requester_input`) y la verificación del comprobante
   (`verify_payment_terms` antes de emitir, `verify_inscription` con
   la prueba de inclusión después).
+* **`delm/core/arc.py`** — la capa de emisión (el `PaymentACK`):
+  cliente HTTP de ARC (`POST /v1/tx` con el hex crudo en texto
+  plano, `GET /v1/tx/{txid}`, política y salud), con el estado de
+  la tx tipado, los *problem details* (RFC 7807) mapeados a
+  excepciones, y `broadcast`/`broadcast_transaction` que sostienen
+  la petición con `X-WaitFor` y sondean hasta el objetivo —
+  comparando el txid de ARC con el de la tx local. Todo contra un
+  ARC falso en localhost (`tests/test_arc.py`), sin red.
 * **`tiers.py`**: `JOIN_SATOSHIS` de `free` 1 → 0, y su docstring —
   el freno Sybil cambia de sitio, y ese es el sitio donde está
   documentado hoy. **Pendiente**: la constante sigue en 1 hasta que el
