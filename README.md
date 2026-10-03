@@ -881,7 +881,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1156 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1160 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1142,7 +1142,7 @@ delm/
      contrib.py         Challenge/CapacityReport + ContributionLedger
      reputation.py      ReputationBoard: el ranking de inferencias servidas
      tiers.py           los tres precios (satoshis) y donde encaja x402
-     x402.py            verificador de challenge/proof, offline y sin estado
+     x402.py            verificador de challenge/proof, offline y sin estado (BRC-120)
       anchor.py          una tx por inferencia, sin hashear el contenido
       membership.py      membresia anclada en BSV, verificada por el grafo
       txbuild.py         serializador de tx BSV (legacy; sighash contra vectores de Core)

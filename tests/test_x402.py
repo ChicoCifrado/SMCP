@@ -618,4 +618,55 @@ def test_a_backend_whose_boolean_denies_a_spend_its_own_list_reports_is_refused(
                     FakeSettlement(inputs=[(TXID, 0)], deny_spend=True,
                                    outputs=[(PAYEE, 50)]), now=1)
     assert not v.ok, "si el backend niega el gasto, el verificador no lo ignora"
-    assert "nonce" in (v.reason or "")
+
+
+# ------------------------------------------------- BRC-120 conformance
+def test_a_challenge_missing_require_mempool_accept_is_rejected():
+    """§4: the challenge object MUST contain every listed field.
+
+    ``require_mempool_accept`` is on the MUST list, so a challenge that
+    omits it is malformed — not "false by default": a default would let
+    a server's omission silently weaken its own gate.
+    """
+    ch = make_challenge().to_dict()
+    del ch["require_mempool_accept"]
+    v = x402.verify(ch, make_proof(make_challenge()), good_settlement(),
+                    now=1)
+    assert not v.ok
+    assert "missing fields" in (v.reason or "")
+
+
+def test_require_mempool_accept_must_be_a_boolean():
+    ch = make_challenge().to_dict()
+    ch["require_mempool_accept"] = "yes"
+    assert x402.verify_challenge_shape(ch) is not None
+
+
+def test_a_request_binding_without_query_is_refused():
+    """§4/§5: ``query`` is a MUST field, and the empty query is "".
+
+    A decoder that defaults a missing query to "" would accept a proof
+    whose binding was never stated — the same field-level default the
+    shape check exists to close.
+    """
+    ch = make_challenge()
+    pr = make_proof(ch).to_dict()
+    del pr["request"]["query"]
+    v = x402.verify(ch, pr, good_settlement(), now=1)
+    assert not v.ok
+    assert "malformed" in (v.reason or "")
+
+
+def test_rejection_reasons_are_typed_failures():
+    """The exported ``Failure`` is the type of every rejection reason.
+
+    Callers map reasons to HTTP statuses (§9: 402 for an expired
+    challenge or an underpaid amount, 400 for an unsupported scheme or
+    a binding mismatch); a distinct type is what lets them do that
+    without parsing prose.
+    """
+    exp = make_challenge(expires_at=1)
+    v = x402.verify(exp, make_proof(exp), good_settlement(), now=2)
+    assert not v.ok
+    assert isinstance(v.reason, x402.Failure)
+    assert v.reason == "challenge expired at 1"

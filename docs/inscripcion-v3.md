@@ -72,7 +72,7 @@ Del registro (bsv.brc.dev), con lo que cada uno aporta:
 | **BRC-10 / BRC-11** (TSC merkle proof) | El formato del certificado de inclusión. La `InclusionProof` actual ya tiene los mismos campos (`txid`, `index`, `path`, `merkle_root`, `height`); alinear nombres y serialización. |
 | **BRC-36** (outpoints) | Forma canónica de escribir outpoints. El repo usa `txid:vout`; verificar la forma canónica de BRC-36 al implementar. |
 | **BRC-42 / 43 / 75** | Ya adoptados (derivación, keyId, mnemónico). Se quedan. |
-| **BRC-120** (x402) | El repo ya implementa un verificador x402 (`x402.py`); alinear con el estándar ahora que es BRC. Follow-up. |
+| **BRC-120** (x402) | El verificador x402 (`x402.py`) ya implementaba el role de verifier de x402 v1.0; ahora está alineado con el estándar: el docstring nombra la designación y la spec congelada, los campos MUST del challenge se exigen en el shape check, y los motivos de rechazo son `Failure` tipado para el mapeo de §9 (402/400). |
 
 Referencia (no adoptado ahora): **BRC-122** (ARIA) — inferencia
 auditable con pre-commitment por época y merkle root de registros. Su
@@ -245,7 +245,13 @@ frenado por coste de entrada.
   (`delm.core.roster`): intercambio de claves firmado entre pares.
 * **`anchor.py`**: sin cambios (v2). v3 es formato nuevo con su
   propia versión (`OP_4 = 3`).
-* **`x402.py`**: alinear con BRC-120 (follow-up).
+* **`x402.py`**: alineado con BRC-120 — el verificador del role
+  de verifier de x402 v1.0 congelada (§4-§9): el docstring nombra
+  la designación y la spec canónica, el shape check exige todos los
+  campos MUST del challenge (incluido `require_mempool_accept`),
+  el decoder ya no pone defaults silenciosos a campos obligatorios
+  (`query`, `require_mempool_accept`), y los motivos de rechazo son
+  `Failure` tipado para el mapeo de estados de §9. 58 tests offline.
 * **`bsv_keys.py` / `ledger_canon.py`**: sin cambios — v3 reutiliza las
   primitivas BRC-220 que ya existen (firma `r‖s`, prefijos `u32be`);
   no hay nuevo código criptográfico para la firma.

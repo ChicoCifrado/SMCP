@@ -1,4 +1,19 @@
-"""x402 challenge/proof verification, offline.
+"""x402 challenge/proof verification, offline — the verifier
+role of **BRC-120**.
+
+BRC-120 is a conformance designation, not a second protocol:
+compliance means full x402 **version 1.0** as frozen in the
+merkleworks-x402-spec repository (``spec/x402.md``), and this
+module implements the verifier role of that frozen document —
+the challenge shape (§4), the proof shape (§5), the transaction
+requirements (§6), the verification procedure (§7), replay
+protection (§8) and the rejection reasons behind the error
+mapping (§9). What it deliberately does not implement is the
+HTTP around them: the 402/retry flow and the status mapping
+(402 for an expired challenge or an underpaid amount, 400 for
+an unsupported scheme or a binding mismatch) are the server's,
+and this module stays the pure, stateless check the server
+calls — which is also what keeps it testable with no node.
 
 What this is: the payment half of the three-tier product, as a pure verifier.
 Give it a challenge, a proof and a settlement backend, and it tells you whether
@@ -232,10 +247,12 @@ class RequestBinding:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "RequestBinding":
+        # Los cinco campos son obligatorios en el challenge y en el
+        # request del proof (§4, §5): `query` vacío es "", no ausente.
         return cls(
             method=str(d["method"]),
             path=str(d["path"]),
-            query=str(d.get("query", "")),
+            query=str(d["query"]),
             req_headers_sha256=str(d["req_headers_sha256"]),
             req_body_sha256=str(d["req_body_sha256"]),
         )
@@ -296,7 +313,7 @@ class Challenge:
             nonce_utxo=NonceUtxo.from_dict(d["nonce_utxo"]),
             binding=RequestBinding.from_dict(d),
             expires_at=int(d["expires_at"]),
-            require_mempool_accept=bool(d.get("require_mempool_accept", False)),
+            require_mempool_accept=bool(d["require_mempool_accept"]),
         )
 
     def sha256(self) -> str:
@@ -482,7 +499,7 @@ class Verdict:
 
 
 def _reject(reason: str, ch: Challenge | None = None) -> Verdict:
-    return Verdict(False, reason, challenge=ch)
+    return Verdict(False, Failure(reason), challenge=ch)
 
 
 # --------------------------------------------------------------------------
@@ -498,6 +515,7 @@ def verify_challenge_shape(obj: dict[str, Any]) -> str | None:
         "v", "scheme", "domain", "method", "path", "query",
         "req_headers_sha256", "req_body_sha256", "amount_sats",
         "payee_locking_script_hex", "nonce_utxo", "expires_at",
+        "require_mempool_accept",
     )
     missing = [k for k in required if k not in obj]
     if missing:
@@ -520,6 +538,8 @@ def verify_challenge_shape(obj: dict[str, Any]) -> str | None:
         return "nonce_utxo.satoshis must be greater than zero"
     if not isinstance(obj["expires_at"], int):
         return "expires_at must be a UNIX timestamp"
+    if not isinstance(obj["require_mempool_accept"], bool):
+        return "require_mempool_accept must be a boolean"
     if not str(obj["payee_locking_script_hex"]):
         return "payee_locking_script_hex is required"
     return None
@@ -556,6 +576,12 @@ def verify(
         The raw headers that arrived. Required for the strong header check
         described below; without it a supplied selector can only be recorded
         as not checked.
+    now:
+        The current UNIX time. **The spec makes expiration a MUST for the
+        server** (§4, §7 step 4: reject where the time is strictly greater
+        than ``expires_at``), so a caller that passes ``None`` is not
+        performing that check — the verdict does not record it, and the
+        caller owns the gap. Pass the clock.
     expect_domain:
         When given, the challenge's ``domain`` must match this authority. A
         challenge is bound to a host; accepting one minted for another host
@@ -591,11 +617,11 @@ def verify(
             f"challenge domain {ch.domain!r} is not {expect_domain!r}", ch
         )
 
-    # --- Section 7.2: challenge reference, recomputed by the server.
+    # --- §7 step 2: challenge reference, recomputed by the server.
     if pr.challenge_sha256 != ch.sha256():
         return _reject("challenge_sha256 does not match this challenge", ch)
 
-    # --- Section 7.3: request binding, three-way.
+    # --- §7 step 3: request binding, three-way.
     if not ch.binding.matches(pr.request):
         return _reject("proof request does not match the challenge binding", ch)
     if inbound is not None and not ch.binding.matches(inbound):
@@ -637,11 +663,11 @@ def verify(
         header_selector is None or inbound_headers is None
     )
 
-    # --- Section 7.4: expiration, strictly greater than expires_at.
+    # --- §7 step 4: expiration, strictly greater than expires_at.
     if now is not None and ch.is_expired(int(now)):
         return _reject(f"challenge expired at {ch.expires_at}", ch)
 
-    # --- Section 7.5/6: the transaction must exist and hash as claimed.
+    # --- §7 step 5 / §6.4: the transaction must exist and hash as claimed.
     try:
         actual_txid = settlement.txid_of(pr.rawtx_b64)
     except ValueError as exc:
@@ -649,7 +675,7 @@ def verify(
     if actual_txid != pr.payment_txid:
         return _reject("payment.txid does not match rawtx_b64", ch)
 
-    # --- Section 7.6: the nonce. This is the replay guard.
+    # --- §7 step 6 / §8: the nonce. This is the replay guard.
     #
     # The verifier asks the settlement layer which outpoints the payment
     # spends; it never keeps a list of seen nonces, because the spec forbids
@@ -671,7 +697,11 @@ def verify(
             "payment does not spend the challenge nonce outpoint", ch
         )
 
-    # --- Section 7.7: the payment output.
+    # --- §7 step 7 / §6.2-6.3: the payment output. The requirement is
+    # "at least amount_sats to payee_locking_script_hex" (§6.8), read as
+    # the total paid to that script across the complete transaction — the
+    # same reading §6.6 mandates (never a bare output existence check), and
+    # deterministic the way §6.9 requires of two compliant implementations.
     try:
         outputs = settlement.payment_outputs(pr.rawtx_b64)
     except ValueError as exc:
@@ -685,7 +715,7 @@ def verify(
             f"paid {paid} sat to the payee script, {ch.amount_sats} required", ch
         )
 
-    # --- Section 7.8: mempool acceptance, optional and honestly labelled.
+    # --- §7 step 8: mempool acceptance, optional and honestly labelled.
     settlement_state = "unverified"
     if ch.require_mempool_accept:
         if not settlement.accepted_in_mempool(pr.payment_txid):
