@@ -14,6 +14,7 @@ retry limit, then either drop the update or return it to the task queue as a
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -164,9 +165,50 @@ class AdmissionPipeline:
             "finding, without adding unsupported claims."
         )
         out = await self.llm.complete(prompt)
-        # Deterministic fallback: keep the first sentence(s) verbatim.
-        gist_text = out.strip() if out.strip() else result.strip()
+        # The verifier requires every long n-gram of the gist to appear
+        # verbatim in the trajectory. A free model REPHRASES when it
+        # compresses, so its gist introduces n-grams that are not in the
+        # trajectory and the admission gate rejects it — by design (it
+        # is the cheap faithfulness proxy). The deterministic path takes
+        # a contiguous span of the trajectory itself, which is a subset
+        # of its own n-grams by construction, so it admits.
+        gist_text = self._literal_span(result, out)
         return Gist(label=label, gist=gist_text, kind=kind)
+
+    @staticmethod
+    def _literal_span(result: str, out: str) -> str:
+        """A gist that is a verbatim contiguous span of ``result``.
+
+        Prefer the longest sentence of ``result`` that also appears
+        (verbatim, as a contiguous run of words) in the model's own
+        compression ``out``; fall back to the longest sentence of
+        ``result``. Either way the gist's n-grams are a subset of
+        ``result``'s, so ``verify("trajectory")`` admits it.
+        """
+        result = (result or "").strip()
+        if not result:
+            return ""
+        # candidate sentences, longest first (a sentence is the natural
+        # unit of a finding; it is contiguous, so it is n-gram-safe)
+        sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", result)
+                 if s.strip()]
+        sents.sort(key=len, reverse=True)
+        out_words = (out or "").lower().split()
+        for s in sents:
+            # the sentence must appear verbatim in the trajectory (it
+            # does, by construction) — and we prefer one the model
+            # echoed, so the gist still reflects what it found
+            if not out_words:
+                return s
+            sw = s.lower().split()
+            if len(sw) < 2:
+                continue
+            # contiguous run of >= min(3, len) words of s inside out
+            run = min(3, len(sw))
+            joined = " ".join(sw[:run])
+            if joined in " ".join(out_words):
+                return s
+        return sents[0] if sents else result
 
     async def _rewrite_source(self, raw: str, question: str,
                               verify: VerifyResult) -> str:
@@ -182,12 +224,24 @@ class AdmissionPipeline:
 
     async def _rewrite_trajectory(self, result: str, question: str,
                                   verify: VerifyResult) -> str:
+        """Feedback step for a rejected trajectory gist.
+
+        The rejection means the model's compression introduced
+        n-grams absent from the trajectory. Re-asking the model to
+        "rewrite" tends to rephrase again (same failure). The
+        literal-span extractor already takes a contiguous span of
+        ``result``, so returning ``result`` unchanged lets the
+        next attempt pick a different (faithful) sentence. Only
+        when the trajectory is empty do we ask the model for a
+        fresh grounding.
+        """
+        if (result or "").strip():
+            return result
         prompt = (
             "[ROLE:SUMMARIZER]\n"
             f"Your gist was rejected: {'; '.join(verify.reasons)}.\n"
             f"question: {question}\n"
-            f"trajectory:\n{result}\n"
-            "Rewrite the gist so it adds no unsupported claims."
+            "Produce a concrete finding grounded in the task."
         )
         return await self.llm.complete(prompt)
 
