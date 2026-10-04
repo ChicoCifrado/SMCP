@@ -107,6 +107,55 @@ ancestral completa).
 (`{token_id, node_address, amount}`). Es la contrapartida
 en token de `/api/contract/claim` (bounty en sats).
 
+## Infraestructura de wallets (SPV + pagos)
+
+Dos piezas, cada una con su rol — no se sustituyen:
+
+**ElectrumSV headless** (`smcp/core/electrumsv.py`) —
+la wallet SPV real. El daemon firma **localmente** con
+las claves del fichero wallet (sqlite, cifrado con
+password local) y valida contra ElectrumX sin entregarle
+nada secreto. A diferencia de HandCash (custodial), las
+claves nunca salen del daemon.
+- Cliente REST del daemon: `http://127.0.0.1:9999/v1/{network}/dapp`
+- Lecturas (sin clave): `wallets`, `load_wallet`, `account`,
+  `utxos`, `balance`, `history`, `fetch_transaction`
+- Escrituras (firma local): `create_tx` (construir SIN emitir),
+  `broadcast` (rawtx), `create_and_broadcast`
+- **`create_tx` acepta `script_pubkey` en hex** — outputs
+  con scripts arbitrarios (OP_RETURN, inscripciones). Clave
+  para construir inscripciones BSV-21 a mano si hiciera falta.
+- **Trazabilidad**: `send_tracked()` = create -> inspeccionar
+  -> broadcast -> log append-only (`~/.smcp/electrumsv.txs.jsonl`).
+  Toda tx queda anclada por txid on-chain y registrada local.
+- El WIF del proyecto (`~/.smcp/token.wif`, 0600) es
+  mainnet comprimido (`L...`, 52 chars) — importable en
+  ElectrumSV via "Importing from text" (crea una cuenta de
+  UNA dirección; no es un seed HD).
+- El daemon se arranca con `electrumsv-sdk` (ver skill
+  `electrumsv-wallet`): `electrumsv-sdk start --background electrumsv`
+  (requiere `node`, `simple_indexer`, `reference_server`).
+
+**HandCash** (ya probado) — pagos con `note` (<=25 chars,
+metadata off-chain) via `Connect.pay`. Custodial: las claves
+las gestiona HandCash, útil para pagos rápidos pero no para
+soberanía. AppId/AppSecret en `~/.hermes/.env`; authToken en
+`~/.smcp/handcash.authtoken` (0600).
+
+**BSV-21 (DELM)** — el bridge `bsv21-bridge/bsv21.mjs`
+(SDK `@1sat/actions`) es quien construye las inscripciones
+(deploy+mint, transfer) y opera contra el overlay 1sat.
+ElectrumSV puede gastar los sats y crear outputs con
+`script_pubkey` arbitrario, pero la semántica BSV-21
+(indexer, funding BRC-0062/BEEF) la implementa el SDK.
+No duplicarla en Python.
+
+**Regla de seguridad de claves**: el WIF/seed vive en
+`~/.smcp/` (0600), NUNCA en `/tmp` (pruning 72h) ni en
+el chat. Un WIF que vivió solo en `/tmp` se perdió y hubo
+que recuperarlo del historial de sesión — eso es un parche,
+no un backup.
+
 Cubierto por `tests/test_token_bsv21.py` (15 tests):
 tokenId, deploy, send, balances, buy, pay_for_inference,
 list, y manejo de errores (no-JSON, timeout, node ausente).
@@ -1049,7 +1098,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1212 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1224 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1385,6 +1434,8 @@ smcp/
     bsv_keys.py        ECDSA-secp256k1 (la firma que ancla a BSV)
     timechain.py       el reloj del nodo: qué publicó, reenvía y no ha probado
     spv.py             la wallet del nodo: maestro, derivación BRC-42 y dirección
+    electrumsv.py      integración ElectrumSV headless: wallet SPV (REST daemon)
+    txbuild.py         serializador de txs BSV (firmar, txid, sighash)
     gates.py           los gates de calidad, en una lista, en un solo sitio
   demo/
     run_demo.py        demo end-to-end (sin API key)
