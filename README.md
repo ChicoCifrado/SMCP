@@ -82,6 +82,21 @@ es **1.000.000** (el del canónico). El código usa
 `TOKEN_ID_CANONICO` por defecto (`token_bsv21.py`)
 y `DEFAULT_TOKEN_ID` (`bsv21-bridge/bsv21.mjs`).
 
+**Anclaje SMCP ↔ DELM (on-chain, 2026-10-04)**:
+el tokenId `8d7f483498d83358e8c0b61b55334b1650d50ffce1539a482bc245dfc65c4410_0`
+(bloque génesis **969519**) es el anclaje on-chain
+permanente del proyecto SMCP. Custodia: `1EqkBCLhykcHkr7o9AnHwgrgzAsAbGF3Dz`
+(garracifrada@handcash.io, identity `03ed40e2…080909`,
+custodia conjunta con el propietario). Los **1M DELM**
+viven en el tip de 1 sat (`8d7f4834_0`, inscripción
+`deploy+mint`), intactos y sin gastar. Funding vivo:
+**574 sats** (UTXO `da2cfe03…_1`, bloque 969530) —
+suficiente para una tx de sweep (~200-500 sats).
+Control verificado read-only: `@1sat/cli sweep scan
+--wif <token.wif> --only bsv21` (indexer público
+`api.1sat.app` — ve el UTXO de 1 sat con la inscripción
+BSV-21, sin depender del install).
+
 **Activacion del overlay (BRC-0062 / formato BEEF)**:
 el overlay 1sat requiere una tx de **funding** para
 dar de alta el token como operativo (enviar/listar/comprar).

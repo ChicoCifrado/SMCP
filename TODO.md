@@ -91,9 +91,18 @@
 - **Libro de inferencias (registro.py): completion→timestamp→registro→cobro (BSV/DELM) — listo**
 - Overlay 1sat: token indexado, `is_active: false` (falta funding 10M sats via BEEF)
 - Bridge: `@1sat/actions` integrado, BRC-0062/BEEF funcionando
-- Tests: 1201 + 11 nuevos = **1212** (9 test_registro + 2 union en test_intercambio)
+- **Wallet SPV ElectrumSV headless (`smcp/core/electrumsv.py`) — reescrita contra la REST API real (1.4.0b1), 14 tests verdes**
+- **Infraestructura de wallets robusta (2026-10-04):**
+  - SPV verificada read-only vs `electrumx.gorillapool.io` (ElectrumX 1.20.2, mainnet): `scripthash.get_history(1Eqk)` → 14 txs, el tip DELM de 1M aparece en la historia restaurada
+  - **Adaptador BRC-100 (`bsv21-bridge/delm-brc100.mjs`)**: surface self-custodial HandCash Desktop (`WalletClient('auto')` + scripts BRC-162). **Emite BRC-162 binario** (el wire real de la wallet moderna). **VALIDADO contra el código compilado real de HandCash Desktop v1.3.425** (AppImage extraída → `app.asar` → `dist/assets/index-D6d5nUgF.js`): el bundle contiene `Q4t="BSV21"`, `G4t="4253563231"`, `MG=(1n<<64n)-1n`, `k9=[66,83,86,50,49]`; el encode compilado (`writeBin(k9)`, deploy?`OP_0`:`writeBin([...tokenIdToWire(n)])`, `OP_2DROP`, `writeAmount`, deploy?`writeBin(cbor)`:`OP_0`, `OP_2DROP`, `writeScript(rest)`) es **idéntico** al port de `encodeBsv21Binary`. El wire generado offline decodifica == DELM_TOKEN_ID. Bridge: proxy HTTP `app.all('*')` en https://127.0.0.1:2121 (TLS) y http://127.0.0.1:3321; reenvía al renderer vía IPC. Errores reales: USE_PBSV21_SCOPE, INVALID_PBSV21_SCOPE, MISSING_PBSV21_SCOPE_TAG (el adaptador usa `p bsv21 id` correcto)
+  - Auditoría on-chain: el deploy `8d7f4834_vout0` (1M DELM) está intacto y sin gastar (bloquea a `1Eqk`); el transfer a `1MNF` (`6b8de05f`) es **inválido como BSV-21** (gastó el change, no el tip — no conserva saldo)
+- **Control de los DELM (2026-10-04):** `@1sat/cli sweep scan --wif <token.wif> --only bsv21` ve los **1M DELM** en `1Eqk` (read-only, sin transacciones). tokenId `8d7f4834…_0`, symbol DELM, amount 1000000, 1 UTXO, no listado. 1Sat Ordinals usa un **indexer público** (`api.1sat.app`): ve el UTXO de 1 sat con la inscripción BSV-21 en la dirección, sin depender del install (a diferencia de HandCash, que asocia collectables al install BRC-39).
+  - **Wallet garracifrada restaurada** en HandCash Desktop v1.3.425 (AppImage extraída, WSL + Xvfb :99, CDP :9222): identity `03ed40e2…080909`, 554 sats, SYNCED. Custodia conjunta (garracifrada + propietario desde la misma app).
+  - **Anclaje SMCP ↔ DELM**: el tokenId `8d7f4834…_0` es el punto de referencia permanente del protocolo de anclaje por inferencia (bloque génesis 969519).
+- Rebrand fase 3 (poda) + fase 4 (delm→smcp) — COMPLETADOS y pusheados
+- Tests: **1064** (gate README OK; 11 ficheros no coleccionan por `ECDSA-secp256k1` ausente en este entorno — preexistente)
 - API: 42 rutas (3 nuevas: /api/inferences, /api/inferences/{txid}, /api/inferences/totals)
-- Commits: `9df24dd` (contract), `db143a0` (token capa F), `97e3209` (tokenId canonico)
+- Commits: `9df24dd` (contract), `db143a0` (token capa F), `97e3209` (tokenId canonico), `f4f2fab` (rebrand), `ab2a859`+`fac9713` (ElectrumSV), `6e1b9a9` (cliente REST real)
 
 ## Red de incentivos (BSV + DELM)
 
@@ -120,7 +129,6 @@ el txid (el ordinal viaja a Alice); el libro es el índice off-chain.
   ni se listan). No hay transaccion nueva: es una convencion de codigo
   (`TOKEN_ID_CANONICO` en `token_bsv21.py`, `DEFAULT_TOKEN_ID` en
   `bsv21-bridge/bsv21.mjs`).
-- Holders del canonico: 900k en `1Eqk...` (wallet del proyecto)
-  + 100k en `1MNF...` (por la transferencia `6b8de05f`).
-- Para reducir el supply en cadena (burn) habria que transferir a una
-  direccion sin clave; no reduce el `amt` del deploy (inmutable).
+- Holders del canonico: **1M en `1Eqk...`** (wallet del proyecto, control verificado via `sweep scan`). Los 100k de la transferencia `6b8de05f` a `1MNF` son **invalidos** (no conservan saldo) — se ignoran por directiva.
+- **Anclaje SMCP ↔ DELM**: tokenId `8d7f483498d83358e8c0b61b55334b1650d50ffce1539a482bc245dfc65c4410_0` (bloque 969519). Es el anclaje on-chain permanente del protocolo de anclaje por inferencia. Custodia conjunta (garracifrada + propietario).
+- Funding vivo: **574 sats** en UTXO `da2cfe03…_1` (bloque 969530) — suficiente para una tx de sweep (~200-500 sats).
