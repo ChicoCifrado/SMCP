@@ -126,6 +126,70 @@
     transition: opacity .4s;
   }
   #loading.hide { opacity: 0; pointer-events: none; }
+
+  /* ---------- completion modal (espectacular) ---------- */
+  #cx {
+    position: fixed; inset: 0; z-index: 20;
+    display: grid; place-items: center;
+    background: rgba(5,6,5,.55);
+    backdrop-filter: blur(3px);
+    opacity: 0; pointer-events: none;
+    transition: opacity .45s ease;
+  }
+  #cx.on { opacity: 1; pointer-events: auto; }
+  #cx .card {
+    position: relative;
+    width: min(760px, 90vw);
+    max-height: 78vh;
+    display: flex; flex-direction: column;
+    border-radius: 18px;
+    background: linear-gradient(160deg, #141a10 0%, #0c0f0a 100%);
+    border: 1px solid var(--accent-soft);
+    box-shadow: 0 0 0 1px rgba(143,191,63,.12), 0 30px 90px rgba(0,0,0,.6), 0 0 60px rgba(143,191,63,.15);
+    overflow: hidden;
+    transform: translateY(14px) scale(.97);
+    transition: transform .45s cubic-bezier(.2,.9,.25,1.2);
+  }
+  #cx.on .card { transform: translateY(0) scale(1); }
+  #cx .scan {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(180deg, transparent 0%, rgba(143,191,63,.05) 50%, transparent 100%);
+    background-size: 100% 200%;
+    animation: scan 3.2s linear infinite;
+  }
+  @keyframes scan { 0% { background-position: 0 -100%; } 100% { background-position: 0 100%; } }
+  #cx .hdr {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(143,191,63,.06);
+  }
+  #cx .hdr .ttl { font: 600 13px var(--font-mono); color: var(--accent); letter-spacing: .05em; text-transform: uppercase; }
+  #cx .hdr .rid { font: 12px var(--font-mono); color: var(--muted); }
+  #cx .hdr .x {
+    margin-left: auto; width: 28px; height: 28px; border-radius: 8px;
+    border: 1px solid var(--line); background: transparent; color: var(--muted);
+    font: 600 14px var(--font-mono); cursor: pointer; display: grid; place-items: center;
+  }
+  #cx .hdr .x:hover { border-color: var(--accent); color: var(--accent); }
+  #cx .body {
+    padding: 18px 20px; overflow: auto; flex: 1;
+    font: 13px/1.7 var(--font-mono); color: var(--text);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #cx .body .ans { color: var(--text); }
+  #cx .ftr {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    padding: 11px 18px; border-top: 1px solid var(--line);
+    font: 11px var(--font-mono); color: var(--muted);
+  }
+  #cx .ftr b { color: var(--accent); font-weight: 600; }
+  #cx .ftr .sp { margin-left: auto; }
+  #cx .glowline {
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: .6;
+  }
 </style>
 </head>
 <body>
@@ -200,6 +264,22 @@
   </div>
 
   <div id="loading">inicializando escena…</div>
+
+  <!-- completion modal -->
+  <div id="cx">
+    <div class="card">
+      <div class="scan"></div>
+      <div class="glowline"></div>
+      <div class="hdr">
+        <span class="ttl">Completación</span>
+        <span class="rid" id="cx-rid">—</span>
+        <button class="x" id="cx-x" title="cerrar">×</button>
+      </div>
+      <div class="body"><span class="ans" id="cx-ans">—</span></div>
+      <div class="ftr" id="cx-ftr"></div>
+      <div class="glowline"></div>
+    </div>
+  </div>
 
   <script src="/js/three.min.js"></script>
   <script src="/assets/runs.js"></script>

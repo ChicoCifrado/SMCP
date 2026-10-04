@@ -35,6 +35,7 @@
   var el = function (id) { return document.getElementById(id); };
   var out = el("out"), dot = el("dot"), ttl = el("ttl"), st = el("st");
   var cancelBtn = el("btn-cancel"), runBtn = el("btn-run");
+  var cx = el("cx"), cxRid = el("cx-rid"), cxAns = el("cx-ans"), cxFtr = el("cx-ftr");
 
   // ---------- escenario ----------
   var scene, camera, renderer, clock;
@@ -558,6 +559,14 @@
     if (status === "done") {
       st.textContent = "completado"; st.className = "st ok";
       printLine('<span class="ok">run completado</span>');
+      // Explosion de gists: la completacion es la culminacion del run
+      burstCompletion();
+      // Traer el outcome (la respuesta real) y mostrarlo en el modal
+      if (run && run.ctrl) {
+        SMCPRuns.outcome(run.ctrl.id).then(function (oc) {
+          showCompletion(oc);
+        }).catch(function () { /* sin outcome: solo explosion */ });
+      }
     } else if (status === "cancelled") {
       st.textContent = "cancelado"; st.className = "st err";
       printLine('<span class="err">run cancelado</span>');
@@ -567,6 +576,59 @@
     }
     if (run && run.ctrl) SMCPRuns.state(run.ctrl.id).then(applyMetrics).catch(function () {});
   }
+
+  // ---------- completacion espectacular ----------
+  function burstCompletion() {
+    // 26 gists que nacen del nucleo y ascienden (la respuesta se libera)
+    for (var i = 0; i < 26; i++) {
+      (function (i) {
+        setTimeout(function () {
+          var from = new THREE.Vector3(
+            (Math.random() - 0.5) * 2.4,
+            1.5 + (Math.random() - 0.5) * 1.4,
+            (Math.random() - 0.5) * 2.4
+          );
+          burstGist(from);
+          if (core) { core.scale.setScalar(1 + Math.sin(T * 2.2) * 0.04 + 0.12); }
+        }, i * 40);
+      })(i);
+    }
+    // destello del anillo
+    ring.material.color.setHex(COL.coreHi);
+    setTimeout(function () { ring.material.color.setHex(COL.core); }, 900);
+  }
+
+  function showCompletion(oc) {
+    if (!cx) return;
+    var ans = oc && oc.answer != null ? String(oc.answer) : "(sin respuesta)";
+    cxRid.textContent = (run && run.ctrl) ? run.ctrl.id : "—";
+    cxAns.textContent = ans;
+    // footer: rounds, gists admitidos, workers, wall + metricas
+    var rounds = oc && oc.rounds != null ? oc.rounds : "—";
+    var gists = oc && oc.admitted_gists != null ? oc.admitted_gists : "—";
+    var workers = oc && oc.workers ? oc.workers.length : "—";
+    var hdr = oc && oc.header ? oc.header : {};
+    var m = oc && oc.metrics ? oc.metrics : {};
+    var wall = hdr.wall_s != null ? hdr.wall_s + "s" : "—";
+    var backend = hdr.backend || "—";
+    var rate = m.admit_rate != null ? (m.admit_rate * 100).toFixed(0) + "%" : "—";
+    var cost = m.total_cost_usd != null ? m.total_cost_usd.toFixed(4) : "—";
+    var tokIn = m.total_tokens_in != null ? m.total_tokens_in : "—";
+    var tokOut = m.total_tokens_out != null ? m.total_tokens_out : "—";
+    cxFtr.innerHTML =
+      '<span>rounds <b>' + rounds + "</b></span>" +
+      '<span>gists <b>' + gists + "</b></span>" +
+      '<span>workers <b>' + workers + "</b></span>" +
+      '<span>admit <b>' + rate + "</b></span>" +
+      '<span>cost <b>$' + cost + "</b></span>" +
+      '<span>tok in/out <b>' + tokIn + "/" + tokOut + "</b></span>" +
+      '<span>wall <b>' + wall + "</b></span>" +
+      '<span>backend <b>' + fmt(backend) + "</b></span>" +
+      '<span class="sp">respuesta del modelo — ' + ans.length + " chars</span>";
+    cx.classList.add("on");
+  }
+
+  function hideCompletion() { if (cx) cx.classList.remove("on"); }
 
   function applyMetrics(s) {
     el("mx-rounds").textContent = s.rounds != null ? s.rounds : 0;
@@ -736,6 +798,11 @@
       el("f-task").addEventListener("keydown", function (e) {
         if (e.key === "Enter") launchRun();
       });
+
+      // completion modal: cerrar
+      el("cx-x").addEventListener("click", hideCompletion);
+      cx.addEventListener("click", function (e) { if (e.target === cx) hideCompletion(); });
+      window.addEventListener("keydown", function (e) { if (e.key === "Escape") hideCompletion(); });
 
       var c = el("scene");
       c.addEventListener("mousedown", onDown);

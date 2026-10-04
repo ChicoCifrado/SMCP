@@ -143,5 +143,10 @@
     });
   }
 
-  window.SMCPRuns = { start: start, cancel: cancel, state: state, drop: drop, list: list, reconnect: reconnect };
+  /** Outcome completo (answer + gists + workers + metrics) del run. */
+  function outcome(id) {
+    return fetch("/api/runs/" + id + "/outcome").then(function (r) { return r.json(); });
+  }
+
+  window.SMCPRuns = { start: start, cancel: cancel, state: state, drop: drop, list: list, reconnect: reconnect, outcome: outcome };
 })();
