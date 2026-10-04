@@ -1938,6 +1938,14 @@ def list_inference_registry(
     }
 
 
+@router.get("/inferences/totals")
+def get_inference_totals() -> dict[str, Any]:
+    """Totales del libro: inferencias, sats y DELM cobrados."""
+    reg = _inference_registry()
+    return {"ok": True, "totals": reg.totals(),
+            "path": DEFAULT_REGISTRY_PATH}
+
+
 @router.get("/inferences/{txid}")
 def get_inference(txid: str) -> dict[str, Any]:
     """Identifica una inferencia especifica y confirma que ocurrio.
@@ -1957,14 +1965,6 @@ def get_inference(txid: str) -> dict[str, Any]:
         )
     return {"ok": True, "record": rec.to_dict(),
             "inference_id": rec.inference_id,
-            "path": DEFAULT_REGISTRY_PATH}
-
-
-@router.get("/inferences/totals")
-def get_inference_totals() -> dict[str, Any]:
-    """Totales del libro: inferencias, sats y DELM cobrados."""
-    reg = _inference_registry()
-    return {"ok": True, "totals": reg.totals(),
             "path": DEFAULT_REGISTRY_PATH}
 
 

@@ -154,6 +154,147 @@
     });
   }
 
+  // ---- libro de inferencias (API /api/inferences) ----
+  function infMsg(t, cls) {
+    var el = $("inf-msg");
+    if (!el) return;
+    el.textContent = t;
+    el.className = cls || "";
+  }
+
+  function loadInferences() {
+    var mesh = $("inf-mesh") ? $("inf-mesh").value : "";
+    var server = $("inf-server") ? $("inf-server").value : "";
+    var q = [];
+    if (mesh) q.push("mesh_id=" + encodeURIComponent(mesh));
+    if (server) q.push("server=" + encodeURIComponent(server));
+    var path = "/api/inferences" + (q.length ? "?" + q.join("&") : "");
+    infMsg("cargando…");
+    SMCP.get(path).then(function (j) {
+      var recs = j.records || [];
+      var totals = j.totals || {};
+      var cnt = $("inf-count");
+      var sat = $("inf-sats");
+      var del = $("inf-delm");
+      if (cnt) cnt.textContent = "inferencias: " + recs.length;
+      if (sat) sat.textContent = "sats: " + (totals.satoshis != null ? totals.satoshis : (totals.sats || "—"));
+      if (del) del.textContent = "DELM: " + (totals.delm != null ? totals.delm : "—");
+      var table = $("inf-table");
+      if (!table) { infMsg("ok"); return; }
+      var tb = table.querySelector("tbody");
+      tb.innerHTML = "";
+      if (!recs.length) {
+        var tr0 = document.createElement("tr");
+        tr0.innerHTML = '<td colspan="6" class="muted">sin inferencias</td>';
+        tb.appendChild(tr0);
+        infMsg("sin inferencias");
+        return;
+      }
+      recs.forEach(function (r) {
+        var tr = document.createElement("tr");
+        var cobro = [];
+        if (r.satoshis) cobro.push(r.satoshis + " sats");
+        if (r.delm_amount) cobro.push(r.delm_amount + " DELM");
+        tr.innerHTML =
+          '<td class="muted" title="' + SMCP.esc(r.txid || "") + '">' +
+            SMCP.esc((r.txid || "").slice(0, 12)) + "…</td>" +
+          "<td>" + SMCP.esc(r.mesh_id || "") + "</td>" +
+          '<td class="muted">' + SMCP.esc((r.server_pubkey || "").slice(0, 12)) + "…</td>" +
+          '<td class="muted">' + SMCP.esc((r.requester_pubkey || "").slice(0, 12)) + "…</td>" +
+          "<td>" + SMCP.esc(cobro.join(" + ") || "—") + "</td>" +
+          '<td class="muted">' + fmtTs(r.completed_at || r.timestamp) + "</td>";
+        tb.appendChild(tr);
+      });
+      infMsg("ok · " + recs.length + " inferencias", "ok");
+    }).catch(function (e) {
+      infMsg("error: " + e.message, "err");
+    });
+  }
+
+  function loadInferenceTotals() {
+    infMsg("totales…");
+    SMCP.get("/api/inferences/totals").then(function (j) {
+      var t = j.totals || {};
+      infMsg("totales: " + (t.inferences != null ? t.inferences : "?") +
+        " inferencias · " + (t.satoshis != null ? t.satoshis : "?") +
+        " sats · " + (t.delm != null ? t.delm : "?") + " DELM", "ok");
+      if ($("inf-sats")) $("inf-sats").textContent = "sats: " + (t.satoshis != null ? t.satoshis : "—");
+      if ($("inf-delm")) $("inf-delm").textContent = "DELM: " + (t.delm != null ? t.delm : "—");
+    }).catch(function (e) {
+      infMsg("error: " + e.message, "err");
+    });
+  }
+
+  // ---- verificar una inferencia ajena por SPV (BRC-96) ----
+  function spvShow(text, cls) {
+    var el = $("spv-out");
+    if (!el) return;
+    el.className = "visible " + (cls || "");
+    el.textContent = text;
+  }
+
+  function verifySPV() {
+    var txid = ($("spv-txid") || {}).value || "";
+    var mesh = ($("spv-mesh") || {}).value || "";
+    var requester = ($("spv-requester") || {}).value || "";
+    var funding = parseInt(($("spv-funding") || {}).value || "0", 10);
+    var txHex = ($("spv-txhex") || {}).value || "";
+    var idx = parseInt(($("spv-index") || {}).value || "0", 10);
+    var pathRaw = ($("spv-path") || {}).value || "[]";
+    var root = ($("spv-root") || {}).value || "";
+    var height = parseInt(($("spv-height") || {}).value || "1", 10);
+    var headerRoot = ($("spv-headeroot") || {}).value || "";
+    var raw = ($("spv-raw") || {}).value || "";
+
+    if (!txid || !mesh || !requester || !txHex) {
+      spvShow("falta: txid, mesh_id, requester_pubkey y tx_hex son obligatorios", "err");
+      return;
+    }
+    var path;
+    try {
+      path = JSON.parse(pathRaw);
+    } catch (e) {
+      spvShow("path JSON inválido: " + e.message, "err");
+      return;
+    }
+    var body = {
+      mesh_id: mesh,
+      requester_pubkey: requester,
+      funding_sats: funding,
+      tx_hex: txHex,
+      inclusion: {
+        txid: txid, index: idx, path: path,
+        merkle_root: root, height: height
+      },
+      header: {
+        merkle_root: headerRoot || root, height: height,
+        raw: raw
+      }
+    };
+    var btn = $("btn-spv-verify");
+    if (btn) btn.disabled = true;
+    spvShow("verificando por SPV…");
+    SMCP.post("/api/inferences/" + encodeURIComponent(txid) + "/verify", body).then(function (r) {
+      var lines = [
+        "ok=" + r.ok,
+        "verified=" + r.verified,
+        "inclusion=" + r.inclusion,
+        "reason=" + (r.reason || ""),
+        "txid=" + (r.txid || txid),
+        "server_pubkey=" + (r.server_pubkey || "—"),
+        "inference_id=" + (r.inference_id || "—"),
+        "header.height=" + (r.header && r.header.height != null ? r.header.height : "—"),
+        "header.block_hash=" + (r.header && r.header.block_hash ? r.header.block_hash : "—")
+      ];
+      spvShow(lines.join("\n"), r.ok ? "ok" : "err");
+    }).catch(function (e) {
+      var detail = (e.body && (e.body.detail || e.body.error)) || e.message;
+      spvShow("error: " + detail, "err");
+    }).finally(function () {
+      if (btn) btn.disabled = false;
+    });
+  }
+
   function init() {
     var kind = $("v-kind");
     if (kind) {
@@ -180,6 +321,14 @@
     }
     var bv = $("btn-verify");
     if (bv) bv.addEventListener("click", verify);
+    // ---- libro de inferencias + verificacion SPV ----
+    var ir = $("btn-inf-reload");
+    if (ir) ir.addEventListener("click", loadInferences);
+    var it = $("btn-inf-totals");
+    if (it) it.addEventListener("click", loadInferenceTotals);
+    var sp = $("btn-spv-verify");
+    if (sp) sp.addEventListener("click", verifySPV);
+    loadInferences();
     loadRuns().then(loadLedger);
   }
 

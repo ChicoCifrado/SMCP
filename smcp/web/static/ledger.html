@@ -169,6 +169,100 @@
           <pre id="ver-out" aria-live="polite"></pre>
         </div>
       </section>
+
+      <section>
+        <div class="verify-panel">
+          <h3>Inferencias · libro de la red</h3>
+          <p class="lead" style="font-size:12.5px;color:var(--muted);margin:0 0 12px">
+            Cada completion (status 200) produce un registro con su
+            <b>txid</b> (la prueba en cadena), timestamp, identidades y el
+            cobro (sats y/o DELM). El anclaje DELM es verificable por SPV:
+            cualquier nodo prueba una inferencia ajena sin confiar en el otro.
+          </p>
+          <div class="led-toolbar">
+            <label>mesh
+              <input id="inf-mesh" type="text" placeholder="filtrar por mesh" />
+            </label>
+            <label>servidor
+              <input id="inf-server" type="text" placeholder="pubkey del nodo" />
+            </label>
+            <button class="lab-btn" id="btn-inf-reload" type="button">Recargar</button>
+            <button class="lab-btn" id="btn-inf-totals" type="button">Totales</button>
+            <span id="inf-msg"></span>
+          </div>
+          <div class="badges">
+            <span class="badge" id="inf-count">inferencias: —</span>
+            <span class="badge" id="inf-sats">sats: —</span>
+            <span class="badge" id="inf-delm">DELM: —</span>
+          </div>
+          <table class="led" id="inf-table">
+            <thead>
+              <tr>
+                <th>txid</th><th>mesh</th><th>servidor</th><th>solicitante</th>
+                <th>cobro</th><th>ts</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="6" class="muted">cargando…</td></tr>
+            </tbody>
+          </table>
+          <p class="empty-note">Sin inferencias aún: sirven una inferencia (malla → infer) para sembrar el libro.</p>
+
+          <h3 style="margin-top:20px">Verificar por SPV <span style="font-size:11px;color:var(--muted);font-weight:400">· BRC-96</span></h3>
+          <p class="lead" style="font-size:12px;color:var(--muted);margin:0 0 10px">
+            El verificador aporta <b>su</b> cadena de cabeceras: la inclusión se
+            comprueba contra la raíz que <i>él</i> eligió, no contra la que manda
+            el contraparte. Read-only: no emite, no gasta.
+          </p>
+          <div class="v-row">
+            <label>txid
+              <input id="spv-txid" type="text" placeholder="txid de la inferencia" />
+            </label>
+            <label>mesh_id
+              <input id="spv-mesh" type="text" placeholder="malla" />
+            </label>
+          </div>
+          <div class="v-row">
+            <label>requester_pubkey (hex)
+              <input id="spv-requester" type="text" placeholder="03…" />
+            </label>
+            <label>funding_sats
+              <input id="spv-funding" type="number" min="0" value="100" />
+            </label>
+          </div>
+          <div class="v-row">
+            <label>tx_hex (la tx completa)
+              <textarea id="spv-txhex" placeholder="tx en hex (la trae el verificador)"></textarea>
+            </label>
+          </div>
+          <div class="v-row">
+            <label>inclusión · index
+              <input id="spv-index" type="number" min="0" value="0" />
+            </label>
+            <label>inclusión · path (JSON array)
+              <input id="spv-path" type="text" placeholder='[] (árbol de una hoja)' />
+            </label>
+          </div>
+          <div class="v-row">
+            <label>merkle_root (prueba)
+              <input id="spv-root" type="text" placeholder="raíz de Merkle del bloque" />
+            </label>
+            <label>header · height
+              <input id="spv-height" type="number" min="0" value="1" />
+            </label>
+          </div>
+          <div class="v-row">
+            <label>header · merkle_root (la que elige el verificador)
+              <input id="spv-headeroot" type="text" placeholder="raíz de la cabecera" />
+            </label>
+            <label>header · raw (hex, 80 bytes, opcional)
+              <input id="spv-raw" type="text" placeholder="para block_hash" />
+            </label>
+          </div>
+          <button class="lab-btn primary" id="btn-spv-verify" type="button">Verificar por SPV</button>
+          <pre id="spv-out" aria-live="polite"></pre>
+        </div>
+      </section>
     </div>
   </main>
 
