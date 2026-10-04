@@ -30,7 +30,8 @@
   var scene, camera, renderer, clock, raycaster;
   var cam = { theta: 0.7, phi: 1.2, radius: 30, target: new THREE.Vector3(0, 1.5, 0), dragging: false, px: 0, py: 0 };
 
-  var core, coreGlow, ringAcc, ringFree;
+  var core, coreGlow, coreHalo, ringAcc, ringFree;
+  var starField, linkLines, anchorLine;
   var peers = [];   // { peer_id, mesh, halo, label, resHalo, vram, alive, reserved_gb, free_gb }
   var byId = {};    // peer_id -> indice en peers
   var hitMeshes = [];
@@ -107,10 +108,14 @@
     scene.add(new THREE.AmbientLight(0x40403a, 0.95));
     var key = new THREE.DirectionalLight(0xdce6cf, 0.85); key.position.set(10, 16, 8); scene.add(key);
     var rim = new THREE.PointLight(COL.core, 1.2, 90); rim.position.set(0, 5, 0); scene.add(rim);
+    var fill = new THREE.PointLight(0xffc233, 0.4, 120); fill.position.set(-8, 6, -6); scene.add(fill);
 
     buildCore();
     buildRings();
     buildFloor();
+    buildStars();
+    buildLinks();
+    buildAnchor();
     clock = new THREE.Clock();
     raycaster = new THREE.Raycaster();
   }
@@ -126,10 +131,10 @@
   }
 
   function buildCore() {
-    var g = new THREE.IcosahedronGeometry(2.0, 1);
+    var g = new THREE.IcosahedronGeometry(2.0, 2);
     var m = new THREE.MeshStandardMaterial({
       color: COL.core, emissive: COL.core, emissiveIntensity: 0.4,
-      metalness: 0.3, roughness: 0.5, flatShading: true,
+      metalness: 0.55, roughness: 0.32, flatShading: true,
     });
     core = new THREE.Mesh(g, m); core.position.set(0, 1.5, 0);
     scene.add(core);
@@ -141,8 +146,15 @@
     w.position.copy(core.position); scene.add(w);
     coreGlow = w;
 
-    var lb = makeLabel("malla de intercambio", "VRAM verificada · cadena de evidencia", "#dce6cf");
-    lb.position.set(0, 4.6, 0); scene.add(lb);
+    var halo = new THREE.Mesh(
+      new THREE.SphereGeometry(3.1, 24, 24),
+      new THREE.MeshBasicMaterial({ color: COL.core, transparent: true, opacity: 0.05, depthWrite: false })
+    );
+    halo.position.copy(core.position); scene.add(halo);
+    coreHalo = halo;
+
+    var lb = makeLabel("malla de intercambio", "VRAM verificada · cadena de evidencia · anclaje DELM", "#dce6cf");
+    lb.position.set(0, 4.9, 0); scene.add(lb);
   }
 
   function buildRings() {
@@ -165,6 +177,98 @@
     grid.position.y = -0.02;
     grid.material.transparent = true; grid.material.opacity = 0.45;
     scene.add(grid);
+  }
+
+  // ---------- cielo de estrellas (fondo) ----------
+  function buildStars() {
+    var N = 900;
+    var pos = new Float32Array(N * 3);
+    for (var i = 0; i < N; i++) {
+      // cascaron esferico alrededor de la escena
+      var r = 60 + Math.random() * 120;
+      var th = Math.random() * Math.PI * 2;
+      var ph = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+      pos[i * 3 + 1] = r * Math.cos(ph);
+      pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    var m = new THREE.PointsMaterial({
+      color: 0x9aa68c, size: 0.6, sizeAttenuation: true,
+      transparent: true, opacity: 0.55, depthWrite: false,
+    });
+    starField = new THREE.Points(g, m);
+    scene.add(starField);
+  }
+
+  // ---------- aristas de la malla (peer <-> peer) ----------
+  function buildLinks() {
+    // hasta 64 pares; la geometria se rellena en syncLinks
+    var maxPairs = 64;
+    var pos = new Float32Array(maxPairs * 2 * 3);
+    var g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    var m = new THREE.LineBasicMaterial({
+      color: COL.alive, transparent: true, opacity: 0.18, depthWrite: false,
+    });
+    linkLines = new THREE.LineSegments(g, m);
+    linkLines.frustumCulled = false;
+    scene.add(linkLines);
+  }
+
+  // ---------- anclaje DELM (peer activo -> nucleo) ----------
+  function buildAnchor() {
+    var pos = new Float32Array(2 * 3);
+    var g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    var m = new THREE.LineDashedMaterial({
+      color: 0xffc233, dashSize: 0.5, gapSize: 0.35,
+      transparent: true, opacity: 0.0, depthWrite: false,
+    });
+    anchorLine = new THREE.Line(g, m);
+    anchorLine.frustumCulled = false;
+    scene.add(anchorLine);
+  }
+
+  // rellena las aristas: vecinos cercanos se conectan
+  function syncLinks() {
+    if (!linkLines) return;
+    var pos = linkLines.geometry.attributes.position.array;
+    var n = 0, maxPairs = pos.length / 6;
+    for (var i = 0; i < peers.length && n < maxPairs; i++) {
+      for (var j = i + 1; j < peers.length && n < maxPairs; j++) {
+        var a = peers[i], b = peers[j];
+        var dx = a.mesh.position.x - b.mesh.position.x;
+        var dz = a.mesh.position.z - b.mesh.position.z;
+        var d2 = dx * dx + dz * dz;
+        if (d2 < 64) { // vecinos orbitarios
+          pos[n * 6] = a.mesh.position.x;
+          pos[n * 6 + 1] = a.mesh.position.y;
+          pos[n * 6 + 2] = a.mesh.position.z;
+          pos[n * 6 + 3] = b.mesh.position.x;
+          pos[n * 6 + 4] = b.mesh.position.y;
+          pos[n * 6 + 5] = b.mesh.position.z;
+          n++;
+        }
+      }
+    }
+    linkLines.geometry.setDrawRange(0, n * 2);
+    linkLines.geometry.attributes.position.needsUpdate = true;
+  }
+
+  // linea de anclaje: del peer seleccionado al nucleo (el anclaje DELM)
+  function syncAnchor() {
+    if (!anchorLine) return;
+    if (!selected) { anchorLine.material.opacity = 0; return; }
+    var pos = anchorLine.geometry.attributes.position.array;
+    pos[0] = 0; pos[1] = 1.5; pos[2] = 0;             // nucleo
+    pos[3] = selected.mesh.position.x;
+    pos[4] = selected.mesh.position.y;
+    pos[5] = selected.mesh.position.z;
+    anchorLine.geometry.attributes.position.needsUpdate = true;
+    anchorLine.computeLineDistances();
+    anchorLine.material.opacity = 0.7;
   }
 
   // ---------- peers ----------
@@ -404,6 +508,10 @@
     core.rotation.y += dt * 0.4; core.rotation.x += dt * 0.15;
     core.scale.setScalar(1 + Math.sin(T * 2) * 0.03);
     coreGlow.rotation.y -= dt * 0.25;
+    if (coreHalo) {
+      coreHalo.rotation.y -= dt * 0.1;
+      coreHalo.material.opacity = 0.04 + Math.sin(T * 1.4) * 0.02;
+    }
 
     ringAcc.rotation.z += dt * 0.1;
     ringFree.rotation.z -= dt * 0.06;
@@ -422,6 +530,12 @@
       p.label.position.copy(p.mesh.position);
       p.label.position.y += p.vram + 1.5;
     }
+
+    // aristas de la malla (peer <-> peer vecinos) y anclaje DELM
+    syncLinks();
+    syncAnchor();
+    // las estrellas rotan casi imperceptiblemente (profundidad)
+    if (starField) starField.rotation.y += dt * 0.005;
 
     renderer.render(scene, camera);
   }
