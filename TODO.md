@@ -16,6 +16,13 @@
   - [x] Tests: 9 (test_registro) + 2 (union en test_intercambio)
 - [ ] **Tests contra modelo real (no mockeado)**
   - [ ] alice/bob dual-node con Qwen3.8-27B en VRAM (14-15 GB)
+  - [x] **Qwen3.8-27B-GGUF cabe con margen via unsloth.service** — con sus
+        parametros de lanzamiento optimizados (UD-Q2_K_XL + KV cache q2_0 +
+        offload completo) el footprint real es **15 GB** (no los 17.11 GB
+        que llmfit estima para un lanzamiento generico) y **~28 tok/s**.
+        La regla `delm fit` (headroom 0.85 = cap 16.5 GB) se cumple con
+        el servicio corriendo; llmfit da un limite inferior conservador.
+        Params: ver skill `unsloth-model-management` § Optimized Launch.
   - [ ] verificacion extremo a extremo de las capas A-E
   - [ ] inferencia real -> gist -> verificacion -> bounty cobrado
 - [ ] **Tests de la capa F (token) contra cadena real**
