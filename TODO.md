@@ -100,8 +100,9 @@
   - **Wallet garracifrada restaurada** en HandCash Desktop v1.3.425 (AppImage extraída, WSL + Xvfb :99, CDP :9222): identity `03ed40e2…080909`, 554 sats, SYNCED. Custodia conjunta (garracifrada + propietario desde la misma app).
   - **Anclaje SMCP ↔ DELM**: el tokenId `8d7f4834…_0` es el punto de referencia permanente del protocolo de anclaje por inferencia (bloque génesis 969519).
 - Rebrand fase 3 (poda) + fase 4 (delm→smcp) — COMPLETADOS y pusheados
-- Tests: **1064** (gate README OK; 11 ficheros no coleccionan por `ECDSA-secp256k1` ausente en este entorno — preexistente)
+- Tests: **1231 passed** (12 deselected preexistentes: `test_serve` contrato ACP, `test_gates` `ruff` ausente). +7 nuevos: `tests/test_api_verify_inference.py` (endpoint SPV verify).
 - API: 42 rutas (3 nuevas: /api/inferences, /api/inferences/{txid}, /api/inferences/totals)
+- **API: `POST /api/inferences/{txid}/verify`** — verificar una inferencia ajena por SPV (read-only). Reutiliza `verify_inscription` (inclusion + terminos de pago); el verificador aporta SU cabecera (SPV puro). +7 tests (`test_api_verify_inference.py`). Ver `docs/merkle-svmcp.md`.
 - Commits: `9df24dd` (contract), `db143a0` (token capa F), `97e3209` (tokenId canonico), `f4f2fab` (rebrand), `ab2a859`+`fac9713` (ElectrumSV), `6e1b9a9` (cliente REST real)
 
 ## Red de incentivos (BSV + DELM)

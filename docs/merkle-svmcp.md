@@ -263,9 +263,21 @@ read-only (verifica pruebas ajenas). Requiere:
 
 ## Estado
 
-- Analisis + diseno documentados. Sin cambios de codigo.
-- La maquinaria (verify_merkle_proof, InclusionProof,
-  BlockHeader, MembershipProof, verify_inscription) YA
-  existe en smcp/core/. Falta el endpoint HTTP.
-- Sin transacciones. DELM y sats intactos en 1Eqk.
+**IMPLEMENTADO** (`POST /api/inferences/{txid}/verify` en
+`smcp/web/api.py`):
+- Modelos Pydantic: `VerifyInclusionIn`, `VerifyHeaderIn`,
+  `VerifyInferenceIn`.
+- El endpoint parsea la tx (`Transaction.parse`), comprueba
+  que su txid coincide con el de la URL, construye
+  `InclusionProof` + `BlockHeader`, y llama a
+  `verify_inscription` (inclusion primero, terminos de
+  pago despues).
+- Extrae `server_pubkey` de la tx (`extract_inscription`)
+  y calcula el `inference_id` (`sha256(txid:mesh:server)`).
+- Read-only: no emite, no gasta, no toca el libro.
+- **Tests: `tests/test_api_verify_inference.py` (7 tests):**
+  prueba valida, raiz forjada, header hostil, txid no
+  coincide, tx invalida, endianness volteada, read-only.
+  **7/7 passed.** Suite: 1231 passed (12 deselected
+  preexistentes: test_serve contrato ACP, test_gates ruff).
 

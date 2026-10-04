@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import hashlib
 import json
 import time
 import uuid
@@ -36,6 +37,9 @@ from smcp.core.registro import (
     DEFAULT_REGISTRY_PATH,
     InferenceRegistry,
 )
+from smcp.core.inscripcion import extract_inscription, verify_inscription
+from smcp.core.membership import BlockHeader, InclusionProof
+from smcp.core.txbuild import Transaction
 from smcp.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
 from smcp.core.run_store import RunStore, StoredRun
 from smcp.core.task_queue import Task, TaskState
@@ -1962,3 +1966,106 @@ def get_inference_totals() -> dict[str, Any]:
     reg = _inference_registry()
     return {"ok": True, "totals": reg.totals(),
             "path": DEFAULT_REGISTRY_PATH}
+
+
+# ------------------------------------------------------- verificar por SPV
+class VerifyInclusionIn(BaseModel):
+    """La prueba de inclusion de Merkle (BRC-96 / SPV)."""
+    txid: str = Field(..., max_length=64)
+    index: int = Field(..., ge=0)
+    path: list[str] = Field(default_factory=list)
+    merkle_root: str = Field(..., max_length=64)
+    height: int = Field(default=0, ge=0)
+
+
+class VerifyHeaderIn(BaseModel):
+    """La cabecera de bloque que el verificador elige."""
+    merkle_root: str = Field(..., max_length=64)
+    height: int = Field(default=0, ge=0)
+    raw: str = Field(default="", max_length=160)
+
+
+class VerifyInferenceIn(BaseModel):
+    """Probar una inferencia ajena por SPV (sin confiar en el nodo)."""
+    mesh_id: str = Field(..., max_length=80)
+    requester_pubkey: str = Field(..., max_length=130)
+    funding_sats: int = Field(..., ge=0)
+    tx_hex: str = Field(..., max_length=100000)
+    inclusion: VerifyInclusionIn
+    header: VerifyHeaderIn
+
+
+@router.post("/inferences/{txid}/verify")
+def verify_inference(txid: str, body: VerifyInferenceIn) -> dict[str, Any]:
+    """Verifica una inferencia ajena por SPV (read-only).
+
+    El nodo que verifica aporta SU cadena de cabeceras: la
+    inclusion se comprueba contra la raiz que *el* eligio, no
+    contra la que manda el contraparte (la confianza esta en la
+    cadena de cabeceras que el verificador elige — SPV puro).
+
+    Orden (el que impone ``verify_inscription``): inclusion
+    primero, terminos de pago despues. Si la tx no esta en un
+    bloque no hay nada que firmar.
+    """
+    # 1. Parsear la tx completa (la trae el verificador).
+    try:
+        tx = Transaction.parse(bytes.fromhex(body.tx_hex))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"tx invalida: {exc}")
+    if tx.txid() != txid.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=f"la tx no coincide con el txid ({txid})")
+
+    # 2. Construir la prueba y la cabecera.
+    inclusion = InclusionProof(
+        txid=txid.lower(), index=body.inclusion.index,
+        path=body.inclusion.path,
+        merkle_root=body.inclusion.merkle_root.lower(),
+        height=body.inclusion.height)
+    header = BlockHeader(
+        merkle_root=body.header.merkle_root.lower(),
+        height=body.header.height,
+        raw=bytes.fromhex(body.header.raw) if body.header.raw else b"")
+
+    # 3. Verificar (inclusion + terminos de pago).
+    try:
+        requester_pubkey = bytes.fromhex(body.requester_pubkey)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="requester_pubkey no es hex valido")
+    ok, reason = verify_inscription(
+        tx, mesh_id=body.mesh_id,
+        requester_pubkey=requester_pubkey,
+        funding_sats=body.funding_sats,
+        inclusion=inclusion, header=header)
+
+    # 4. Extraer el server_pubkey de la tx (para el inference_id).
+    try:
+        receipt = extract_inscription(tx)
+        server_pubkey_hex = receipt.server_pubkey.hex()
+    except Exception:
+        server_pubkey_hex = ""
+    inference_id = (
+        hashlib.sha256(
+            f"{txid}:{body.mesh_id}:{server_pubkey_hex}".encode("utf-8")
+        ).hexdigest()
+        if server_pubkey_hex else None
+    )
+
+    return {
+        "ok": ok,
+        "verified": ok,
+        "inclusion": inclusion.verify(header),
+        "reason": reason,
+        "txid": txid,
+        "inference_id": inference_id,
+        "server_pubkey": server_pubkey_hex,
+        "header": {
+            "height": body.header.height,
+            "merkle_root": body.header.merkle_root,
+            "block_hash": header.block_hash,
+        },
+    }
