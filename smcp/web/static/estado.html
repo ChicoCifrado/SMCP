@@ -180,6 +180,14 @@
             api_key (opcional)
             <input id="cfg-in-key" type="password" placeholder="dejar vacío para no cambiar" style="font:inherit;font-size:13px;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--code-bg);color:var(--text)" />
           </label>
+          <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)">
+            provider (protocolo)
+            <select id="cfg-in-provider" style="font:inherit;font-size:13px;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--code-bg);color:var(--text)">
+              <option value="">openai (por defecto)</option>
+              <option value="openai">openai (/chat/completions)</option>
+              <option value="anthropic">anthropic (/v1/messages)</option>
+            </select>
+          </label>
         </div>
         <div class="live-actions">
           <button class="live-btn primary" id="btn-cfg-save" type="button">Guardar config (YAML)</button>

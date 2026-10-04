@@ -174,6 +174,10 @@
         if ($("cfg-in-base") && document.activeElement !== $("cfg-in-base")) {
           $("cfg-in-base").value = c.base_url || "";
         }
+        if ($("cfg-in-provider")) {
+          var prov = (c.provider || "").toLowerCase();
+          $("cfg-in-provider").value = prov || "";
+        }
       }
       if (h) {
         var m = h.model || {};
@@ -195,9 +199,11 @@
     var model = $("cfg-in-model") ? $("cfg-in-model").value.trim() : "";
     var base = $("cfg-in-base") ? $("cfg-in-base").value.trim() : "";
     var key = $("cfg-in-key") ? $("cfg-in-key").value : "";
+    var prov = $("cfg-in-provider") ? $("cfg-in-provider").value : "";
     if (model) body.model = model;
     if (base) body.base_url = base;
     if (key) body.api_key = key;
+    if (prov) body.provider = prov;
     if (!Object.keys(body).length) {
       show("Nada que guardar (model/base_url/api_key vacíos).", "err");
       return;
@@ -207,6 +213,7 @@
       if ($("cfg-in-key")) $("cfg-in-key").value = "";
       show("config guardada · " + j.path + "\nupdated: " + (j.updated || []).join(", ") +
         "\nmodel=" + j.model + "\nbase_url=" + j.base_url +
+        "\nprovider=" + (j.provider || "openai") +
         "\napi_key=" + (j.api_key_masked || (j.api_key_set ? "set" : "empty")), "ok");
       refreshConfig();
     }).catch(function (e) {

@@ -1,13 +1,16 @@
 """LLMClient abstraction — model-agnostic completion.
 
 DELM is model-agnostic: the same pipeline runs against any OpenAI-compatible
-endpoint (OpenRouter, direct provider, a local server, etc.). Two clients ship:
+endpoint (OpenRouter, direct provider, a local server, etc.). Three clients ship:
 
   * :class:`FakeLLMClient` — deterministic, no network. Used by the demo and
     tests so the whole pipeline (queue -> agent -> compress -> verify ->
     admit -> unfold -> finalize) runs end-to-end with zero API cost.
   * :class:`OpenAICompatibleClient` — real calls to an OpenAI-compatible
     ``/chat/completions`` endpoint via the ``openai`` SDK.
+  * :class:`AnthropicMessagesClient` — real calls to the Anthropic Messages
+    API (``/v1/messages``) over plain httpx. SMCP is indifferent between an
+    OpenAI-compatible backend and an Anthropic one, local or in the cloud.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from __future__ import annotations
 import abc
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 
 class LLMClient(abc.ABC):
@@ -158,6 +162,72 @@ class OpenAICompatibleClient(LLMClient):
             temperature=self.temperature,
         )
         return resp.choices[0].message.content or ""
+
+
+class AnthropicMessagesClient(LLMClient):
+    """Client for the Anthropic Messages API (``/v1/messages``).
+
+    Same contract as :class:`OpenAICompatibleClient` but speaks
+    Anthropic's native surface, so SMCP is indifferent between an
+    OpenAI-compatible backend and an Anthropic one — local or in
+    the cloud. Talks to the wire directly via httpx (no SDK
+    dependency), mirroring the no-auth handling of the OpenAI
+    client: a local Anthropic endpoint may reject a spurious
+    ``x-api-key``, so the header is only sent when a real key is
+    configured.
+
+    Endpoints: ``{base_url}/v1/messages`` (base_url defaults to
+    ``https://api.anthropic.com``). Auth: ``x-api-key`` +
+    ``anthropic-version``. Response: ``content[0].text``.
+    """
+
+    DEFAULT_BASE = "https://api.anthropic.com"
+
+    def __init__(self, model: str, base_url: str | None = None,
+                 api_key: str | None = None, temperature: float = 0.0,
+                 timeout: float = 120.0, max_tokens: int = 4096,
+                 **kwargs) -> None:
+        import httpx  # type: ignore
+
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.api_key = (api_key or "").strip()
+        base = (base_url or "").strip().rstrip("/")
+        if not base:
+            base = self.DEFAULT_BASE
+        # A bare host (no scheme) is still a valid endpoint the
+        # caller expects us to reach — normalize so httpx accepts it.
+        if "://" not in base:
+            base = "http://" + base
+        self._url = base + "/v1/messages"
+        self._client = httpx.AsyncClient(timeout=timeout)
+
+    async def complete(self, prompt: str, system: str = "", **kwargs) -> str:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+            "temperature": self.temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            payload["system"] = system
+        headers = {"anthropic-version": "2023-06-01",
+                   "content-type": "application/json"}
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+        resp = await self._client.post(self._url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        # Anthropic returns content as a list of blocks; the text
+        # block(s) carry the answer. Unknown shapes fall back to "".
+        blocks = data.get("content") or []
+        texts = [b.get("text", "") for b in blocks
+                 if isinstance(b, dict) and b.get("type") == "text"]
+        return "".join(texts)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
 
 def parse_json_lenient(text: str) -> dict:

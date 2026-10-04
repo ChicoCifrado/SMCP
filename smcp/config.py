@@ -71,6 +71,11 @@ class ModelConfig:
     temperature: float = 0.0
     timeout_s: float = 120.0
     use_harness: bool = False
+    # Protocolo del backend: "openai" (por defecto, /chat/completions)
+    # o "anthropic" (/v1/messages). Independiente de si el modelo
+    # esta local o en la nube — lo que importa es el protocolo
+    # que habla el endpoint. Vacio = openai (compatibilidad).
+    provider: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +85,7 @@ class ModelConfig:
             "temperature": self.temperature,
             "timeout_s": self.timeout_s,
             "use_harness": self.use_harness,
+            "provider": self.provider,
         }
 
 
@@ -92,6 +98,7 @@ def _env() -> dict[str, str]:
         "temperature": os.environ.get(f"{ENV_PREFIX}_TEMPERATURE", ""),
         "timeout": os.environ.get(f"{ENV_PREFIX}_TIMEOUT", ""),
         "harness": os.environ.get(f"{ENV_PREFIX}_HARNESS", ""),
+        "provider": os.environ.get(f"{ENV_PREFIX}_PROVIDER", ""),
     }
 
 
@@ -139,11 +146,15 @@ def load_config(path: str | Path | None = None,
         if e["harness"] != ""
         else bool(file_vals.get("use_harness", False))
     )
+    # Protocolo del backend: env > yaml > "" (= openai).
+    provider = (e["provider"].strip().lower()
+                if e["provider"] != ""
+                else str(file_vals.get("provider", "")).strip().lower())
 
     return ModelConfig(
         model=model, base_url=base_url, api_key=api_key,
         temperature=temperature, timeout_s=timeout,
-        use_harness=use_harness)
+        use_harness=use_harness, provider=provider)
 
 
 def _read_yaml(path: str | Path) -> dict[str, Any]:
@@ -184,8 +195,16 @@ def build_client(config: ModelConfig):
     at module load (``load_config`` is importable with nothing extra
     installed). When ``config.use_harness`` is set, this returns a
     :class:`~smcp.core.harness_client.HarnessLLMClient` (the DeepSeek Harness
-    agent runtime); otherwise the plain :class:`OpenAICompatibleClient`. Both
-    implement :class:`smcp.core.llm.LLMClient`, so the pipeline is unchanged.
+    agent runtime); otherwise the client is chosen by ``config.provider``:
+
+    * ``"anthropic"`` — :class:`~smcp.core.llm.AnthropicMessagesClient`
+      (``/v1/messages``, plain httpx);
+    * anything else (``"openai"``/empty) —
+      :class:`~smcp.core.llm.OpenAICompatibleClient` (``/chat/completions``).
+
+    Both implement :class:`smcp.core.llm.LLMClient`, so the pipeline is
+    unchanged and is indifferent to whether the model is local or in the
+    cloud — only the protocol the endpoint speaks matters.
     """
     if config.use_harness:
         from smcp.core.harness_client import HarnessLLMClient
@@ -195,6 +214,15 @@ def build_client(config: ModelConfig):
         if config.api_key:
             harness_kwargs["api_key"] = config.api_key
         return HarnessLLMClient(model=config.model, **harness_kwargs)
+    if (config.provider or "").strip().lower() == "anthropic":
+        from smcp.core.llm import AnthropicMessagesClient
+        return AnthropicMessagesClient(
+            model=config.model,
+            base_url=config.base_url or None,
+            api_key=config.api_key or None,
+            temperature=config.temperature,
+            timeout=config.timeout_s,
+        )
     from smcp.core.llm import OpenAICompatibleClient
     return OpenAICompatibleClient(
         model=config.model,

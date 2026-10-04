@@ -181,6 +181,7 @@ class ConfigUpdate(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout_s: float | None = Field(default=None, gt=0.0, le=3600.0)
     use_harness: bool | None = None
+    provider: str | None = Field(default=None, max_length=20)
     clear_api_key: bool = False
 
 
@@ -645,6 +646,7 @@ def _persist_config(updates: dict[str, Any],
         "temperature": d.get("temperature"),
         "timeout_s": d.get("timeout_s"),
         "use_harness": d.get("use_harness"),
+        "provider": d.get("provider", ""),
         "api_key_set": bool(key),
         "api_key_masked": _mask_key(key),
         "has_model": bool(d.get("model")),
@@ -666,6 +668,8 @@ def put_config(body: ConfigUpdate) -> dict[str, Any]:
         updates["timeout_s"] = body.timeout_s
     if body.use_harness is not None:
         updates["use_harness"] = body.use_harness
+    if body.provider is not None:
+        updates["provider"] = body.provider.strip().lower()
     if body.clear_api_key:
         updates["api_key"] = ""
     elif body.api_key is not None:
@@ -702,7 +706,8 @@ def _read_yaml_flat(path: Path) -> dict[str, Any]:
 
 
 async def _probe_endpoint(base_url: str, api_key: str,
-                          check_completion: bool = False) -> dict[str, Any]:
+                          check_completion: bool = False,
+                          provider: str = "") -> dict[str, Any]:
     try:
         import httpx  # type: ignore
     except ModuleNotFoundError:
@@ -714,8 +719,16 @@ async def _probe_endpoint(base_url: str, api_key: str,
     t0 = time.perf_counter()
     headers = {}
     key = (api_key or "").strip()
+    # Anthropic autentica con x-api-key (no Bearer); OpenAI con
+    # Authorization: Bearer. El probe sigue el protocolo del
+    # provider — la diferencia es el protocolo, no la ubicación.
+    anthropic = str(provider or "").strip().lower() == "anthropic"
     if key:
-        headers["Authorization"] = f"Bearer {key}"
+        if anthropic:
+            headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
+        else:
+            headers["Authorization"] = f"Bearer {key}"
     try:
         async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
             r = await client.get(f"{base}/models")
@@ -734,20 +747,36 @@ async def _probe_endpoint(base_url: str, api_key: str,
             }
             if check_completion:
                 t1 = time.perf_counter()
-                payload = {
-                    "model": model_id or "",
-                    "messages": [{"role": "user", "content": "Reply with exactly OK"}],
-                    "max_tokens": 16,
-                    "temperature": 0,
-                }
-                cr = await client.post(f"{base}/chat/completions", json=payload)
+                if anthropic:
+                    payload = {
+                        "model": model_id or "",
+                        "max_tokens": 16,
+                        "temperature": 0,
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                    }
+                    cr = await client.post(f"{base}/v1/messages", json=payload)
+                else:
+                    payload = {
+                        "model": model_id or "",
+                        "messages": [{"role": "user", "content": "Reply with exactly OK"}],
+                        "max_tokens": 16,
+                        "temperature": 0,
+                    }
+                    cr = await client.post(f"{base}/chat/completions", json=payload)
                 out["completion_ms"] = round((time.perf_counter() - t1) * 1000, 1)
                 out["completion_status"] = cr.status_code
                 if cr.status_code == 200:
                     body = cr.json()
-                    choice = (body.get("choices") or [{}])[0]
-                    msg = choice.get("message") or {}
-                    out["completion_content"] = (msg.get("content") or "")[:120]
+                    if anthropic:
+                        blocks = body.get("content") or []
+                        text = "".join(
+                            b.get("text", "") for b in blocks
+                            if isinstance(b, dict) and b.get("type") == "text")
+                        out["completion_content"] = text[:120]
+                    else:
+                        choice = (body.get("choices") or [{}])[0]
+                        msg = choice.get("message") or {}
+                        out["completion_content"] = (msg.get("content") or "")[:120]
                     out["completion_ok"] = True
                 else:
                     out["completion_ok"] = False
@@ -765,7 +794,7 @@ async def _probe_endpoint(base_url: str, api_key: str,
 async def post_probe(body: ProbeIn | None = None) -> dict[str, Any]:
     cfg = _load_cfg()
     body = body or ProbeIn()
-    result = await _probe_endpoint(cfg.base_url, cfg.api_key, body.check_completion)
+    result = await _probe_endpoint(cfg.base_url, cfg.api_key, body.check_completion, cfg.provider)
     return {
         "base_url": cfg.base_url,
         "model": cfg.model,
@@ -777,7 +806,7 @@ async def post_probe(body: ProbeIn | None = None) -> dict[str, Any]:
 @router.get("/health")
 async def get_health() -> dict[str, Any]:
     cfg = _load_cfg()
-    probe = await _probe_endpoint(cfg.base_url, cfg.api_key, False)
+    probe = await _probe_endpoint(cfg.base_url, cfg.api_key, False, cfg.provider)
     return {
         "api": True,
         "model": {
@@ -804,7 +833,7 @@ async def create_run(body: RunCreate) -> dict[str, Any]:
                 status_code=400,
                 detail="backend=real requires DELM_MODEL and DELM_BASE_URL",
             )
-        probe = await _probe_endpoint(cfg.base_url, cfg.api_key, False)
+        probe = await _probe_endpoint(cfg.base_url, cfg.api_key, False, cfg.provider)
         if not probe.get("reachable"):
             raise HTTPException(
                 status_code=400,
@@ -1002,7 +1031,7 @@ async def post_demo(name: str) -> dict[str, Any]:
             if not cfg.model or not cfg.base_url:
                 raise HTTPException(status_code=400,
                                     detail="real demo needs DELM_MODEL + DELM_BASE_URL")
-            probe = await _probe_endpoint(cfg.base_url, cfg.api_key, False)
+            probe = await _probe_endpoint(cfg.base_url, cfg.api_key, False, cfg.provider)
             if not probe.get("reachable"):
                 raise HTTPException(
                     status_code=400,

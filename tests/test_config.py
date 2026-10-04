@@ -184,4 +184,52 @@ def test_model_config_as_dict():
                       timeout_s=5.0)
     d = cfg.as_dict()
     assert d == {"model": "m", "base_url": "u", "api_key": "k",
-                 "temperature": 0.1, "timeout_s": 5.0, "use_harness": False}
+                 "temperature": 0.1, "timeout_s": 5.0, "use_harness": False,
+                 "provider": ""}
+
+
+def test_build_client_anthropic_provider():
+    """provider="anthropic" devuelve el cliente de /v1/messages."""
+    from smcp.core.llm import AnthropicMessagesClient, OpenAICompatibleClient
+    cfg = ModelConfig(model="claude-3-5-sonnet", base_url="http://x",
+                      provider="anthropic")
+    cli = build_client(cfg)
+    assert isinstance(cli, AnthropicMessagesClient)
+    # url apunta a /v1/messages
+    assert cli._url.endswith("/v1/messages")
+
+
+def test_build_client_default_openai():
+    """Sin provider (o provider="openai") -> OpenAICompatibleClient."""
+    from smcp.core.llm import AnthropicMessagesClient, OpenAICompatibleClient
+    for prov in ("", "openai", "OPENAI"):
+        cfg = ModelConfig(model="gpt-4", base_url="http://x", provider=prov)
+        cli = build_client(cfg)
+        assert isinstance(cli, OpenAICompatibleClient), prov
+        assert not isinstance(cli, AnthropicMessagesClient), prov
+
+
+def test_load_config_provider_from_env_and_yaml(monkeypatch):
+    """provider se lee de DELM_PROVIDER (env) y del yaml."""
+    import textwrap
+    from pathlib import Path
+    import tempfile
+    from smcp.config import _env
+    # env gana (limpio cualquier DELM_* previo)
+    for k in ("DELM_MODEL", "DELM_BASE_URL", "DELM_API_KEY",
+              "DELM_TEMPERATURE", "DELM_TIMEOUT", "DELM_HARNESS",
+              "DELM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("DELM_MODEL", "m")
+    monkeypatch.setenv("DELM_PROVIDER", "anthropic")
+    cfg = load_config(env=_env())
+    assert cfg.provider == "anthropic"
+    # yaml
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "cfg.yaml"
+        p.write_text(textwrap.dedent(
+            "model: m\nbase_url: u\nprovider: anthropic\n"))
+        monkeypatch.delenv("DELM_MODEL", raising=False)
+        monkeypatch.delenv("DELM_PROVIDER", raising=False)
+        cfg2 = load_config(path=p, env=_env())
+        assert cfg2.provider == "anthropic"
