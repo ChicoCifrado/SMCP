@@ -72,6 +72,27 @@ El WIF viene de `DELM_TOKEN_WIF` o `~/.delm/token.wif`.
 El tokenId es `<deployTxid>_0`. El indexer 1sat solo
 activa el token una vez la tx de deploy confirma en bloque.
 
+**Activacion del overlay (BRC-0062 / formato BEEF)**:
+el overlay 1sat requiere una tx de **funding** para
+dar de alta el token como operativo (enviar/listar/comprar).
+El funding se construye en **formato BEEF** (BRC-0062):
+- `toHexBEEF()` del `@bsv/sdk` serializa la tx + los
+  **merkle paths** (BUMP, BRC-74) de los inputs confirmados
+- los merkle paths se obtienen via `services.beef.getProof(txid)`
+  del `@1sat/wallet-node` (el servicio de headers de 1sat)
+- `services.bsv21.submitFunding(tokenId, beefBytes)` envia
+  el BEEF (octet-stream) al endpoint `/{tokenId}/fund`
+- el overlay responde con el estado: `balance`, `credits`,
+  `is_active`, `min_funding`
+
+El overlay exige `min_funding: 10000000` (10M sats ~=
+0.1 BSV) para `is_active: true`. Un funding parcial genera
+`credits` pero no activa el token. Los inputs confirmados
+(tienen merkle path en el servicio) son los unicos validos
+para el BEEF; los inputs de mempool fallan con
+`missing previous transaction` (el BEEF necesita la cadena
+ancestral completa).
+
 **API**: `POST /api/token/pay` — paga a un nodo en DELM
 (`{token_id, node_address, amount}`). Es la contrapartida
 en token de `/api/contract/claim` (bounty en sats).
