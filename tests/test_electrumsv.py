@@ -4,6 +4,13 @@ Se usa un transporte HTTP simulado (se inyecta en el cliente) para
 probar el contrato REST: rutas, métodos, payloads y el flujo
 trazable create -> broadcast -> log. No requiere ElectrumSV
 corriendo (la integración real se verifica contra el daemon).
+
+Contrato verificado contra ElectrumSV 1.4.0b1:
+* Rutas `/v1/{network}/dapp/...` (montadas por el módulo dapp `restapi`).
+* El `wallet_name` incluye la extensión `.sqlite`.
+* Los GET envían body `{}` (el dapp parsea el JSON del body).
+* `create_tx` exige `{"wallet_name", "account_id", "password",
+  "outputs": [{"script_pubkey": "<hex>", "value": <sats>}]}`.
 """
 from __future__ import annotations
 
@@ -90,16 +97,44 @@ def test_list_wallets_es_get(client):
     transport.responses[("GET", esv._url("/wallets"))] = {"wallets": []}
     result = esv.list_wallets()
     assert result == {"wallets": []}
-    method, url, _ = transport.calls[0]
+    method, url, body = transport.calls[0]
     assert method == "GET"
     assert url.endswith("/v1/main/dapp/wallets")
+    # Los GET envian body {} (el dapp parsea el JSON del body).
+    assert body == {}
 
 
-def test_utxos_con_filtro_confirmados(client):
+def test_load_wallet_pasa_password_y_nombre(client):
+    """load_wallet: POST /wallets/{name}/load_wallet con body."""
     esv, transport = client
-    transport.responses[("GET", esv._url("/wallets/w/1/utxos"))] = {
-        "utxos": []}
-    result = esv.utxos("w", "1", confirmed_only=True)
+    path = esv._url("/wallets/w.sqlite/load_wallet")
+    transport.responses[("POST", path)] = {
+        "wallet_id": 1, "parent_wallet": "w.sqlite", "accounts": {}}
+    result = esv.load_wallet("w.sqlite", password="test")
+    assert result["parent_wallet"] == "w.sqlite"
+    method, url, body = transport.calls[0]
+    assert method == "POST"
+    assert url.endswith("/v1/main/dapp/wallets/w.sqlite/load_wallet")
+    assert body == {"wallet_name": "w.sqlite", "password": "test"}
+
+
+def test_balance_get_con_body_vacio(client):
+    esv, transport = client
+    path = esv._url("/wallets/w.sqlite/1/utxos/balance")
+    transport.responses[("GET", path)] = {
+        "confirmed_balance": 0, "unconfirmed_balance": 0}
+    result = esv.balance("w.sqlite", "1")
+    assert result["confirmed_balance"] == 0
+    method, url, body = transport.calls[0]
+    assert method == "GET"
+    assert body == {}
+
+
+def test_utxos_con_parametros(client):
+    esv, transport = client
+    path = esv._url("/wallets/w.sqlite/1/utxos")
+    transport.responses[("GET", path)] = {"utxos": []}
+    result = esv.utxos("w.sqlite", "1", confirmed_only=True)
     assert result == {"utxos": []}
     method, url, body = transport.calls[0]
     assert method == "GET"
@@ -107,51 +142,58 @@ def test_utxos_con_filtro_confirmados(client):
 
 
 def test_create_tx_pasa_script_pubkey_hex(client):
-    """La pieza clave: ElectrumSV acepta script_pubkey en hex
-    (para inscripciones BSV-21 / OP_RETURN)."""
+    """La pieza clave: create_tx exige script_pubkey en hex
+    (para inscripciones BSV-21 / OP_RETURN) y pasa wallet_name
+    y account_id en el body."""
     esv, transport = client
-    path = esv._url("/wallets/w/1/txs/create")
+    path = esv._url("/wallets/w.sqlite/1/txs/create")
     transport.responses[("POST", path)] = {"txid": "abc", "rawtx": "0100"}
-    out = esv.create_tx("w", "1",
+    out = esv.create_tx("w.sqlite", "1",
                         [{"script_pubkey": "006a0b68656c6c6f", "value": 0}],
                         password="test")
     assert out == {"txid": "abc", "rawtx": "0100"}
-    _, _, body = transport.calls[0]
+    _, url, body = transport.calls[0]
+    assert url.endswith("/v1/main/dapp/wallets/w.sqlite/1/txs/create")
+    assert body["wallet_name"] == "w.sqlite"
+    assert body["account_id"] == "1"
+    assert body["password"] == "test"
     assert body["outputs"] == [
         {"script_pubkey": "006a0b68656c6c6f", "value": 0}]
-    assert body["password"] == "test"
-
-
-def test_create_tx_pasa_address(client):
-    esv, transport = client
-    path = esv._url("/wallets/w/1/txs/create")
-    transport.responses[("POST", path)] = {"txid": "abc", "rawtx": "0100"}
-    esv.create_tx("w", "1", [{"address": "1Eqk", "value": 1000}])
-    _, _, body = transport.calls[0]
-    assert body["outputs"] == [{"address": "1Eqk", "value": 1000}]
 
 
 def test_broadcast_pasa_rawtx(client):
     esv, transport = client
-    path = esv._url("/wallets/w/1/txs/broadcast")
+    path = esv._url("/wallets/w.sqlite/1/txs/broadcast")
     transport.responses[("POST", path)] = {"txid": "abc"}
-    result = esv.broadcast("w", "1", "0100...")
+    result = esv.broadcast("w.sqlite", "1", "0100...")
     assert result == {"txid": "abc"}
     _, _, body = transport.calls[0]
     assert body == {"rawtx": "0100..."}
 
 
+def test_fetch_transaction_pasa_txid(client):
+    esv, transport = client
+    path = esv._url("/wallets/w.sqlite/1/txs/fetch")
+    transport.responses[("POST", path)] = {"txid": "tx1"}
+    result = esv.fetch_transaction("w.sqlite", "1", "tx1")
+    assert result == {"txid": "tx1"}
+    _, _, body = transport.calls[0]
+    assert body == {"txid": "tx1"}
+
+
 def test_send_tracked_flujo_completo_y_log(client, tmp_path):
     """create -> broadcast -> log append-only (trazabilidad)."""
     esv, transport = client
-    create_path = esv._url("/wallets/w/1/txs/create")
-    bc_path = esv._url("/wallets/w/1/txs/broadcast")
+    create_path = esv._url("/wallets/w.sqlite/1/txs/create")
+    bc_path = esv._url("/wallets/w.sqlite/1/txs/broadcast")
     transport.responses[("POST", create_path)] = {
         "txid": "tx123", "rawtx": "0100"}
     transport.responses[("POST", bc_path)] = {"txid": "tx123"}
     log = tmp_path / "txs.jsonl"
-    out = esv.send_tracked("w", "1", [{"address": "1Eqk", "value": 500}],
-                           purpose="pago nodo bob", tx_log=log)
+    out = esv.send_tracked("w.sqlite", "1",
+                           [{"script_pubkey": "76a91488ac", "value": 500}],
+                           purpose="pago nodo bob", password="test",
+                           tx_log=log)
     assert out["txid"] == "tx123"
     assert out["purpose"] == "pago nodo bob"
     assert out["logged"] is True
@@ -164,24 +206,26 @@ def test_send_tracked_flujo_completo_y_log(client, tmp_path):
     entry = json.loads(lines[0])
     assert entry["txid"] == "tx123"
     assert entry["purpose"] == "pago nodo bob"
-    assert entry["wallet"] == "w"
+    assert entry["wallet"] == "w.sqlite"
     assert entry["account"] == "1"
 
 
 def test_send_tracked_log_es_append_only(client, tmp_path):
     esv, transport = client
-    create_path = esv._url("/wallets/w/1/txs/create")
-    bc_path = esv._url("/wallets/w/1/txs/broadcast")
+    create_path = esv._url("/wallets/w.sqlite/1/txs/create")
+    bc_path = esv._url("/wallets/w.sqlite/1/txs/broadcast")
     transport.responses[("POST", create_path)] = {
         "txid": "t1", "rawtx": "01"}
     transport.responses[("POST", bc_path)] = {"txid": "t1"}
     log = tmp_path / "txs.jsonl"
-    esv.send_tracked("w", "1", [{"address": "1", "value": 1}],
+    esv.send_tracked("w.sqlite", "1",
+                     [{"script_pubkey": "76a91488ac", "value": 1}],
                      purpose="a", tx_log=log)
     transport.responses[("POST", create_path)] = {
         "txid": "t2", "rawtx": "02"}
     transport.responses[("POST", bc_path)] = {"txid": "t2"}
-    esv.send_tracked("w", "1", [{"address": "1", "value": 1}],
+    esv.send_tracked("w.sqlite", "1",
+                     [{"script_pubkey": "76a91488ac", "value": 1}],
                      purpose="b", tx_log=log)
     lines = log.read_text().strip().splitlines()
     assert len(lines) == 2  # append, no reescritura

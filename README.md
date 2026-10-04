@@ -114,17 +114,25 @@ Dos piezas, cada una con su rol — no se sustituyen:
 **ElectrumSV headless** (`smcp/core/electrumsv.py`) —
 la wallet SPV real. El daemon firma **localmente** con
 las claves del fichero wallet (sqlite, cifrado con
-password local) y valida contra ElectrumX sin entregarle
-nada secreto. A diferencia de HandCash (custodial), las
+password local) y valida contra el servidor SPV
+(reference_server/ElectrumX) sin entregarle nada
+secreto. A diferencia de HandCash (custodial), las
 claves nunca salen del daemon.
 - Cliente REST del daemon: `http://127.0.0.1:9999/v1/{network}/dapp`
+  — las rutas `/dapp/...` las monta el módulo dapp
+  `restapi`; el daemon debe arrancar con `-dapp restapi`
+  (como hace `electrumsv-sdk`), si no dan 404.
+- El `wallet_name` incluye la extensión `.sqlite`; los
+  GET envían body `{}` (el dapp parsea el JSON del body).
 - Lecturas (sin clave): `wallets`, `load_wallet`, `account`,
   `utxos`, `balance`, `history`, `fetch_transaction`
 - Escrituras (firma local): `create_tx` (construir SIN emitir),
-  `broadcast` (rawtx), `create_and_broadcast`
-- **`create_tx` acepta `script_pubkey` en hex** — outputs
-  con scripts arbitrarios (OP_RETURN, inscripciones). Clave
-  para construir inscripciones BSV-21 a mano si hiciera falta.
+  `broadcast` (rawtx), `create_and_broadcast`, `split_utxos`
+- **`create_tx` exige `script_pubkey` en hex** — outputs
+  con scripts arbitrarios (OP_RETURN, inscripciones). El
+  body es `{"wallet_name", "account_id", "password",
+  "outputs": [{"script_pubkey": "<hex>", "value": <sats>}]}`.
+  No acepta `{"address": ...}`.
 - **Trazabilidad**: `send_tracked()` = create -> inspeccionar
   -> broadcast -> log append-only (`~/.smcp/electrumsv.txs.jsonl`).
   Toda tx queda anclada por txid on-chain y registrada local.
@@ -133,8 +141,12 @@ claves nunca salen del daemon.
   ElectrumSV via "Importing from text" (crea una cuenta de
   UNA dirección; no es un seed HD).
 - El daemon se arranca con `electrumsv-sdk` (ver skill
-  `electrumsv-wallet`): `electrumsv-sdk start --background electrumsv`
-  (requiere `node`, `simple_indexer`, `reference_server`).
+  `electrumsv-wallet`): `electrumsv-sdk start --background
+  electrumsv` (requiere `node`, `simple_indexer`,
+  `reference_server`, `electrumx`). Contrato verificado
+  contra ElectrumSV 1.4.0b1; el dapp de ejemplo tiene dos
+  bugs a parchear (`ARGTYPES`, `get_fee_estimator`) — ver
+  `references/daemon-rest.md` del skill.
 
 **HandCash** (ya probado) — pagos con `note` (<=25 chars,
 metadata off-chain) via `Connect.pay`. Custodial: las claves
@@ -1098,7 +1110,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1224 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1064 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
