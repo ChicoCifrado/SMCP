@@ -42,3 +42,5 @@ config/mesh_exchange.json
 config/mesh_identity.json
 node_modules/
 bsv21-bridge/.delm-wallet.db
+bsv21-bridge/.delm-wallet.db-shm
+bsv21-bridge/.delm-wallet.db-wal
