@@ -72,6 +72,16 @@ El WIF viene de `DELM_TOKEN_WIF` o `~/.delm/token.wif`.
 El tokenId es `<deployTxid>_0`. El indexer 1sat solo
 activa el token una vez la tx de deploy confirma en bloque.
 
+**TokenId canonico**: se despliego 3 veces por error
+(3 tokenIds con `sym: DELM`). El canónico es
+`8d7f4834..._0` (el primero, con funding parcial en
+el overlay). Los otros dos (`5c6c7efb..._0`,
+`491f8442..._0`) quedan como **tokens muertos**: no
+se gastan ni se listan. El supply efectivo de DELM
+es **1.000.000** (el del canónico). El código usa
+`TOKEN_ID_CANONICO` por defecto (`token_bsv21.py`)
+y `DEFAULT_TOKEN_ID` (`bsv21-bridge/bsv21.mjs`).
+
 **Activacion del overlay (BRC-0062 / formato BEEF)**:
 el overlay 1sat requiere una tx de **funding** para
 dar de alta el token como operativo (enviar/listar/comprar).

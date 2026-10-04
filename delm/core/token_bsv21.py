@@ -49,6 +49,12 @@ El token DELM se despliega con ``deploy+mint`` (supply
 fijo 1.000.000, 0 decimales). El tokenId es
 ``<deployTxid>_0``. El indexer 1sat solo activa el
 token una vez la tx de deploy confirma en bloque.
+
+Se desplego 3 veces por error; el tokenId canonico
+es ``TOKEN_ID_CANONICO`` (deploy original ``8d7f4834``).
+Los otros dos despliegues quedan como tokens muertos:
+no se gastan ni se listan. El supply efectivo de DELM
+es 1.000.000 (el del canónico).
 """
 from __future__ import annotations
 
@@ -65,6 +71,16 @@ TOKEN_SYMBOL = "DELM"
 TOKEN_SUPPLY = "1000000"
 #: Decimales.
 TOKEN_DECIMALS = 0
+#: tokenId canonico del DELM (deploy original, confirmado
+#: on-chain, con funding parcial en el overlay 1sat).
+#: Los otros dos despliegues (5c6c7efb... y 491f8442...)
+#: quedan como tokens muertos: no se gastan ni se listan.
+TOKEN_ID_CANONICO = (
+    "8d7f483498d83358e8c0b61b55334b1650d50ffce"
+    "1539a482bc245dfc65c4410_0"
+)
+#: Direccion que sostiene el 90% del supply (1Eqk).
+TOKEN_HOLDER_MAIN = "1EqkBCLhykcHkr7o9AnHwgrgzAsAbGF3Dz"
 
 #: Directorio del bridge Node (junto a este paquete).
 _BRIDGE_DIR = os.environ.get(

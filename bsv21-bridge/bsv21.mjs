@@ -19,6 +19,9 @@ import { deployBsv21Mint, sendBsv21, getBsv21Balances, listBsv21, buyBsv21 } fro
 import { PrivateKey } from '@bsv/sdk';
 
 const WIF = process.env.DELM_TOKEN_WIF || '';
+// tokenId canonico del DELM (deploy original 8d7f4834...).
+// Los otros dos despliegues quedan como tokens muertos.
+const DEFAULT_TOKEN_ID = '8d7f483498d83358e8c0b61b55334b1650d50ffce1539a482bc245dfc65c4410_0';
 if (!WIF) {
   console.log(JSON.stringify({ ok: false, error: 'DELM_TOKEN_WIF no definido' }));
   process.exit(0);
@@ -79,7 +82,7 @@ try {
       destination: r.destination,
     }));
     const result = await sendBsv21.execute(ctx, {
-      tokenId: req.tokenId,
+      tokenId: req.tokenId || DEFAULT_TOKEN_ID,
       recipients,
     });
     console.log(JSON.stringify({
@@ -108,7 +111,7 @@ try {
     }));
   } else if (action === 'buy') {
     const result = await buyBsv21.execute(ctx, {
-      tokenId: req.tokenId,
+      tokenId: req.tokenId || DEFAULT_TOKEN_ID,
       outpoint: req.outpoint,
       amount: String(req.amount),
     });

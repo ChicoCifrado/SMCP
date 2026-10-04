@@ -79,3 +79,17 @@
 - Bridge: `@1sat/actions` integrado, BRC-0062/BEEF funcionando
 - Tests: 1201 (15 de token)
 - Commits: `9df24dd` (contract), `db143a0` (token capa F)
+
+## Decision de supply (2026-10-04)
+
+- **TokenId canonico**: `8d7f4834..._0` (deploy original, con funding
+  parcial en el overlay). Supply efectivo DELM = **1.000.000**.
+- Se desplego 3 veces por error; los otros dos (`5c6c7efb..._0`,
+  `491f8442..._0`) quedan como **tokens muertos** (no se gastan
+  ni se listan). No hay transaccion nueva: es una convencion de codigo
+  (`TOKEN_ID_CANONICO` en `token_bsv21.py`, `DEFAULT_TOKEN_ID` en
+  `bsv21-bridge/bsv21.mjs`).
+- Holders del canonico: 900k en `1Eqk...` (wallet del proyecto)
+  + 100k en `1MNF...` (por la transferencia `6b8de05f`).
+- Para reducir el supply en cadena (burn) habria que transferir a una
+  direccion sin clave; no reduce el `amt` del deploy (inmutable).
