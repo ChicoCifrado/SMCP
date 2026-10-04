@@ -115,6 +115,46 @@ El bridge Node (`bsv21-bridge/`) usa:
 `@1sat/actions`, `@1sat/wallet-node`, `@1sat/templates`,
 `@bsv/sdk`. Requiere Node >= 18.
 
+## Libro de inferencias (identificar y confirmar)
+
+`delm/core/registro.py` — la pieza que une el flujo de
+inferencia (`intercambio`) con el anclaje (`inscripcion`)
+y el token (capa F).
+
+Cada **completion exitosa** (status 200 de la inferencia)
+produce un `InferenceRecord`:
+- `txid` — la prueba en cadena (el ordinal viaja a Alice)
+- `completed_at` — timestamp de la completion (reloj del nodo;
+  la cadena da el *bloque*, el reloj da el *momento*)
+- `mesh_id`, `server_pubkey`, `requester_pubkey` — identidades
+- `pay_method` — `bsv`, `delm` o `both` (la red de incentivos:
+  el nodo elige cobrar en sats, en DELM, o en ambos)
+- `satoshis` y `delm_amount` — lo cobrado en cada moneda
+
+El `InferenceServer` (capa de intercambio) registra la
+inferencia en `settle()`: tras verificar, emitir por ARC y
+contar, el libro guarda *cual* tx, *cuando* ocurrio y *como*
+se cobro. El nodo puede cobrar en BSV (el flujo v3, 100 sats)
+o en DELM (capa F, `pay_method="delm"`).
+
+**Identificar una inferencia específica** (tres claves):
+1. `txid` — la unica prueba en cadena
+2. `inference_id` — `sha256(txid:mesh:server)` — id estable
+3. `(mesh, server, ventana)` — consulta por rango temporal
+
+**Que NO hace** (por decision, como `anchor.py`): no hashea
+el contenido de la inferencia. Se prueba que ocurrio, no que
+decia. El prompt y la respuesta viajan fuera de cadena.
+
+**API** (consultable):
+- `GET /api/inferences` — el libro (filtra por mesh, servidor, ventana)
+- `GET /api/inferences/{txid}` — identifica una inferencia y confirma que ocurrió
+- `GET /api/inferences/totals` — totales (inferencias, sats, DELM)
+
+Cubierto por `tests/test_registro.py` (9) y dos tests de
+union en `tests/test_intercambio.py` (completion→timestamp→
+registro→cobro, en BSV y en DELM).
+
 ## Release 0.4.0 — La malla en vivo
 
 La malla deja de ser una biblioteca de pruebas y se convierte

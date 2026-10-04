@@ -60,6 +60,11 @@ from delm.core.inscripcion import (
 )
 from delm.core.llm import LLMClient
 from delm.core.membership import ProtocolError
+from delm.core.registro import (
+    InferenceRegistry,
+    PAY_BSV,
+    PAY_DELM,
+)
 from delm.core.tiers import PER_INFERENCE_SATOSHIS
 from delm.core.txbuild import Transaction, TxIn
 
@@ -144,7 +149,10 @@ class InferenceServer:
                  llm: LLMClient, arc: Broadcaster,
                  ledger: ContributionLedger | None = None,
                  peer_id: str | None = None,
-                 fee_sats: int = 0) -> None:
+                 fee_sats: int = 0,
+                 registry: InferenceRegistry | None = None,
+                 pay_method: str = PAY_BSV,
+                 delm_token_id: str = "") -> None:
         # La fee sale de los 99 sats del servidor: con 99 o
         # más, el pago no cierra (le quedaría 0 o menos).
         tope = PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS - 1
@@ -155,12 +163,21 @@ class InferenceServer:
                 f"{PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS} "
                 "sats del servidor)"
             )
+        if pay_method not in (PAY_BSV, PAY_DELM):
+            raise ProtocolError(
+                f"metodo de pago {pay_method!r} (bsv o delm)"
+            )
         self._key = server_key
         self._llm = llm
         self._arc = arc
         self._ledger = ledger
         self._peer_id = peer_id
         self._fee_sats = fee_sats
+        # El libro de inferencias: registra la completion
+        # (timestamp) y el cobro (sats y/o DELM).
+        self._registry = registry
+        self._pay_method = pay_method
+        self._delm_token_id = delm_token_id
 
     async def serve(self, req: InferenceRequest) -> tuple[str, Transaction]:
         """Ejecuta la inferencia y construye los ``PaymentTerms``.
@@ -226,6 +243,33 @@ class InferenceServer:
                 raise ProtocolError(
                     f"el historial no cuenta la inferencia: {why2}"
                 )
+        # Registrar la completion (timestamp) y el cobro.
+        # El txid ya es la prueba en cadena; aqui se guarda
+        # *cual* es esa tx, *cuando* ocurrio y *como* se
+        # cobro (sats y/o DELM), para consulta off-chain.
+        if self._registry is not None:
+            # En modo DELM el servidor no cobra los sats del
+            # output (el pago es el token); en modo BSV cobra
+            # los sats de la tx (99 menos fee).
+            satoshis = (
+                receipt.server_satoshis
+                if self._pay_method == PAY_BSV
+                else 0
+            )
+            self._registry.record(
+                txid=receipt.txid,
+                mesh_id=req.mesh_id,
+                server_pubkey=self._key.public_key.hex(),
+                requester_pubkey=req.requester_pubkey.hex(),
+                pay_method=self._pay_method,
+                satoshis=satoshis,
+                delm_amount=(
+                    receipt.server_satoshis
+                    if self._pay_method == PAY_DELM
+                    else 0
+                ),
+                delm_token_id=self._delm_token_id,
+            )
         return PaymentAck(receipt=receipt, status=status)
 
 

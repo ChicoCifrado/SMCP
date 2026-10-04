@@ -40,6 +40,11 @@ from delm.core.intercambio import (
 )
 from delm.core.llm import FakeLLMClient
 from delm.core.membership import ProtocolError
+from delm.core.registro import (
+    InferenceRegistry,
+    PAY_BSV,
+    PAY_DELM,
+)
 from delm.core.placement import ModelSpec, plan_placement
 from delm.core.provenance import KeyPair
 from delm.core.reputation import board_from_counters
@@ -255,5 +260,83 @@ def test_the_fee_comes_out_of_the_server_share():
                 llm=FakeLLMClient(), arc=_FakeArc(),
                 fee_sats=PER_INFERENCE_SATOSHIS,
             )
+
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------------------
+# Union de piezas: completion (status 200) -> timestamp -> registro -> cobro
+# ---------------------------------------------------------------------------
+def test_completion_registered_with_timestamp_and_payment():
+    """La inferencia completada (status 200) queda en el libro.
+
+    Une el flujo de intercambio (Alice pide, Bob sirve y cobra)
+    con el libro de inferencias: la completion produce un
+    registro con txid, timestamp, identidades y el cobro.
+    """
+    async def go():
+        led = ContributionLedger(MESH)
+        _admit(led, "bob", 8.0)
+        alice = Secp256k1KeyPair.new("alice")
+        bob = Secp256k1KeyPair.new("bob-members")
+        arc = _FakeArc()
+        registry = InferenceRegistry()
+        server = InferenceServer(
+            server_key=bob, llm=FakeLLMClient(), arc=arc,
+            ledger=led, peer_id="bob", registry=registry,
+            pay_method=PAY_BSV,
+        )
+        req = _request(alice)
+        _, tx = await server.serve(req)
+        sign_payment(tx, requester_key=alice, mesh_id=MESH)
+        await server.settle(tx, req)
+
+        # El libro tiene la inferencia, con el txid de la tx.
+        assert len(registry.records) == 1
+        rec = registry.by_txid(tx.txid())
+        assert rec is not None
+        assert rec.completed_at > 0  # timestamp de la completion
+        assert rec.mesh_id == MESH
+        assert rec.server_pubkey == bob.public_key.hex()
+        assert rec.requester_pubkey == alice.public_key.hex()
+        assert rec.pay_method == PAY_BSV
+        assert rec.satoshis == PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
+        assert rec.delm_amount == 0
+        # el inference_id es consultable
+        assert registry.by_inference_id(rec.inference_id) is rec
+        # el historial del servidor
+        assert len(registry.by_server(bob.public_key.hex())) == 1
+
+    asyncio.run(go())
+
+
+def test_completion_paid_in_delm():
+    """El nodo puede cobrar la inferencia en DELM (capa F).
+
+    En modo DELM el pago es el token: el servidor no cobra
+    los sats del output, sino unidades DELM. El libro lo
+    registra como metodo de pago `delm`.
+    """
+    async def go():
+        alice = Secp256k1KeyPair.new("alice")
+        bob = Secp256k1KeyPair.new("bob-delm")
+        registry = InferenceRegistry()
+        server = InferenceServer(
+            server_key=bob, llm=FakeLLMClient(), arc=_FakeArc(),
+            registry=registry,
+            pay_method=PAY_DELM,
+            delm_token_id="8d7f4834..._0",
+        )
+        req = _request(alice)
+        _, tx = await server.serve(req)
+        sign_payment(tx, requester_key=alice, mesh_id=MESH)
+        await server.settle(tx, req)
+
+        rec = registry.by_txid(tx.txid())
+        assert rec is not None
+        assert rec.pay_method == PAY_DELM
+        assert rec.satoshis == 0  # no cobra sats
+        assert rec.delm_amount == PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
+        assert rec.delm_token_id == "8d7f4834..._0"
 
     asyncio.run(go())

@@ -7,6 +7,13 @@
 
 ## 1. Fase de testing
 
+- [x] **Libro de inferencias** (`delm/core/registro.py`)
+  - [x] `InferenceRecord`: txid + timestamp + identidades + cobro (sats/DELM)
+  - [x] `InferenceRegistry`: append-only, persistente (jsonl), consultable
+  - [x] Union en `InferenceServer.settle()`: completion (status 200) → timestamp → registro
+  - [x] Cobro en BSV (`pay_method="bsv"`) y en DELM (`pay_method="delm"`)
+  - [x] API: `GET /api/inferences`, `/api/inferences/{txid}`, `/api/inferences/totals`
+  - [x] Tests: 9 (test_registro) + 2 (union en test_intercambio)
 - [ ] **Tests contra modelo real (no mockeado)**
   - [ ] alice/bob dual-node con Qwen3.8-27B en VRAM (14-15 GB)
   - [ ] verificacion extremo a extremo de las capas A-E
@@ -16,6 +23,7 @@
   - [ ] `sendBsv21` real a otro nodo
   - [ ] `listBsv21` + `buyBsv21` en 1sat.market
   - [ ] flujo `/api/token/pay` con DELM real (no mock)
+  - [ ] flujo `/api/inferences` con cobro DELM real (capa F conectada)
 - [ ] **Tests de carga / estabilidad**
   - [ ] malla con N nodos (N>=3) sobre red real (QUIC)
   - [ ] reconexion, particiones, revivir nodos caidos
@@ -75,10 +83,28 @@
 - Core: malla, contexto verificado, cola, admission, gates — listo
 - Capa E: smart contract BSV (bounty P2PKH) — listo
 - Capa F: token BSV-21 DELM — desplegado on-chain (3 despliegues confirmados)
+- **Libro de inferencias (registro.py): completion→timestamp→registro→cobro (BSV/DELM) — listo**
 - Overlay 1sat: token indexado, `is_active: false` (falta funding 10M sats via BEEF)
 - Bridge: `@1sat/actions` integrado, BRC-0062/BEEF funcionando
-- Tests: 1201 (15 de token)
-- Commits: `9df24dd` (contract), `db143a0` (token capa F)
+- Tests: 1201 + 11 nuevos = **1212** (9 test_registro + 2 union en test_intercambio)
+- API: 42 rutas (3 nuevas: /api/inferences, /api/inferences/{txid}, /api/inferences/totals)
+- Commits: `9df24dd` (contract), `db143a0` (token capa F), `97e3209` (tokenId canonico)
+
+## Red de incentivos (BSV + DELM)
+
+El nodo (Bob) puede cobrar la inferencia en:
+- **BSV (sats)** — el flujo v3: 100 sats (1 ordinal a Alice + 99 a Bob)
+- **DELM** — capa F: `pay_method="delm"`, cobra unidades DELM
+- **both** — las dos monedas
+
+Alice paga a Bob con BSV (o DELM) para hacer peticiones de inferencia.
+Esto crea una red de incentivos que atrae nuevos nodos:
+- **Proveedores**: comparten GPU, sirven inferencias, ganan BSV/DELM
+- **Consumidores**: usan la red (tier `metered`), pagan por inferencia
+
+El libro de inferencias (`registro.py`) es el registro de la red:
+quién sirvió qué, cuándo, y cómo cobró. La prueba en cadena es
+el txid (el ordinal viaja a Alice); el libro es el índice off-chain.
 
 ## Decision de supply (2026-10-04)
 

@@ -32,6 +32,10 @@ from delm.core.injection_hardened import detect_injection_hardened
 from delm.core.llm import FakeLLMClient, LLMClient
 from delm.core.metrics import TaskMetrics
 from delm.core.placement import DEFAULT_MESH_ENDPOINT
+from delm.core.registro import (
+    DEFAULT_REGISTRY_PATH,
+    InferenceRegistry,
+)
 from delm.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
 from delm.core.run_store import RunStore, StoredRun
 from delm.core.task_queue import Task, TaskState
@@ -1891,3 +1895,70 @@ def post_token_pay(body: TokenPay) -> dict[str, Any]:
         "error": res.error,
         "reason": "DELM enviado al nodo" if res.ok else "error del bridge",
     }
+
+
+# ------------------------------------------------------------------ libro de inferencias
+def _inference_registry() -> InferenceRegistry:
+    """El libro de inferencias del nodo (persistente)."""
+    return InferenceRegistry(path=DEFAULT_REGISTRY_PATH)
+
+
+@router.get("/inferences")
+def list_inference_registry(
+    mesh_id: str = Query(default="", max_length=80),
+    server: str = Query(default="", max_length=66),
+    start: float = Query(default=0.0),
+    end: float = Query(default=0.0),
+) -> dict[str, Any]:
+    """El libro de inferencias del nodo.
+
+    Cada completion (status 200) produce un registro con
+    txid (la prueba en cadena), timestamp (cuando ocurrio),
+    identidades (mesh, servidor, solicitante) y el cobro
+    (sats y/o DELM). Filtra por mesh, servidor y ventana.
+    """
+    reg = _inference_registry()
+    if mesh_id:
+        recs = reg.by_mesh(mesh_id)
+    elif server:
+        recs = reg.by_server(server)
+    elif start or end:
+        recs = reg.in_window(start=start, end=end or time.time())
+    else:
+        recs = reg.records
+    return {
+        "ok": True,
+        "records": [r.to_dict() for r in recs],
+        "totals": reg.totals(),
+        "path": DEFAULT_REGISTRY_PATH,
+    }
+
+
+@router.get("/inferences/{txid}")
+def get_inference(txid: str) -> dict[str, Any]:
+    """Identifica una inferencia especifica y confirma que ocurrio.
+
+    Busca por txid (la prueba en cadena) o por inference_id
+    (``sha256(txid:mesh:server)``). Devuelve el registro con
+    su timestamp, identidades y cobro — la prueba de que la
+    inferencia ocurrio es el txid en un bloque (verificable
+    offline con ``verify_inscription``).
+    """
+    reg = _inference_registry()
+    rec = reg.by_txid(txid) or reg.by_inference_id(txid)
+    if rec is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"inferencia no registrada (txid o inference_id: {txid})",
+        )
+    return {"ok": True, "record": rec.to_dict(),
+            "inference_id": rec.inference_id,
+            "path": DEFAULT_REGISTRY_PATH}
+
+
+@router.get("/inferences/totals")
+def get_inference_totals() -> dict[str, Any]:
+    """Totales del libro: inferencias, sats y DELM cobrados."""
+    reg = _inference_registry()
+    return {"ok": True, "totals": reg.totals(),
+            "path": DEFAULT_REGISTRY_PATH}
