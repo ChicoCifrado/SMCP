@@ -14,9 +14,9 @@ con ningún RPC de nodo: ARC es la vía.
 del flujo): pedido -> inferencia -> `PaymentTerms` -> `Payment`
 firmada -> emisión por ARC -> `PaymentACK` -> y solo entonces
 `record_inference` y el ranking. Y el **join v3** (gratis,
-off-chain) está cableado en el roster: `delm.core.join` es la
+off-chain) está cableado en el roster: `smcp.core.join` es la
 secuencia de emparejamiento (intercambio de claves, avales
-mutuos, reconciliación) sobre `delm.core.roster` — y por eso
+mutuos, reconciliación) sobre `smcp.core.roster` — y por eso
 `JOIN_SATOSHIS` pasó de 1 a 0 (ver `tiers.py`).
 v2 (`delm/core/anchor.py`, `membership.py`, `tiers.py`) sigue en verde y
 sin tocar: v3 es un formato nuevo que convive con v2 — no lo reemplaza
@@ -143,7 +143,7 @@ este mesh, para este solicitante, servida por este nodo* — no qué dijo.
    la firma contra la identidad de Bob, y los outputs (¿1 sat a mí con
    el envelope? ¿99−fee a Bob? ¿el input es mío?). Firma su input
    (`Payment`) y devuelve la tx.
-4. **Bob**: emite por ARC (`delm.core.arc`: `POST /v1/tx`,
+4. **Bob**: emite por ARC (`smcp.core.arc`: `POST /v1/tx`,
    `X-WaitFor` hasta `ACCEPTED_BY_NETWORK` y sondeo
    `GET /v1/tx/{txid}` después), espera confirmación, envía a Alice
    el **txid** y el certificado (`path`, `merkle_root`, `height` —
@@ -242,7 +242,7 @@ frenado por coste de entrada.
   `tests/test_join.py` (el join y el intercambio componen el flujo
   v3: la misma identidad por `peer_id`).
 * **`membership.py`**: sin cambios (v2). El join v3 es el roster
-  (`delm.core.roster`): intercambio de claves firmado entre pares.
+  (`smcp.core.roster`): intercambio de claves firmado entre pares.
 * **`anchor.py`**: sin cambios (v2). v3 es formato nuevo con su
   propia versión (`OP_4 = 3`).
 * **`x402.py`**: alineado con BRC-120 — el verificador del role

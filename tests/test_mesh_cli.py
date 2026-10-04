@@ -28,8 +28,8 @@ from pathlib import Path
 
 import pytest
 
-from delm.cli import DEFAULT_MESH_ID, main
-from delm.core.contrib import ContributionLedger
+from smcp.cli import DEFAULT_MESH_ID, main
+from smcp.core.contrib import ContributionLedger
 
 MESH = "malla-test"
 
@@ -53,7 +53,7 @@ def contribute(state: Path, ident: Path, peer: str, vram: float, *,
 
 # --------------------------------------------------------------- el parser
 def test_mesh_is_a_subcommand_with_its_actions(capsys):
-    from delm.cli import build_parser
+    from smcp.cli import build_parser
 
     help_txt = build_parser().format_help()
     assert "mesh" in help_txt
@@ -247,7 +247,7 @@ def test_plan_json_is_parseable_and_carries_the_stages(state, tmp_path, capsys):
 def test_plan_without_llmfit_never_invocates_it(state, tmp_path, capsys,
                                                 monkeypatch):
     """`--memory-gb` es la ruta que permite probar (y operar) sin llmfit."""
-    import delm.core.llmfit as llmfit_mod
+    import smcp.core.llmfit as llmfit_mod
 
     def boom(*a, **k):  # pragma: no cover - debe fallar el test si se llama
         raise AssertionError("llmfit no debía invocarse con --memory-gb")
@@ -263,8 +263,8 @@ def test_plan_without_llmfit_never_invocates_it(state, tmp_path, capsys,
 
 def test_plan_uses_llmfit_to_size_when_no_memory_is_given(state, tmp_path,
                                                           capsys, monkeypatch):
-    import delm.core.llmfit as llmfit_mod
-    from delm.core.llmfit import FitReport
+    import smcp.core.llmfit as llmfit_mod
+    from smcp.core.llmfit import FitReport
 
     payload = {"models": [{
         "name": "Qwen/Qwen3-30B-A3B", "params_b": 30.0,
@@ -284,8 +284,8 @@ def test_plan_uses_llmfit_to_size_when_no_memory_is_given(state, tmp_path,
 
 def test_plan_of_an_unknown_model_explains_the_escape_hatch(state, tmp_path,
                                                             capsys, monkeypatch):
-    import delm.core.llmfit as llmfit_mod
-    from delm.core.llmfit import FitReport
+    import smcp.core.llmfit as llmfit_mod
+    from smcp.core.llmfit import FitReport
 
     monkeypatch.setattr(llmfit_mod.LlmfitRunner, "catalog",
                         lambda self, **kw: FitReport.from_payload({"models": []}))
@@ -299,8 +299,8 @@ def test_plan_of_an_unknown_model_explains_the_escape_hatch(state, tmp_path,
 
 def test_plan_forwards_hardware_overrides_to_llmfit(state, tmp_path, capsys,
                                                     monkeypatch):
-    import delm.core.llmfit as llmfit_mod
-    from delm.core.llmfit import FitReport
+    import smcp.core.llmfit as llmfit_mod
+    from smcp.core.llmfit import FitReport
 
     seen: dict = {}
 
@@ -372,7 +372,7 @@ def test_check_lists_rejections(state, tmp_path, capsys):
     contribute(state, tmp_path / "id.json", "nodo-a", 8.0, seconds=600)
     capsys.readouterr()
     # Una aportación sin firmar: la malla la rechaza y lo deja escrito.
-    from delm.core.contrib import CapacityReport
+    from smcp.core.contrib import CapacityReport
     led = ContributionLedger.load(str(state))
     led.admit(CapacityReport(mesh_id=MESH, peer_id="nodo-a", vram_gb=999.0,
                      vram_advertised_gb=999.0,
@@ -414,7 +414,7 @@ def test_default_mesh_id_is_used_when_not_given(tmp_path, capsys):
 def test_python_m_delm_mesh_runs_as_a_subprocess(tmp_path):
     """`python -m delm mesh` es el mismo parser (contrato público de la CLI)."""
     p = subprocess.run(
-        [sys.executable, "-m", "delm", "mesh", "status", "--state",
+        [sys.executable, "-m", "smcp", "mesh", "status", "--state",
          str(tmp_path / "s.json")],
         capture_output=True, text=True, timeout=120,
     )

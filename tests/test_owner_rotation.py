@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.deployment import (
+from smcp.core.deployment import (
     Command,
     DeploymentNode,
     DiscoveryBus,
     Owner,
 )
-from delm.core.provenance import KeyPair
+from smcp.core.provenance import KeyPair
 
 
 # ------------------------------------------------------------------ helpers
@@ -80,7 +80,7 @@ def test_after_rotate_new_key_signs_accepted_announcements():
     assert owner.public_key == new_key.public_key
 
     # El owner firma un anuncio con la NUEVA clave (la vigente).
-    from delm.core.deployment import Announcement
+    from smcp.core.deployment import Announcement
     ann = Announcement(node_id="n2", endpoint="e", epoch=1, ts=1.0)
     owner.sign_announcement(ann)
     # El nodo lo recibe y lo verifica contra current_owner_key (nueva).

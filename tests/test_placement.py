@@ -1,4 +1,4 @@
-"""Tests del reparto de modelo entre nodos (`delm.core.placement`).
+"""Tests del reparto de modelo entre nodos (`smcp.core.placement`).
 
 La tesis del proyecto dice: *un modelo más grande que una sola caja, corriendo
 sobre varias*. Eso se sostiene o se cae aquí, así que los tests cubren las
@@ -27,8 +27,8 @@ import json
 
 import pytest
 
-from delm.core.contrib import CapacityReport, ContributionLedger
-from delm.core.placement import (
+from smcp.core.contrib import CapacityReport, ContributionLedger
+from smcp.core.placement import (
     DEFAULT_MESH_ENDPOINT,
     ModelSpec,
     PlanReject,
@@ -37,7 +37,7 @@ from delm.core.placement import (
     plan_json,
     plan_placement,
 )
-from delm.core.provenance import KeyPair
+from smcp.core.provenance import KeyPair
 
 MESH = "smcp-test"
 NOW = 1_000.0
@@ -249,7 +249,7 @@ def test_render_is_deterministic_and_shows_the_verdict():
 # ----------------------------------------------------------------- la unión
 def test_spec_is_built_from_a_fit_row():
     """El puente llmfit→placement: la memoria de UNA caja es la que hay que cubrir."""
-    from delm.core.llmfit import FitRow
+    from smcp.core.llmfit import FitRow
 
     row = FitRow.from_payload({
         "name": "Qwen/Qwen3-32B-GGUF", "params_b": 32.0,

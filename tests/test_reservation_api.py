@@ -2,7 +2,7 @@
 
 A book per request would make these endpoints decorative: every call would see
 an empty book, promise the same GiB twice, and the oversell would be exactly
-the one :mod:`delm.core.reservation` exists to prevent. These tests therefore
+the one :mod:`smcp.core.reservation` exists to prevent. These tests therefore
 pin the sharing, not just the happy path.
 """
 
@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from delm.web import api as smcp_api
-from delm.web.api import MANAGER
-from delm.web.app import app
+from smcp.web import api as smcp_api
+from smcp.web.api import MANAGER
+from smcp.web.app import app
 
 MESH = "malla-reserva-test"
 

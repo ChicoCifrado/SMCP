@@ -1,6 +1,6 @@
 """Tests for the gate runner.
 
-The gate list exists once, in :mod:`delm.core.gates`, and both the CLI and CI
+The gate list exists once, in :mod:`smcp.core.gates`, and both the CLI and CI
 read it. These tests pin the parts that make that safe:
 
 * an unknown gate name fails loudly instead of running nothing;
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from delm.core import gates
+from smcp.core import gates
 
 
 def test_the_list_exists_and_is_ordered():
@@ -114,12 +114,12 @@ def test_check_all_runs_everything_selected(monkeypatch):
 def test_ci_argv_uses_this_module():
     """The workflow must call the same list the CLI does."""
     argv = gates.ci_argv()
-    assert argv[1:] == ["-m", "delm", "gates", "--blocking"]
+    assert argv[1:] == ["-m", "smcp", "gates", "--blocking"]
 
 
 def test_cli_exposes_gates_and_lists_them():
     out = subprocess.run(
-        [sys.executable, "-m", "delm", "gates", "--list"],
+        [sys.executable, "-m", "smcp", "gates", "--list"],
         capture_output=True, text=True, timeout=120)
     assert out.returncode == 0
     for name in ("readme", "ruff", "pyright", "tests", "slow"):
@@ -128,7 +128,7 @@ def test_cli_exposes_gates_and_lists_them():
 
 def test_cli_rejects_an_unknown_gate():
     out = subprocess.run(
-        [sys.executable, "-m", "delm", "gates", "inventado"],
+        [sys.executable, "-m", "smcp", "gates", "inventado"],
         capture_output=True, text=True, timeout=120)
     assert out.returncode != 0
     assert "desconocido" in (out.stdout + out.stderr)

@@ -2,8 +2,8 @@
 
 import asyncio
 
-from delm.core.llm import FakeLLMClient
-from delm.core.multi_node_bench import (
+from smcp.core.llm import FakeLLMClient
+from smcp.core.multi_node_bench import (
     MultiNodePoint,
     run_multi_node,
     summarize_multi,

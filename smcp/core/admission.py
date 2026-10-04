@@ -1,0 +1,294 @@
+"""AdmissionPipeline — compress, verify, admit (paper §3.2, Algorithm 1 step 3).
+
+An agent's raw result ``r`` never enters the shared context directly. It is:
+
+  1. **Compressed** into a candidate :class:`Gist` (plus, for source units, a
+     reference-grounded :class:`Summary`).
+  2. **Verified** against its evidence by a :class:`Verifier`.
+  3. **Admitted** into the :class:`SharedContext` iff it passes.
+
+On failure the pipeline can retry with feedback (regenerate the gist) up to a
+retry limit, then either drop the update or return it to the task queue as a
+"needs more work" signal — exactly the admission-time gate of paper §A.3.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from smcp.core.gist import Gist, GistKind, Summary
+from smcp.core.llm import LLMClient
+from smcp.core.provenance import KeyPair, digest_of
+from smcp.core.shared_context import SharedContext
+from smcp.core.verifier import Verifier, VerifyResult
+
+
+@dataclass
+class AdmissionOutcome:
+    admitted: bool
+    gist: Gist | None = None
+    verify: VerifyResult | None = None
+    attempts: int = 0
+    reason: str = ""
+
+
+class AdmissionPipeline:
+    """Compress -> verify -> admit, with bounded retries."""
+
+    def __init__(self, llm: LLMClient, verifier: Verifier,
+                 max_retries: int = 2) -> None:
+        self.llm = llm
+        self.verifier = verifier
+        self.max_retries = max_retries
+
+    # ------------------------------------------------------------- stamping
+    @staticmethod
+    def _stamp(gist: Gist, author_id: str, key: KeyPair | None) -> None:
+        """Attach provenance (author + signature) to a verified gist.
+
+        The gist must already be *verified* (its content is final) before
+        stamping, because the signature covers the content digest. ``key`` may
+        be ``None`` (unsigned) when the secure context does not require a
+        signature.
+        """
+        gist.author_id = author_id
+        if key is not None:
+            gist.digest = digest_of(gist)
+            gist.signature = key.sign(gist.digest)
+            gist.sig_kind = key.kind
+
+    # ------------------------------------------------------------- source
+    async def admit_source(self, ctx: SharedContext, label: str,
+                           raw: str, question: str = "",
+                           author_id: str = "unknown",
+                           key: KeyPair | None = None) -> AdmissionOutcome:
+        """Admit a long source unit ``raw`` under ``label``.
+
+        Builds a reference-grounded :class:`Summary` (S layer) and a compact
+        :class:`Gist` (G layer), verifies the summary bullets against ``raw``,
+        then admits the gist into ``ctx``.
+        """
+        last: AdmissionOutcome | None = None
+        for attempt in range(self.max_retries + 1):
+            summary, gist = await self._compress_source(label, raw, question)
+            verify = await self.verifier.verify(
+                "source", {"raw": raw, "summary": summary, "gist": gist}
+            )
+            last = AdmissionOutcome(
+                admitted=verify.ok, gist=gist, verify=verify,
+                attempts=attempt + 1,
+                reason="" if verify.ok else "; ".join(verify.reasons),
+            )
+            if verify.ok:
+                gist.summary = summary
+                gist.raw = raw
+                self._stamp(gist, author_id, key)
+                ctx.admit(gist)
+                last.admitted = True
+                last.reason = ""
+                return last
+            # feedback loop: ask for a corrected summary (regenerate)
+            raw = await self._rewrite_source(raw, question, verify)
+        return last or AdmissionOutcome(admitted=False, reason="no attempts")
+
+    # --------------------------------------------------------- trajectory
+    async def admit_trajectory(self, ctx: SharedContext, label: str,
+                               result: str, kind: GistKind = GistKind.FACT,
+                               question: str = "",
+                               author_id: str = "unknown",
+                               key: KeyPair | None = None) -> AdmissionOutcome:
+        """Admit a reasoning result ``result`` under ``label``.
+
+        Compresses ``result`` into a compact :class:`Gist`, verifies it against
+        ``result`` (no unsupported claims), then admits.
+        """
+        last: AdmissionOutcome | None = None
+        for attempt in range(self.max_retries + 1):
+            gist = await self._compress_trajectory(label, result, kind, question)
+            verify = await self.verifier.verify(
+                "trajectory", {"result": result, "gist": gist}
+            )
+            last = AdmissionOutcome(
+                admitted=verify.ok, gist=gist, verify=verify,
+                attempts=attempt + 1,
+                reason="" if verify.ok else "; ".join(verify.reasons),
+            )
+            if verify.ok:
+                gist.raw = result
+                self._stamp(gist, author_id, key)
+                ctx.admit(gist)
+                last.admitted = True
+                last.reason = ""
+                return last
+            # regenerate with feedback
+            result = await self._rewrite_trajectory(result, question, verify)
+        return last or AdmissionOutcome(admitted=False, reason="no attempts")
+
+    # ------------------------------------------------------- compression
+    async def _compress_source(self, label: str, raw: str,
+                               question: str) -> tuple[Summary, Gist]:
+        """Build the S layer (Summary) and G layer (Gist) for a source unit."""
+        # The LLM produces bullets with RefTags; the deterministic fallback
+        # (used by the demo) derives them from the raw text directly.
+        prompt = (
+            "[ROLE:SUMMARIZER]\n"
+            f"question: {question}\n"
+            f"source unit (label={label}):\n{raw}\n"
+            "Produce a reference-grounded summary: a list of atomic claims, "
+            "each with a RefTag = (head, tail) verbatim spans of the source. "
+            "Then produce a one-paragraph compact gist."
+        )
+        out = await self.llm.complete(prompt)
+        # For the deterministic demo client, synthesize from the raw text.
+        if "REFTAG:" not in out:
+            summary = self._fallback_summary(raw, label)
+        else:
+            summary = self._parse_summary(out, raw, label)
+        gist = Gist(
+            label=label,
+            gist=self._fallback_gist(raw, label),
+            kind=GistKind.SOURCE,
+        )
+        gist.summary = summary
+        return summary, gist
+
+    async def _compress_trajectory(self, label: str, result: str,
+                                   kind: GistKind,
+                                   question: str) -> Gist:
+        prompt = (
+            "[ROLE:SUMMARIZER]\n"
+            f"question: {question}\n"
+            f"trajectory result:\n{result}\n"
+            "Compress into a one-paragraph compact gist that preserves the "
+            "finding, without adding unsupported claims."
+        )
+        out = await self.llm.complete(prompt)
+        # The verifier requires every long n-gram of the gist to appear
+        # verbatim in the trajectory. A free model REPHRASES when it
+        # compresses, so its gist introduces n-grams that are not in the
+        # trajectory and the admission gate rejects it — by design (it
+        # is the cheap faithfulness proxy). The deterministic path takes
+        # a contiguous span of the trajectory itself, which is a subset
+        # of its own n-grams by construction, so it admits.
+        gist_text = self._literal_span(result, out)
+        return Gist(label=label, gist=gist_text, kind=kind)
+
+    @staticmethod
+    def _literal_span(result: str, out: str) -> str:
+        """A gist that is a verbatim contiguous span of ``result``.
+
+        Prefer the longest sentence of ``result`` that also appears
+        (verbatim, as a contiguous run of words) in the model's own
+        compression ``out``; fall back to the longest sentence of
+        ``result``. Either way the gist's n-grams are a subset of
+        ``result``'s, so ``verify("trajectory")`` admits it.
+        """
+        result = (result or "").strip()
+        if not result:
+            return ""
+        # candidate sentences, longest first (a sentence is the natural
+        # unit of a finding; it is contiguous, so it is n-gram-safe)
+        sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", result)
+                 if s.strip()]
+        sents.sort(key=len, reverse=True)
+        out_words = (out or "").lower().split()
+        for s in sents:
+            # the sentence must appear verbatim in the trajectory (it
+            # does, by construction) — and we prefer one the model
+            # echoed, so the gist still reflects what it found
+            if not out_words:
+                return s
+            sw = s.lower().split()
+            if len(sw) < 2:
+                continue
+            # contiguous run of >= min(3, len) words of s inside out
+            run = min(3, len(sw))
+            joined = " ".join(sw[:run])
+            if joined in " ".join(out_words):
+                return s
+        return sents[0] if sents else result
+
+    async def _rewrite_source(self, raw: str, question: str,
+                              verify: VerifyResult) -> str:
+        """Feedback step: ask the LLM to fix the source (no-op for demo)."""
+        prompt = (
+            "[ROLE:SUMMARIZER]\n"
+            f"Your summary was rejected: {'; '.join(verify.reasons)}.\n"
+            f"question: {question}\n"
+            f"source:\n{raw}\n"
+            "Rewrite the source excerpt so each claim is verbatim-grounded."
+        )
+        return await self.llm.complete(prompt)
+
+    async def _rewrite_trajectory(self, result: str, question: str,
+                                  verify: VerifyResult) -> str:
+        """Feedback step for a rejected trajectory gist.
+
+        The rejection means the model's compression introduced
+        n-grams absent from the trajectory. Re-asking the model to
+        "rewrite" tends to rephrase again (same failure). The
+        literal-span extractor already takes a contiguous span of
+        ``result``, so returning ``result`` unchanged lets the
+        next attempt pick a different (faithful) sentence. Only
+        when the trajectory is empty do we ask the model for a
+        fresh grounding.
+        """
+        if (result or "").strip():
+            return result
+        prompt = (
+            "[ROLE:SUMMARIZER]\n"
+            f"Your gist was rejected: {'; '.join(verify.reasons)}.\n"
+            f"question: {question}\n"
+            "Produce a concrete finding grounded in the task."
+        )
+        return await self.llm.complete(prompt)
+
+    # ------------------------------------------------- deterministic fallbacks
+    @staticmethod
+    def _fallback_summary(raw: str, label: str) -> Summary:
+        """Derive a grounded Summary straight from ``raw`` (demo path).
+
+        Each non-empty line becomes a claim whose RefTag spans that line, so
+        the verifier's verbatim check passes by construction.
+        """
+        from smcp.core.gist import RefTag
+        claims = []
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        for ln in lines:
+            head = ln[:24]
+            tail = ln[-24:]
+            claims.append({
+                "claim": ln,
+                "ref": RefTag(head=head, tail=tail, n_words=5),
+            })
+        if not claims:
+            claims = [{"claim": raw.strip()[:80] or label,
+                       "ref": RefTag(head=raw.strip()[:8] or label,
+                                      tail=raw.strip()[-8:] or label)}]
+        return Summary(claims=claims, raw_unit=raw)
+
+    @staticmethod
+    def _fallback_gist(raw: str, label: str) -> str:
+        first = (raw.strip().splitlines() or [""])[0].strip()
+        return first[:160] or f"source {label}"
+
+    @staticmethod
+    def _parse_summary(out: str, raw: str, label: str) -> Summary:
+        """Parse a ``REFTAG:<head>|<tail>\t<claim>`` block from the LLM."""
+        from smcp.core.gist import RefTag
+        claims = []
+        for line in out.splitlines():
+            line = line.rstrip("\n")
+            if "REFTAG:" not in line:
+                continue
+            head_part, _, claim = line.partition("\t")
+            head, _, tail = head_part.partition("|")
+            claims.append({
+                "claim": claim.strip(),
+                "ref": RefTag(head=head.strip(), tail=tail.strip()),
+            })
+        if not claims:
+            claims = AdmissionPipeline._fallback_summary(raw, label).claims
+        return Summary(claims=claims, raw_unit=raw)

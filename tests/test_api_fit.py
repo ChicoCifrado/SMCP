@@ -25,16 +25,16 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from delm.web import api as smcp_api
-from delm.web.app import app
-from delm.core.llmfit import (
+from smcp.web import api as smcp_api
+from smcp.web.app import app
+from smcp.core.llmfit import (
     FitReport,
     FitRow,
     LlmfitNotFound,
     LlmfitRunner,
     SystemProfile,
 )
-from delm.web.api import MANAGER
+from smcp.web.api import MANAGER
 
 SYSTEM = {
     "total_ram_gb": 31.3, "available_ram_gb": 22.0, "cpu_cores": 12,
@@ -111,7 +111,7 @@ def cfg_path(tmp_path, monkeypatch):
     """Redirige la config a tmp: ningún test toca la del repo."""
     fake = tmp_path / "model_config.yaml"
     monkeypatch.setattr(smcp_api, "_config_path", lambda: fake)
-    from delm.config import load_config as _lc
+    from smcp.config import load_config as _lc
     monkeypatch.setattr(smcp_api, "_load_cfg",
                         lambda: _lc(fake) if fake.exists() else _lc(None))
     return fake

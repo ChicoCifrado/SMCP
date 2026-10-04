@@ -10,9 +10,9 @@ SMCP junta **tres piezas** en una sola CLI y una sola Web UI:
 
 | Pieza | Qué aporta | Dónde vive |
 |---|---|---|
-| **DeLM** (clean-room) | contexto compartido verificado `C` + cola de tareas `T` entre agentes distribuidos | `delm/core/{gist,shared_context,secure_context,task_queue,admission}.py` |
+| **DeLM** (clean-room) | contexto compartido verificado `C` + cola de tareas `T` entre agentes distribuidos | `smcp/core/{gist,shared_context,secure_context,task_queue,admission}.py` |
 | **MeshLLM** | agrupa GPU/memoria entre máquinas y expone **una API OpenAI-compatible** en `:9337` | externo (Rust); SMCP apunta a su endpoint |
-| **llmfit** | dimensiona un modelo contra el hardware real (fit, tok/s, quant) | externo (Rust/PyPI); adaptador en `delm/core/llmfit.py` |
+| **llmfit** | dimensiona un modelo contra el hardware real (fit, tok/s, quant) | externo (Rust/PyPI); adaptador en `smcp/core/llmfit.py` |
 
 La idea, en una frase: **los nodos de distintos usuarios se unen a una malla,
 contribuyen con su VRAM y, a cambio, obtienen acceso a la inferencia de la malla
@@ -21,7 +21,7 @@ en ninguna máquina sola.**
 
 ## Smart contract BSV (protocolo permissionless)
 
-`delm/core/contract.py` — el "smart contract" en BSV no es un
+`smcp/core/contract.py` — el "smart contract" en BSV no es un
 programa que se ejecuta en la cadena (BSV no tiene EVM). Es un
 **locking script** que gobierna quien puede gastar un output:
 
@@ -50,7 +50,7 @@ pago al nodo, cambio, UTXO insuficiente, roundtrip.
 
 ## Token BSV-21 DELM (capa F — economia tokenizada)
 
-`delm/core/token_bsv21.py` — la moneda de la red mesh.
+`smcp/core/token_bsv21.py` — la moneda de la red mesh.
 El token DELM es la contrapartida en token del bounty
 en sats: los nodos ganan DELM por resolver inferencias
 y el DELM se puede listar/vender en 1sat.market.
@@ -68,7 +68,7 @@ Operaciones:
 - `buy` — `buyBsv21` (comprar listing OrdLock en 1sat.market)
 - `pay_for_inference` — comodo DeLM: pagar a un nodo en DELM
 
-El WIF viene de `DELM_TOKEN_WIF` o `~/.delm/token.wif`.
+El WIF viene de `DELM_TOKEN_WIF` o `~/.smcp/token.wif`.
 El tokenId es `<deployTxid>_0`. El indexer 1sat solo
 activa el token una vez la tx de deploy confirma en bloque.
 
@@ -117,7 +117,7 @@ El bridge Node (`bsv21-bridge/`) usa:
 
 ## Libro de inferencias (identificar y confirmar)
 
-`delm/core/registro.py` — la pieza que une el flujo de
+`smcp/core/registro.py` — la pieza que une el flujo de
 inferencia (`intercambio`) con el anclaje (`inscripcion`)
 y el token (capa F).
 
@@ -213,7 +213,7 @@ comparten: no un result chunk, sino estado verificado.
 Cada nodo declara su capacidad; la malla **no se la cree**: la exige firmada,
 ligada a un reto de un solo uso, con caducidad, y encadenada en un log de
 admisiones. El único dinero es el **satoshi**, y se mueve en la cadena
-(`delm/core/tiers.py` fija los precios; `x402` verifica el pago de una
+(`smcp/core/tiers.py` fija los precios; `x402` verifica el pago de una
 inferencia; `anchor.py` demuestra que ocurrió).
 
 **No hay moneda interna.** Hubo una: un "crédito" float que un nodo ganaba por
@@ -225,14 +225,14 @@ acceso a inferencia" — y una invitación a mantener una flota de máquinas
 paradas a cargo de otro.
 
 Lo que queda donde estaba el saldo es un **contador**: cuántas inferencias **de
-la red** ha servido cada nodo (`delm/core/reputation.py`). No se gasta, no se
+la red** ha servido cada nodo (`smcp/core/reputation.py`). No se gasta, no se
 transfiere, no compra nada. Es el ranking que un nodo enseña al resto para que
 sepan cuánto ha servido, y sube **solo** con un ancla verificada en la que el
 solicitante es **otro** nodo: ejecutar inferencia contra uno mismo no se ancla.
 
 ### 3. Reparto de las capas de un modelo entre varios nodos
 
-Un 27B Q4 no cabe en una tarjeta de 16 GB. Repartido, sí. `delm mesh plan`
+Un 27B Q4 no cabe en una tarjeta de 16 GB. Repartido, sí. `smcp mesh plan`
 **dimensiona el modelo con llmfit, decide qué nodos lo alojan y en qué
 proporción, lo admite o lo rechaza con un motivo, y produce un plan
 determinista** que se puede loguear y comparar entre observadores.
@@ -245,13 +245,13 @@ determinista** que se puede loguear y comparar entre observadores.
 ### Lo que este proyecto **no** es
 
 - **No hay mejora recursiva (RSI).** Hay código de exploración en
-  `delm/core/{rsi,hci}.py` y su demo, con sus tests, pero **no forma parte de la
+  `smcp/core/{rsi,hci}.py` y su demo, con sus tests, pero **no forma parte de la
   tesis** ni de la hoja de ruta: está pendiente de decidir *dónde* y *cómo*
   encaja (ver `TODO.md`).
 - **No hay atestación de hardware.** Una capacidad declarada es una afirmación
   firmada por una identidad, no una prueba de que esa VRAM existe. Lo que se
   garantiza está escrito en [`docs/threat-model.md`](docs/threat-model.md) y lo
-  repite cada salida de `delm mesh check`.
+  repite cada salida de `smcp mesh check`.
 - **No hay modelo de negocio, ni stake, ni slashing.** La honestidad aquí es
   *acotada y auditable*, no absoluta.
 
@@ -326,11 +326,11 @@ determinista** que se puede loguear y comparar entre observadores.
 
 ## Mejoras adicionales (capa anti-evasión, observabilidad y expansión)
 
-Tres módulos nuevos en `delm.core` que cierran los huecos reconocidos en el
+Tres módulos nuevos en `smcp.core` que cierran los huecos reconocidos en el
 análisis, sin romper la disciplina del proyecto (deterministas, testeables,
 sin LLM en el loop):
 
-### Detector de inyección endurecido (`delm.core.injection_hardened`)
+### Detector de inyección endurecido (`smcp.core.injection_hardened`)
 
 El detector baseline es un catálogo de regex sobre el texto crudo, evadible
 con zero-width chars, homoglifos, leetspeak, acentos, palabras espaciadas
@@ -359,7 +359,7 @@ opt-out disponible) y anota `[evasion]` en el reason del taint cuando el
 hit solo fue posible tras normalizar. `HardenedVerdict` expone
 `evasion_detected`, `baseline_clean` y `region_hits` para telemetría A/B.
 
-### Métricas (`delm.core.metrics`)
+### Métricas (`smcp.core.metrics`)
 
 `MetricsTracker` registra coste/latencia por tarea: `timed()` como context
 manager (mutable in-flight), precios por modelo (tabla 2026 orientativa,
@@ -369,7 +369,7 @@ Si el bloque lanza, el registro se escribe igual con `admitted=False` y
 `error`, y la excepción se re-lanza. `DelmPipeline` crea uno por defecto,
 lo pasa a cada worker y vuelca el agregado en `PipelineOutcome.metrics`.
 
-### Política de expansión (`delm.core.expansion`)
+### Política de expansión (`smcp.core.expansion`)
 
 `ExpansionPolicy` decide cuándo invocar el paso "generate more subtasks":
 queue viva -> no; sin señal (done+failed==0) -> no; `target_progress`
@@ -384,21 +384,21 @@ Los tres módulos están cableados en el pipeline real y cubiertos por
 
 ## Cómo usarlo
 
-### La CLI `delm`
+### La CLI `smcp`
 
-Un solo binario, una sola puerta de entrada. `delm` y `python -m delm` son **el
-mismo parser** (`delm/cli.py`), así que no pueden divergir.
+Un solo binario, una sola puerta de entrada. `smcp` y `python -m smcp` son **el
+mismo parser** (`smcp/cli.py`), así que no pueden divergir.
 
 ```bash
-delm --help                     # o: python -m delm --help
-delm version                    # versión + Python
-delm config-check               # resuelve la config de modelo (key oculta)
-delm fit                        # qué modelos caben en ESTA máquina (llmfit)
-delm fit --check                # ¿el modelo de la config cabe aquí? (2 si no)
-delm test                       # la suite; --slow para los tests lentos
-delm gates                      # los gates de calidad (ver abajo)
-delm demo                       # demo principal (pipeline, sin API key)
-delm demo --list                # lista las demos
+smcp --help                     # o: python -m smcp --help
+smcp version                    # versión + Python
+smcp config-check               # resuelve la config de modelo (key oculta)
+smcp fit                        # qué modelos caben en ESTA máquina (llmfit)
+smcp fit --check                # ¿el modelo de la config cabe aquí? (2 si no)
+smcp test                       # la suite; --slow para los tests lentos
+smcp gates                      # los gates de calidad (ver abajo)
+smcp demo                       # demo principal (pipeline, sin API key)
+smcp demo --list                # lista las demos
 ```
 
 Los siete subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh`,
@@ -409,8 +409,8 @@ Los siete subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh`,
 **enmascarada** (`sk-s***7890`); sale con `0` si modelo y `base_url` resuelven, y
 con `2` si no (para que un script pueda bifurcar sin parsear la salida).
 
-`delm demo <nombre>` despacha la demo **como subprocess** a su propio módulo
-(`python -m delm.demo.<módulo>`) y devuelve su código de salida. Motivo: cada
+`smcp demo <nombre>` despacha la demo **como subprocess** a su propio módulo
+(`python -m smcp.demo.<módulo>`) y devuelve su código de salida. Motivo: cada
 demo ya tiene su contrato (`main()`/`run()`, su propio reporte por stdout, y en
 el caso multi-host sus propios procesos hijos), así que la CLI es un envoltorio
 fino y honesto en vez de un segundo sitio donde haya que mantener la lógica. Los
@@ -420,15 +420,15 @@ Equivalentes por demo (siguen siendo válidos y son los que usa la web/API):
 
 | CLI                     | Equivalente directo                   |
 | ----------------------- | ------------------------------------- |
-| `delm demo`             | `python -m delm.demo.run_demo`        |
-| `delm demo security`    | `python -m delm.demo.run_security_demo` |
-| `delm demo taint`       | `python -m delm.demo.run_taint_demo`  |
-| `delm demo multihost`   | `python -m delm.demo.run_multihost_demo` |
-| `delm demo rsi`         | `python -m delm.demo.run_rsi_demo`    |
-| `delm demo real`        | `python -m delm.demo.run_real_demo`   |
-| `delm test`             | `python -m pytest`                    |
+| `smcp demo`             | `python -m smcp.demo.run_demo`        |
+| `smcp demo security`    | `python -m smcp.demo.run_security_demo` |
+| `smcp demo taint`       | `python -m smcp.demo.run_taint_demo`  |
+| `smcp demo multihost`   | `python -m smcp.demo.run_multihost_demo` |
+| `smcp demo rsi`         | `python -m smcp.demo.run_rsi_demo`    |
+| `smcp demo real`        | `python -m smcp.demo.run_real_demo`   |
+| `smcp test`             | `python -m pytest`                    |
 
-### Dimensionar el modelo local: `delm fit` ([llmfit](https://github.com/AlexsJones/llmfit))
+### Dimensionar el modelo local: `smcp fit` ([llmfit](https://github.com/AlexsJones/llmfit))
 
 Ser **agnóstico al modelo** no es lo mismo que estar **dimensionado**. Antes de
 levantar un runtime local (MeshLLM, llama.cpp, vLLM, Ollama) hay que responder
@@ -436,24 +436,24 @@ una pregunta que nada en el repo respondía: *¿qué modelo cabe en esta máquin
 a qué velocidad?* Un Q2 de 27B va bien en una RTX 4060 Ti de 16 GB; un Q5 del
 mismo modelo, no. [`llmfit`](https://github.com/AlexsJones/llmfit) lee el host
 (RAM, núcleos, GPU/VRAM, backend) y ordena el catálogo por fit, velocidad,
-calidad y contexto. `delm fit` es la costura: `delm/core/llmfit.py` lo invoca y
+calidad y contexto. `smcp fit` es la costura: `smcp/core/llmfit.py` lo invoca y
 parsea su JSON, y la CLI lo convierte en tres vistas del mismo catálogo, de
 menor a mayor compromiso.
 
 ```bash
-delm fit                                  # tabla: qué corre aquí (y a qué tok/s)
-delm fit -n 20 --use-case coding          # más filas, filtradas por caso de uso
-delm fit --all                            # incluye los que NO caben (too_tight)
-delm fit --sort tps --search qwen         # ordena y busca (en el lado de SMCP)
-delm fit --memory 24G --ram 64G           # simula otra máquina
-delm fit --profile ryzen-ai-max-plus-395  # un perfil de hardware de llmfit
-delm fit --json                           # para scripts y la API web
+smcp fit                                  # tabla: qué corre aquí (y a qué tok/s)
+smcp fit -n 20 --use-case coding          # más filas, filtradas por caso de uso
+smcp fit --all                            # incluye los que NO caben (too_tight)
+smcp fit --sort tps --search qwen         # ordena y busca (en el lado de SMCP)
+smcp fit --memory 24G --ram 64G           # simula otra máquina
+smcp fit --profile ryzen-ai-max-plus-395  # un perfil de hardware de llmfit
+smcp fit --json                           # para scripts y la API web
 
-delm fit --check                          # ¿cabe el modelo de la config? (2 si no)
-delm fit --check --json                   # el veredicto como dato, mismo exit code
+smcp fit --check                          # ¿cabe el modelo de la config? (2 si no)
+smcp fit --check --json                   # el veredicto como dato, mismo exit code
 
-delm fit --write-config config/model_config.yaml            # persiste el top-1
-delm fit --write-config cfg.yaml --base-url http://127.0.0.1:9337/v1
+smcp fit --write-config config/model_config.yaml            # persiste el top-1
+smcp fit --write-config cfg.yaml --base-url http://127.0.0.1:9337/v1
 ```
 
 Tres propiedades que hacen que esto sea integración y no un *wrapper*:
@@ -464,7 +464,7 @@ Tres propiedades que hacen que esto sea integración y no un *wrapper*:
   explica cómo instalarlo y sale con `3` — nunca un traceback. Un
   `$DELM_LLMFIT_BIN` explícito que no funciona es un error de configuración y
   **no** cae al `PATH` en silencio.
-- **`--check` cierra el círculo con `delm/config.py`.** No pregunta "qué modelo
+- **`--check` cierra el círculo con `smcp/config.py`.** No pregunta "qué modelo
   es bueno" sino "**el modelo que el pipeline ya tiene configurado, ¿cabe aquí?**".
   Resuelve la config con la precedencia de siempre (entorno > YAML > default),
   busca ese id en el catálogo y sale con `2` si no cabe, proponiendo los que sí.
@@ -485,7 +485,7 @@ vocabulario de filtros vive en `recommend` (`--use-case`, `--min-fit`,
 `--runtime`, `--force-runtime`) y **no** en `fit`: `llmfit fit --use-case coding`
 sale con `2` (*unexpected argument*). Pero `recommend` nunca devuelve filas
 `too_tight`, así que un modelo que no cabe volvería "desconocido" en vez de "no
-cabe" — y el veredicto es justo lo que `delm fit` viene a dar. El reparto es por
+cabe" — y el veredicto es justo lo que `smcp fit` viene a dar. El reparto es por
 eso **el binario trae, SMCP estrecha**: se llama a `fit` (catálogo completo) y
 los filtros se aplican sobre las filas ya parseadas. Además, llmfit tiene *dos*
 vocabularios para el mismo JSON — su CLI dice `fit_level: "Too Tight"` y su API
@@ -493,7 +493,7 @@ REST `fit_level: "too_tight"`, igual con `llama.cpp`/`LlamaCpp` — y el adaptad
 los reconcilia en un solo sitio para que el resto del módulo solo vea códigos.
 
 Lo que **no** hace: no modifica la config por su cuenta, no descarga modelos, no
-sirve nada y no decide la arquitectura del mesh. `delm fit` es un asesor
+sirve nada y no decide la arquitectura del mesh. `smcp fit` es un asesor
 determinista con salida parseable; cambiar la config es una decisión explícita
 del operador.
 
@@ -504,43 +504,43 @@ el vocabulario real de llmfit 1.1.16 a propósito (`"Too Tight"`, `"CPU+GPU"`,
 `"llama.cpp"`), porque reconciliar las dos variantes de su JSON es justo lo que
 se rompe si solo se prueba contra códigos limpios.
 
-### La malla: `delm mesh` (VRAM verificada ⇄ inferencia)
+### La malla: `smcp mesh` (VRAM verificada ⇄ inferencia)
 
 Aquí es donde las tres piezas se juntan. llmfit dice cuánta memoria pide un
 modelo; la malla dice quién tiene VRAM *verificada*; DeLM comparte el `C` entre
 los agentes que razonan sobre lo que la malla ejecuta.
 
 ```bash
-delm mesh                                     # = status: quién ofrece y cuánto ha servido
-delm mesh contribute --vram-gb 16 --vram-advertised-gb 8   # 16 físicos, ofrezco 8
-delm mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva" (no acredita)
-delm mesh infer    --peer-id local --txid <tx> --satoshis 100  # 1 inferencia anclada
-delm mesh reputation                          # el ranking de quién ha servido
-delm mesh plan "Qwen/Qwen3-32B"              # lo dimensiona llmfit y lo reparte
-delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64   # sin llmfit
-delm mesh plan "Qwen/Qwen3-32B" --memory-gb 400; echo $?     # 2 = no cabe
-delm mesh tiers levels                       # los tres precios, y si x402 encaja en cada uno
-delm mesh tiers quote --inferences N [--dedicated] [--offers-vram]
-delm mesh anchor --anchor anchor.json --header header.json   # ancla de inferencia (sin contenido)
-delm mesh membership verify --proof proof.json --header header.json   # gate de pertenencia BSV
-delm mesh reserve --peer-id nodo-b --memory-gb 6     # tier de pago único
-delm mesh release  --reservation-id nodo-b#1
-delm mesh check                               # audita cadena e historial
-delm mesh --help
+smcp mesh                                     # = status: quién ofrece y cuánto ha servido
+smcp mesh contribute --vram-gb 16 --vram-advertised-gb 8   # 16 físicos, ofrezco 8
+smcp mesh observe  --peer-id local --seconds 3600   # "te he visto 1h viva" (no acredita)
+smcp mesh infer    --peer-id local --txid <tx> --satoshis 100  # 1 inferencia anclada
+smcp mesh reputation                          # el ranking de quién ha servido
+smcp mesh plan "Qwen/Qwen3-32B"              # lo dimensiona llmfit y lo reparte
+smcp mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64   # sin llmfit
+smcp mesh plan "Qwen/Qwen3-32B" --memory-gb 400; echo $?     # 2 = no cabe
+smcp mesh tiers levels                       # los tres precios, y si x402 encaja en cada uno
+smcp mesh tiers quote --inferences N [--dedicated] [--offers-vram]
+smcp mesh anchor --anchor anchor.json --header header.json   # ancla de inferencia (sin contenido)
+smcp mesh membership verify --proof proof.json --header header.json   # gate de pertenencia BSV
+smcp mesh reserve --peer-id nodo-b --memory-gb 6     # tier de pago único
+smcp mesh release  --reservation-id nodo-b#1
+smcp mesh check                               # audita cadena e historial
+smcp mesh --help
 ```
 
 El ciclo completo, en la misma máquina, es este:
 
 ```console
-$ delm mesh contribute --vram-gb 16 --vram-advertised-gb 8   # 16 físicos, ofrezco 8
+$ smcp mesh contribute --vram-gb 16 --vram-advertised-gb 8   # 16 físicos, ofrezco 8
 === smcp mesh: contribución admitida ===
 nodo       : local
 firma      : ed25519 · digest 520427c288fce0fa…
 capacidad  : 16.0G VRAM · 64G RAM · 12 núcleos · cuda
-$ delm mesh observe --peer-id local --seconds 3600
+$ smcp mesh observe --peer-id local --seconds 3600
 local: +3600s observado · inferencias servidas 0
-nota: observar NO acredita nada. El historial sube solo con `delm mesh infer`.
-$ delm mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64
+nota: observar NO acredita nada. El historial sube solo con `smcp mesh infer`.
+$ smcp mesh plan "Qwen/Qwen3-32B" --memory-gb 40 --layers 64
 === smcp placement ===
 modelo   : Qwen/Qwen3-32B
 memoria  : 40.0G requeridos · 48.0G verificados en la malla
@@ -593,7 +593,7 @@ ser ambos válidos. Nada en un plan impide que el segundo despierte. Así que la
 reserva es una reclamación mutable, bajo lock, sobre lo **disponible**:
 
 ```python
-from delm.core.reservation import ReservationBook
+from smcp.core.reservation import ReservationBook
 book = ReservationBook()
 book.publish_snapshot(led.peers)              # línea base desde el ledger
 
@@ -649,12 +649,12 @@ Cuatro propiedades que hacen que esto no sea un registro de promesas:
   gastar sin que nadie se entere.
 - **Nada de lo que esto afirma es invisible.** Cada admisión —y cada
   **rechazo**— entra en una cadena de hashes (`verify_chain`) que sobrevive a un
-  save/load, y `delm mesh check` la verifica y dice, en mayúsculas, lo que no
+  save/load, y `smcp mesh check` la verifica y dice, en mayúsculas, lo que no
   prueba.
 
-`delm mesh` y la web (página **Malla**, `delm/web/static/malla.html`) comparten el fichero de
-estado vía `delm.core.contrib.default_state_path()`: aportar desde el navegador
-se ve en `delm mesh status` y al revés. Eso está fijado en un test que lanza la
+`smcp mesh` y la web (página **Malla**, `smcp/web/static/malla.html`) comparten el fichero de
+estado vía `smcp.core.contrib.default_state_path()`: aportar desde el navegador
+se ve en `smcp mesh status` y al revés. Eso está fijado en un test que lanza la
 CLI como subprocess.
 
 Cubierto por `tests/test_contrib.py` (32), `tests/test_placement.py` (22),
@@ -666,7 +666,7 @@ de la malla** (todo va a `tmp_path`).
 ### Instalar
 
 ```bash
-cd delm
+cd smcp
 pip install -e .
 ```
 
@@ -679,7 +679,7 @@ que un tercero reimplemente el loop, SMCP **habla el protocolo** y se registra
 como un agente más de su catálogo.
 
 ```bash
-pip install "delm[acp]"      # agent-client-protocol
+pip install "smcp[acp]"      # agent-client-protocol
 smcp-serve                    # backend determinista (FakeLLMClient), sin key
 smcp-serve --backend real     # endpoint real (DELM_MODEL / DELM_BASE_URL)
 smcp-serve --check            # verifica el extra y sale
@@ -714,13 +714,13 @@ Las capas de red tienen dependencias opcionales declaradas como **extras** en
 `pyproject.toml` (`[project.optional-dependencies]`):
 
 ```bash
-pip install delm[nostr]   # websockets  -> relay Nostr de red (capa 4)
-pip install delm[quic]    # aioquic     -> QUIC entre hosts (capa 3)
-pip install delm[mdns]    # aiozeroconf -> mDNS discovery (capa 4)
-pip install delm[web]     # fastapi + uvicorn -> la API y la web (:8099)
-pip install delm[acp]     # agent-client-protocol -> smcp-serve (agente ACP)
-pip install delm[docs]    # pdoc        -> doc generable de la API (opt-in)
-pip install delm[all]     # todos los anteriores
+pip install smcp[nostr]   # websockets  -> relay Nostr de red (capa 4)
+pip install smcp[quic]    # aioquic     -> QUIC entre hosts (capa 3)
+pip install smcp[mdns]    # aiozeroconf -> mDNS discovery (capa 4)
+pip install smcp[web]     # fastapi + uvicorn -> la API y la web (:8099)
+pip install smcp[acp]     # agent-client-protocol -> smcp-serve (agente ACP)
+pip install smcp[docs]    # pdoc        -> doc generable de la API (opt-in)
+pip install smcp[all]     # todos los anteriores
 ```
 
 El núcleo (capas 1-5, firma, integridad, inmutabilidad, taint) **no necesita
@@ -732,7 +732,7 @@ pipeline real no lo use sin que nadie lo note — ver
 ### Demo sin API key
 
 ```bash
-delm demo                    # == python -m delm.demo.run_demo
+smcp demo                    # == python -m smcp.demo.run_demo
 ```
 
 Muestra el pipeline de punta a punta: un corpus semilla entra a la cola, 4
@@ -743,15 +743,15 @@ respuesta solo a partir del contexto compartido.
 ### Demos de seguridad
 
 ```bash
-delm demo security           # Capas 1+2: firma, integridad, inmutabilidad, ledger
-delm demo taint              # Capa 5: cuarentena de prompt-injection
+smcp demo security           # Capas 1+2: firma, integridad, inmutabilidad, ledger
+smcp demo taint              # Capa 5: cuarentena de prompt-injection
 ```
 
 ### Demo multi-host (capa 3 sobre red)
 
 ```bash
-delm demo multihost                 # QUIC (default): 2 nodos, procesos distintos
-delm demo multihost --nostr         # relay Nostr: 1 relay + 2 nodos
+smcp demo multihost                 # QUIC (default): 2 nodos, procesos distintos
+smcp demo multihost --nostr         # relay Nostr: 1 relay + 2 nodos
 ```
 
 El **default** corre sobre **QUIC** (el despliegue real): 2 nodos en
@@ -765,12 +765,12 @@ multi-host (la malla corre sobre red, no in-proceso).
 ### Probar
 
 ```bash
-delm test                  # == python -m pytest
-delm test --slow           # solo los tests marcados `slow` (handshake QUIC, subprocess)
+smcp test                  # == python -m pytest
+smcp test --slow           # solo los tests marcados `slow` (handshake QUIC, subprocess)
 ```
 
 Equivale a `python -m pytest` (los `addopts` por defecto son `-m 'not slow'`).
-`delm test --slow` añade `-m slow`, que **pisa** el `-m 'not slow'` de los
+`smcp test --slow` añade `-m slow`, que **pisa** el `-m 'not slow'` de los
 addopts (pytest aplica el último `-m`).
 
 El suite está repartido en sesenta archivos, todos deterministas:
@@ -837,7 +837,7 @@ El suite está repartido en sesenta archivos, todos deterministas:
 - `test_cli.py` — la CLI unificada (issue #9): los subcomandos
   (`demo`/`test`/`config-check`/`version`), el despacho de cada demo a su módulo,
   el passthrough de flags, `--slow` pisando el `-m 'not slow'` de los addopts,
-  el enmascarado de la key en `config-check`, y que `python -m delm` funciona
+  el enmascarado de la key en `config-check`, y que `python -m smcp` funciona
   como subprocess (el contrato público).
 - `test_contrib.py` — el intercambio: reto de un solo uso y caducidad (replay,
   reto/informe vencidos, reto ligado al par, malla equivocada), firma que ata
@@ -859,29 +859,29 @@ El suite está repartido en sesenta archivos, todos deterministas:
   orden greedy (más VRAM primero), la suma exacta de stages, los rangos de capas
   que teselan `[0, n-1]`, el plan por memoria cuando no se conocen las capas,
   determinismo byte a byte y round-trip para replay de auditoría.
-- `test_mesh_cli.py` — `delm mesh`: la identidad se crea una vez y se reutiliza
+- `test_mesh_cli.py` — `smcp mesh`: la identidad se crea una vez y se reutiliza
   (si no, ninguna contribución sería atribuible), dos "nodos" contra el mismo
   estado (que es una malla), `plan` dimensiona con llmfit o se la salta con
   `--memory-gb`, `check` detecta la cadena alterada, y un estado de otra malla no
   se mezcla. Ningún camino imprime la clave privada.
 - `test_api_mesh.py` — la misma superficie en la web, con el test de que **CLI y
-  web ven la misma malla** (la API escribe y un subprocess de `delm mesh status`
+  web ven la misma malla** (la API escribe y un subprocess de `smcp mesh status`
   lo lee).
 - `test_llmfit.py` — la integración con llmfit: el parseo de sus filas y su
   hardware, los filtros/orden/veredicto, el descubrimiento del binario
   (`$DELM_LLMFIT_BIN` → `PATH` → `python -m llmfit`) y sus fallos (no instalado,
-  sale con error, no-JSON, timeout), y el subcomando `delm fit`: la tabla,
+  sale con error, no-JSON, timeout), y el subcomando `smcp fit`: la tabla,
   `--check` (incluido el caso en que el modelo no cabe y la tabla lo oculta),
   `--write-config` sin pisar un archivo existente, y que la API key nunca se
   imprime. Con un ejecutable falso, así que no necesita el binario ni GPU.
-- `test_api_fit.py` — la superficie web de `delm fit`: `/api/fit` (filtros
+- `test_api_fit.py` — la superficie web de `smcp fit`: `/api/fit` (filtros
   validados, tabla, hardware, y el veredicto juzgando el catálogo entero —la
   fila `too_tight` que la tabla esconde—) y `/api/fit/apply` (escribe la config
   con las notas de llmfit, conserva el `base_url` existente, nunca ecoa la key,
   y funciona aunque llmfit no esté). El config se redirige a `tmp_path`.
 - `test_api_actions.py` / `test_api_config.py` / `test_api_demo.py` /
   `test_api_inspect.py` / `test_api_runs.py` — la API interactiva de
-  `delm/web/app.py` + `delm/web/api.py`: las acciones de sesión (scan, taint, config,
+  `smcp/web/app.py` + `smcp/web/api.py`: las acciones de sesión (scan, taint, config,
   export del ledger, SSE, meshllm), las demos in-proceso, la inspección del
   contexto y el gestor de runs (35 tests en total).
 - `test_serve.py` — `smcp-serve` (SMCP como agente ACP): los helpers de prompt
@@ -889,26 +889,26 @@ El suite está repartido en sesenta archivos, todos deterministas:
   ciclo de vida ACP (initialize/new_session/prompt/cancel/close), que un prompt
   corre el `DelmPipeline` real y emite `session/update` al cliente, que
   `list_sessions`/`authenticate` son no-ops honestos, y un smoke **slow** que
-  habla JSON-RPC real por stdio con `python -m delm.serve`.
+  habla JSON-RPC real por stdio con `python -m smcp.serve`.
 
 ### Web UI y API
 
 ```bash
-pip install delm[web]        # fastapi + uvicorn
-delm-serve-web                # http://127.0.0.1:8099
+pip install smcp[web]        # fastapi + uvicorn
+smcp-serve-web                # http://127.0.0.1:8099
 ```
 
-El servidor es ahora **superficie del paquete** (`delm/web/`), no un script
-suelto en la raíz del repo: `pip install delm[web]` instala el servidor y los
+El servidor es ahora **superficie del paquete** (`smcp/web/`), no un script
+suelto en la raíz del repo: `pip install smcp[web]` instala el servidor y los
 estáticos que sirve, y la UI funciona igual instalada que en desarrollo.
 
 Lo único que necesita un checkout es correr **la suite** y contar
-`tests/` / `delm/core/`. Sin checkout, `/api/status` responde `repo: false`
+`tests/` / `smcp/core/`. Sin checkout, `/api/status` responde `repo: false`
 con la lista de lo no disponible, y `POST /api/run/tests` devuelve un motivo
 accionable en vez de un error de pytest — es una degradación explícita, no
 un cero silencioso que la UI leería como "el proyecto tiene cero tests".
 
-`delm-serve-web` expone:
+`smcp-serve-web` expone:
 
 - `/api/functions` — lista de funciones (demo, seguridad, taint, multi-host, tests).
 - `/api/run/<id>` — lanza la función (subprocess) y devuelve JSON.
@@ -939,21 +939,21 @@ un cero silencioso que la UI leería como "el proyecto tiene cero tests".
 - `/` — estático de `web/` (11 páginas: inicio, núcleo, seguridad, demos,
   arquitectura, lab, contexto, ledger, **estado en vivo**, **malla**, consola 3D).
 
-`delm/web/static/estado.html` + `delm/web/static/assets/estado.js` leen `/api/status` en vivo y permiten
-lanzar suite/demo/taint desde el navegador. `delm/web/static/assets/fit.js` añade la
-sección **Modelo local (llmfit)**: los filtros de `delm fit`, la tabla, el
+`smcp/web/static/estado.html` + `smcp/web/static/assets/estado.js` leen `/api/status` en vivo y permiten
+lanzar suite/demo/taint desde el navegador. `smcp/web/static/assets/fit.js` añade la
+sección **Modelo local (llmfit)**: los filtros de `smcp fit`, la tabla, el
 veredicto en rojo/verde/neutro y un botón *usar* por fila que llama a
 `/api/fit/apply` y refresca la config mediante el evento
 `smcp:config-changed` (los dos módulos de la página no se conocen entre sí).
-`delm/web/static/malla.html` + `delm/web/static/assets/malla.js` son la página **Malla**: el intercambio
+`smcp/web/static/malla.html` + `smcp/web/static/assets/malla.js` son la página **Malla**: el intercambio
 y el reparto de modelos (contribuir, observar, planear, auditar). Comparte
 fichero de estado con la CLI, así que lo que se aporta en el navegador se ve en
-`delm mesh status`. `delm/web/static/assets/app.js` guarda la última página en `localStorage`
+`smcp mesh status`. `smcp/web/static/assets/app.js` guarda la última página en `localStorage`
 y la restaura al volver al home.
 
 ### Usar un modelo real
 
-La config de modelo se resuelve con `delm/config.py`: **entorno > YAML >
+La config de modelo se resuelve con `smcp/config.py`: **entorno > YAML >
 default**. La API key **solo por entorno** (nunca en el YAML ni en el repo).
 
 ```bash
@@ -962,7 +962,7 @@ default**. La API key **solo por entorno** (nunca en el YAML ni en el repo).
 #   base_url: http://127.0.0.1:8888/v1
 #   api_key: ""            # se inyecta por entorno, nunca por archivo
 export DELM_API_KEY="..."   # o bien: export OPENAI_API_KEY="..."
-python -m delm.demo.run_real_demo --tasks 4 --workers 4
+python -m smcp.demo.run_real_demo --tasks 4 --workers 4
 ```
 
 `load_config()` lee `DELM_MODEL`/`DELM_BASE_URL`/`DELM_API_KEY` (o `OPENAI_*`)
@@ -974,9 +974,9 @@ O, programáticamente:
 
 ```python
 import asyncio
-from delm.core.llm import OpenAICompatibleClient
-from delm.core.pipeline import DelmPipeline
-from delm.core.task_queue import Task
+from smcp.core.llm import OpenAICompatibleClient
+from smcp.core.pipeline import DelmPipeline
+from smcp.core.task_queue import Task
 
 async def main():
     llm = OpenAICompatibleClient(
@@ -1009,19 +1009,19 @@ referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
 ### Los gates, en un comando
 
 Los gates de calidad estaban en cuatro sitios que había que recordar y mantener
-por separado: el workflow del CI, `delm test`, un
+por separado: el workflow del CI, `smcp test`, un
 `scripts/check_readme_count.py` invocado por ruta, y el README. Una lista de
 gates duplicada es una lista que **se puede encoger sin que nada falle**: el
 build se debilita en silencio.
 
-Ahora la lista vive una sola vez, en `delm/core/gates.py`, y tanto la CLI como
+Ahora la lista vive una sola vez, en `smcp/core/gates.py`, y tanto la CLI como
 el CI la llaman:
 
 ```bash
-delm gates                    # todos: readme, ruff, pyright, tests, slow
-delm gates --blocking         # los que bloquean el commit (sin `slow`)
-delm gates ruff pyright       # gates concretos
-delm gates --list             # qué hay, y si está instalado
+smcp gates                    # todos: readme, ruff, pyright, tests, slow
+smcp gates --blocking         # los que bloquean el commit (sin `slow`)
+smcp gates ruff pyright       # gates concretos
+smcp gates --list             # qué hay, y si está instalado
 make help                     # los mismos, como atajos
 ```
 
@@ -1049,7 +1049,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1201 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1212 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1075,7 +1075,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   74 llmfit: el adaptador (el vocabulario real de llmfit 1.1.16 —`fit_level`
   humano de su CLI y código de máquina de su API, `llama.cpp`/`vLLM`,
   `category`—, filtros, orden, veredicto, runner con descubrimiento y errores)
-  y el subcomando `delm fit` (tabla, `--check` con su exit code,
+  y el subcomando `smcp fit` (tabla, `--check` con su exit code,
   `--write-config` sin pisar, llmfit ausente como exit `3`) +
   19 `/api/fit*` (validación de filtros, veredicto sobre el catálogo entero,
   cero secretos, el escritor de config compartido con `PUT /api/config`) +
@@ -1088,7 +1088,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   18 del reparto (rechazo accionable, la puerta de proveedores, exclusividad
   del greedy, suma exacta de stages, capas que teselan `[0, n-1]`,
   determinismo y replay) +
-  27 de `delm mesh` (identidad persistente, dos nodos sobre un estado,
+  27 de `smcp mesh` (identidad persistente, dos nodos sobre un estado,
   `infer`/`reputation`, `plan` con y sin llmfit, `check` que detecta la cadena
   alterada) +
   23 de `/api/mesh/*` incluido el que comprueba que CLI y web ven la misma malla,
@@ -1141,37 +1141,37 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   (`test_meshllm_thesis.py`, `test_meshllm_wiring.py`, opt-in).
 - **Agnóstico al modelo** — el mismo pipeline corre con `FakeLLMClient` (demo)
   o con cualquier endpoint OpenAI-compatible (producción).
-- **Modelo local dimensionado por hardware** — `delm fit` (`delm/core/llmfit.py`)
+- **Modelo local dimensionado por hardware** — `smcp fit` (`smcp/core/llmfit.py`)
   responde qué modelos caben en el host, verifica contra la config que el
   pipeline realmente usa (`--check`, sale `2` si no cabe) y puede persistir el
   top-1 como `model_config.yaml`. llmfit es una dependencia **externa
   opcional**: el install base no cambia.
 
-- **Config de modelo real de serie** — `delm/config.py` resuelve la config
+- **Config de modelo real de serie** — `smcp/config.py` resuelve la config
   (entorno > YAML > default), la API key solo por entorno, y
   `run_real_demo` corre el pipeline contra un endpoint real; la wiring está
   probada de punta a punta por `test_real_model_wiring.py`.
 
 **Hecho y verificado (la malla como intercambio):**
 
-- **La malla tiene modelo de recurso, sin moneda** — `delm/core/contrib.py`:
+- **La malla tiene modelo de recurso, sin moneda** — `smcp/core/contrib.py`:
   `Challenge` (reto de un solo uso) + `CapacityReport` (capacidad firmada,
   ligada al reto, con caducidad) + `ContributionLedger` (admisión con motivo,
   cadena de hashes que sobrevive a save/load, e `record_inference` — el único
   camino del historial). Ni `ExchangePolicy` ni saldos: el valor es el satoshi
   y se mueve en la cadena. 33 tests.
-- **La reputación es historial, no saldo** — `delm/core/reputation.py`: el
+- **La reputación es historial, no saldo** — `smcp/core/reputation.py`: el
   ranking de inferencias servidas por nodo, con el board verificado
   (reconstruido desde anclas contra una cabecera) junto al cheap de contadores.
   15 tests.
-- **El reparto de un modelo entre nodos** — `delm/core/placement.py`:
+- **El reparto de un modelo entre nodos** — `smcp/core/placement.py`:
   `ModelSpec` (se construye desde una fila de llmfit) + `plan_placement` (greedy
   por VRAM verificada, `PlanReject` accionable, y la puerta de **proveedores**:
   solo se coloca carga donde el nodo ofrece capacidad). 18 tests.
-- **Las tres piezas en una sola superficie** — `delm mesh
+- **Las tres piezas en una sola superficie** — `smcp mesh
   {status,contribute,observe,plan,check}`, `/api/mesh*` y la página **Malla**
-  (`delm/web/static/malla.html`), las tres sobre el **mismo fichero de estado** (lo resuelve
-  `delm.core.contrib.default_state_path()`; hay un test que aporta por HTTP y lo
+  (`smcp/web/static/malla.html`), las tres sobre el **mismo fichero de estado** (lo resuelve
+  `smcp.core.contrib.default_state_path()`; hay un test que aporta por HTTP y lo
   lee con la CLI en subprocess). 45 tests.
 - **Identidad persistente** — `KeyPair.save`/`load` (ed25519, `chmod 600`): sin
   esto, cada `contribute` regeneraría la clave y ninguna contribución sería
@@ -1242,7 +1242,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   `SecureSharedContext` de su nodo; al drenar, todos los nodos convergen al
   mismo conjunto de gists). Cubierto por `test_mesh.py` (17 tests,
   incluyendo la convergencia sobre red vía Nostr).
-- **Capa 4 — despliegue multi-proceso** — `delm/core/deployment.py`: discovery
+- **Capa 4 — despliegue multi-proceso** — `smcp/core/deployment.py`: discovery
   (el owner firma cada anuncio; un nodo se publica y los demás lo descubren),
   relays (el bus hace broadcast: un publish llega a todos), bootstrap
   (la firma del owner es el *trust anchor*: un anuncio/orden no verificable se
@@ -1250,7 +1250,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   up/down que el nodo verifica y ejecuta). El transporte de anuncio
   (`DiscoveryBus`) es in-memory y **swappable**: `NostrDiscoveryTransport`
   (vía un relay Nostr) y `MdnsDiscoveryTransport` (vía un medio mDNS,
-  `delm/core/mdns.py`) implementan la misma interfaz y se usan en su lugar —
+  `smcp/core/mdns.py`) implementan la misma interfaz y se usan en su lugar —
   `DeploymentNode` no cambia. Cubierto por `test_deployment.py` (13 tests) y
   `test_mdns.py` (8 tests).
 - **Despliegue multi-nodo (red)** — la capa 3 **corre sobre red** vía Nostr:
@@ -1293,7 +1293,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   firmar con la clave pre-compartida sin que nadie lo note. Para el modo de
   test/zero-deps, `STRICT_MODE=False` o `allow_hmac_fallback=True` degradan a
   HMAC **con warning visible** (el fallback ya no es silencioso). Los extras
-  (`delm[nostr]`, `delm[quic]`, `delm[mdns]`, `delm[all]`) declaran las deps
+  (`smcp[nostr]`, `smcp[quic]`, `smcp[mdns]`, `smcp[all]`) declaran las deps
   reales en `pyproject.toml`.
 
 ---
@@ -1301,12 +1301,12 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
 ## Estructura
 
 ```
-delm/
+smcp/
   config.py           ModelConfig + load_config + build_client (config de modelo)
   cli.py              la CLI unificada (demo/test/config-check/fit/mesh/version)
-  __main__.py         `python -m delm` == `delm` (mismo parser)
+  __main__.py         `python -m smcp` == `smcp` (mismo parser)
   serve.py            smcp-serve: SMCP como agente ACP por stdio (vía A)
-  web/                la capa web, DENTRO del paquete (delm[web])
+  web/                la capa web, DENTRO del paquete (smcp[web])
     app.py            FastAPI :8099 — /api/status, /api/run, estático
     api.py            el router interactivo (/api/runs, /api/scan, …)
     static/                11 páginas (nav común en todas) + assets
@@ -1400,9 +1400,9 @@ docs/
   inscripcion-v3.md   especificación de la inscripción de inferencia v3
                       (el template de la tx, los BRC adoptados, lo abierto)
 scripts/
-  check_readme_count.py   gate de conciliación README ↔ pytest (`delm gates readme`)
+  check_readme_count.py   gate de conciliación README ↔ pytest (`smcp gates readme`)
 Makefile
-  make help / gates / lint / types / test / coverage — delega en `delm gates`
+  make help / gates / lint / types / test / coverage — delega en `smcp gates`
 ```
 
 ---

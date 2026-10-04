@@ -16,13 +16,13 @@ import base64
 
 import pytest
 
-from delm.core.gist import Gist, GistKind
-from delm.core.secure_context import (
+from smcp.core.gist import Gist, GistKind
+from smcp.core.secure_context import (
     AdmissionDenied,
     KeyRotationDenied,
     SecureSharedContext,
 )
-from delm.core.provenance import KeyPair, digest_of
+from smcp.core.provenance import KeyPair, digest_of
 
 
 def _key(author: str = "n1") -> KeyPair:
@@ -137,7 +137,7 @@ def test_unsigned_content_is_refused_even_when_policy_allows_it():
     that widened the gate would silently start admitting unsigned content,
     and that is the exact change nobody would review.
     """
-    from delm.core.ledger import TrustGate, TrustPolicy
+    from smcp.core.ledger import TrustGate, TrustPolicy
     # Policy explicitly allows unsigned writers (nobody denylisted, signature
     # not required): only the mesh rule stands between them and C.
     ctx = SecureSharedContext(
@@ -230,6 +230,6 @@ def test_content_travels_signed_and_verifies_offline():
 
     assert digest_of(rebuilt) == wire["digest"]
     # And the digest verifies against the announced key, standalone.
-    from delm.core.provenance import verify_public
+    from smcp.core.provenance import verify_public
     assert verify_public(wire["sig_kind"], key.public_key,
                          wire["digest"], rebuilt.signature)

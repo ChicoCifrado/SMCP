@@ -1,4 +1,4 @@
-"""Tests de ``delm.core.gossip`` — propagación transitoria de estado de pares.
+"""Tests de ``smcp.core.gossip`` — propagación transitoria de estado de pares.
 
 Cubre:
 * floor de versión — ingest y re-difusión respetan ``version_floor``.
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.gossip import (
+from smcp.core.gossip import (
     GossipTable,
     PeerAnnouncement,
     PeerInfo,

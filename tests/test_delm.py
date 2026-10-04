@@ -10,15 +10,15 @@ import asyncio
 
 import pytest
 
-from delm.core.gist import Gist, GistKind, RefTag, Summary
-from delm.core.shared_context import SharedContext
-from delm.core.task_queue import Task, TaskQueue
-from delm.core.admission import AdmissionPipeline
-from delm.core.verifier import RuleVerifier, VerifyResult
-from delm.core.unfolding import Unfolding
-from delm.core.llm import FakeLLMClient
-from delm.core.pipeline import DelmPipeline
-from delm.demo.run_demo import run as demo_run
+from smcp.core.gist import Gist, GistKind, RefTag, Summary
+from smcp.core.shared_context import SharedContext
+from smcp.core.task_queue import Task, TaskQueue
+from smcp.core.admission import AdmissionPipeline
+from smcp.core.verifier import RuleVerifier, VerifyResult
+from smcp.core.unfolding import Unfolding
+from smcp.core.llm import FakeLLMClient
+from smcp.core.pipeline import DelmPipeline
+from smcp.demo.run_demo import run as demo_run
 from conftest import toy_units
 
 
@@ -202,8 +202,8 @@ def test_unfolding_neighbors():
 # ------------------------------------------------------------ full pipeline
 def test_end_to_end_pipeline_runs():
     """The public DelmPipeline drives queue -> workers -> admit -> finalize."""
-    from delm.core.llm import FakeLLMClient
-    from delm.core.task_queue import Task
+    from smcp.core.llm import FakeLLMClient
+    from smcp.core.task_queue import Task
 
     toy = {lbl: txt for lbl, txt in toy_units()}
 

@@ -21,8 +21,8 @@ import os
 
 import pytest
 
-from delm.core.bsv_keys import HAVE_ECDSA, verify_public
-from delm.core.spv import (
+from smcp.core.bsv_keys import HAVE_ECDSA, verify_public
+from smcp.core.spv import (
     SECURITY_LEVELS,
     SpvWallet,
     address_matches_public_key,
@@ -55,7 +55,7 @@ def _priv(w: SpvWallet) -> bytes:
 def test_entropy_zero_matches_the_bip39_vector():
     """Si la palabra/entropía->índice->palabra está mal, el mnemonic no es
     un mnemonic: parece uno y no lo es. El vector es la única referencia."""
-    from delm.core._bip39_words import BIP39_WORDS
+    from smcp.core._bip39_words import BIP39_WORDS
     assert len(BIP39_WORDS) == 2048
     ent = b"\x00" * 16
     bits = "".join(f"{b:08b}" for b in ent) + \
@@ -172,7 +172,7 @@ def test_derived_point_is_on_the_curve():
 
 
 def _N_OF_CURVE() -> int:
-    from delm.core.spv import _N
+    from smcp.core.spv import _N
     return _N
 
 

@@ -1,6 +1,6 @@
 """Tests de BIP340 (Schnorr secp256k1, x-only) — verificación contra vectores oficiales.
 
-El esquema de firma de Nostr es **BIP340**. ``delm.core.nostr`` lo implementa
+El esquema de firma de Nostr es **BIP340**. ``smcp.core.nostr`` lo implementa
 fiel a la referencia oficial (``bitcoin/bips`` ``bip-0340/reference.py``) y se
 **verifica contra los vectores oficiales** (``bip-0340/test-vectors.csv``), que
 viven en ``tests/data/bip340_vectors.csv``.
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from delm.core.nostr import (
+from smcp.core.nostr import (
     pubkey_gen,
     schnorr_sign,
     schnorr_verify,
@@ -181,7 +181,7 @@ def test_pubkey_gen_rejects_zero_seckey():
 @pytest.fixture
 def relay_server():
     """Un :class:`NostrRelayServer` corriendo (expone el puerto)."""
-    from delm.core.nostr import NostrRelayServer
+    from smcp.core.nostr import NostrRelayServer
     server = NostrRelayServer()
     server.start()
     yield server
@@ -189,7 +189,7 @@ def relay_server():
 
 
 def _make_client(uri: str):
-    from delm.core.nostr import NostrRelayClient
+    from smcp.core.nostr import NostrRelayClient
     c = NostrRelayClient(uri)
     c.connect()
     return c
@@ -218,7 +218,7 @@ def test_relay_client_receives_excluding_sender(relay_server):
     ``c1`` publica; ``c2`` lo recibe; ``c1`` **no** lo recibe (el relay no
     emite de vuelta al que envía).
     """
-    from delm.core.nostr import NostrEvent, NostrKey
+    from smcp.core.nostr import NostrEvent, NostrKey
     key = NostrKey.new()
     c1 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
     c2 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
@@ -243,7 +243,7 @@ def test_relay_rejects_bad_signature(relay_server):
     el relay (la verificación la hace el relay, la autoridad). El rechazo se
     guarda en ``dropped()`` (mismo contrato que el relay in-memory).
     """
-    from delm.core.nostr import NostrEvent, NostrKey
+    from smcp.core.nostr import NostrEvent, NostrKey
     key = NostrKey.new()
     c1 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
     try:
@@ -267,7 +267,7 @@ def test_relay_client_same_contract_as_inmemory(relay_server):
     """:class:`NostrRelayClient` expone el **mismo contrato** que
     :class:`NostrRelay` (in-memory): ``publish`` / ``events`` / ``dropped``.
     """
-    from delm.core.nostr import NostrEvent, NostrKey
+    from smcp.core.nostr import NostrEvent, NostrKey
     key = NostrKey.new()
     c1 = _make_client(f"ws://127.0.0.1:{relay_server.port}")
     try:
@@ -292,7 +292,7 @@ def test_relay_client_same_contract_as_inmemory(relay_server):
 
 def _make_transport(relay_server):
     """Crea un :class:`NostrTransport` conectado al relay (devuelve (t, c))."""
-    from delm.core.nostr import NostrRelayClient, NostrKey, NostrTransport
+    from smcp.core.nostr import NostrRelayClient, NostrKey, NostrTransport
     key = NostrKey.new()
     client = NostrRelayClient(f"ws://127.0.0.1:{relay_server.port}")
     client.connect()
@@ -353,7 +353,7 @@ def test_nostr_transport_is_mesh_transport(relay_server):
     mismo contrato (``send``/``poll``/``close``), así un ``MeshNode`` lo usa
     sin cambiar.
     """
-    from delm.core.transport import MeshTransport
+    from smcp.core.transport import MeshTransport
     t, c = _make_transport(relay_server)
     try:
         assert isinstance(t, MeshTransport)
@@ -373,12 +373,12 @@ def test_nostr_mesh_two_nodes_converge(relay_server):
     + el del otro).
     """
     import time
-    from delm.core.nostr import NostrKey, NostrRelayClient, NostrTransport
-    from delm.core.mesh_node import MeshNode
-    from delm.core.secure_context import SecureSharedContext
-    from delm.core.requirements import MeshRequirements
-    from delm.core.provenance import KeyPair
-    from delm.core.gist import Gist, GistKind
+    from smcp.core.nostr import NostrKey, NostrRelayClient, NostrTransport
+    from smcp.core.mesh_node import MeshNode
+    from smcp.core.secure_context import SecureSharedContext
+    from smcp.core.requirements import MeshRequirements
+    from smcp.core.provenance import KeyPair
+    from smcp.core.gist import Gist, GistKind
 
     req = MeshRequirements(mesh_id="m1", version_floor=(1, 0))
 

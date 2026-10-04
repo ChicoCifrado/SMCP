@@ -18,8 +18,8 @@ import json
 
 import pytest
 
-from delm.core import ledger_canon as canon
-from delm.core.ledger import (
+from smcp.core import ledger_canon as canon
+from smcp.core.ledger import (
     LEDGER_FORMAT_VERSION,
     AdmissionLedger,
     LedgerFile,

@@ -72,7 +72,7 @@ def test_smcp_wiring_to_meshllm():
             f"no hay endpoint MeshLLM en {MESH_URL} "
             "(opt-in; corre con MESH_LLM_URL=<endpoint> -m slow)"
         )
-    from delm.core.llm import OpenAICompatibleClient
+    from smcp.core.llm import OpenAICompatibleClient
     client = OpenAICompatibleClient(
         model=model, base_url=MESH_URL, api_key="dummy",
     )

@@ -1,4 +1,4 @@
-"""Tests for the model-config loader (``delm.config``).
+"""Tests for the model-config loader (``smcp.config``).
 
 Covers:
 * ``load_config`` — env-only, YAML-only, and env-over-YAML precedence.
@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from delm.config import ModelConfig, build_client, load_config
-from delm.core.llm import OpenAICompatibleClient
+from smcp.config import ModelConfig, build_client, load_config
+from smcp.core.llm import OpenAICompatibleClient
 
 
 # ---------------------------------------------------------------- load_config
@@ -109,12 +109,12 @@ def test_load_config_frozen():
 
 # ---------------------------------------------------------------- _read_yaml
 def test_read_yaml_missing(tmp_path: Path):
-    from delm.config import _read_yaml
+    from smcp.config import _read_yaml
     assert _read_yaml(tmp_path / "nope.yaml") == {}
 
 
 def test_read_yaml_flat(tmp_path: Path):
-    from delm.config import _read_yaml
+    from smcp.config import _read_yaml
     p = tmp_path / "c.yaml"
     p.write_text("model: a\nbase_url: b\napi_key: c\n# a comment\n")
     d = _read_yaml(p)
@@ -124,7 +124,7 @@ def test_read_yaml_flat(tmp_path: Path):
 
 
 def test_read_yaml_quoted(tmp_path: Path):
-    from delm.config import _read_yaml
+    from smcp.config import _read_yaml
     p = tmp_path / "c.yaml"
     p.write_text('model: "a b"\nbase_url: \'u\'\n')
     d = _read_yaml(p)
@@ -150,7 +150,7 @@ def test_build_client_empty_key_is_none():
 
 # ---------------------------------------------------------------- dry-run CLI
 def test_run_real_demo_dry_run(capsys):
-    from delm.demo import run_real_demo
+    from smcp.demo import run_real_demo
     rc = run_real_demo.main(["--dry-run", "--config", "/dev/null"])
     out = capsys.readouterr().out
     assert "dry-run" in out
@@ -159,7 +159,7 @@ def test_run_real_demo_dry_run(capsys):
 
 
 def test_run_real_demo_dry_run_ok(capsys, monkeypatch, tmp_path: Path):
-    from delm.demo import run_real_demo
+    from smcp.demo import run_real_demo
     p = tmp_path / "c.yaml"
     p.write_text("model: m\nbase_url: http://x/v1\n")
     rc = run_real_demo.main(["--dry-run", "--config", str(p)])
@@ -169,7 +169,7 @@ def test_run_real_demo_dry_run_ok(capsys, monkeypatch, tmp_path: Path):
 
 
 def test_run_real_demo_missing_model_errors(capsys, monkeypatch, tmp_path):
-    from delm.demo import run_real_demo
+    from smcp.demo import run_real_demo
     # Run from a clean cwd so the local config/model_config.yaml is not
     # auto-detected; only the (absent) env vars apply.
     monkeypatch.chdir(tmp_path)

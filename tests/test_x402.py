@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from delm.core import x402
+from smcp.core import x402
 
 TXID = "a" * 64
 OTHER_TXID = "b" * 64

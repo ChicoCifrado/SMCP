@@ -6,8 +6,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from delm.web.app import app
-from delm.web.api import MANAGER
+from smcp.web.app import app
+from smcp.web.api import MANAGER
 
 
 @pytest.fixture()
@@ -125,11 +125,11 @@ def test_taint_requires_pipeline(client: TestClient):
 
 def test_config_put_writes_yaml(client: TestClient, tmp_path, monkeypatch):
     # Point config path at tmp via monkeypatching _config_path in smcp_api.
-    from delm.web import api as smcp_api
+    from smcp.web import api as smcp_api
     fake = tmp_path / "model_config.yaml"
     monkeypatch.setattr(smcp_api, "_config_path", lambda: fake)
     # Also make load_config read from that path.
-    from delm.config import load_config as _lc
+    from smcp.config import load_config as _lc
     monkeypatch.setattr(smcp_api, "_load_cfg", lambda: _lc(fake) if fake.exists() else _lc(None))
 
     r = client.put("/api/config", json={

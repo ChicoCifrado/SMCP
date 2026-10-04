@@ -1,4 +1,4 @@
-"""Tests de ``delm.core.heartbeat`` — heartbeat y detección de caída.
+"""Tests de ``smcp.core.heartbeat`` — heartbeat y detección de caída.
 
 Cubre:
 * registro y beat — ``last_heartbeat``/``last_seen`` se actualizan.
@@ -8,7 +8,7 @@ Cubre:
 """
 from __future__ import annotations
 
-from delm.core.heartbeat import HeartbeatTracker
+from smcp.core.heartbeat import HeartbeatTracker
 
 
 # ---------------------------------------------------------------------------

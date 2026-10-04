@@ -27,7 +27,7 @@ def test_harness_client_imports_without_sdk():
     para inspeccionar su API.
     """
     had_sdk = "deepseek_harness" in __import__("sys").modules
-    mod = importlib.import_module("delm.core.harness_client")
+    mod = importlib.import_module("smcp.core.harness_client")
     # Si el SDK no estaba cargado, importar el módulo no lo añade.
     if not had_sdk:
         assert "deepseek_harness" not in __import__("sys").modules
@@ -43,8 +43,8 @@ def test_harness_client_is_an_llmclient():
     ``HarnessLLMClient`` sin cambiar su código: ambos exponen
     ``complete``/``complete_json``.
     """
-    from delm.core.llm import LLMClient
-    mod = importlib.import_module("delm.core.harness_client")
+    from smcp.core.llm import LLMClient
+    mod = importlib.import_module("smcp.core.harness_client")
     assert issubclass(mod.HarnessLLMClient, LLMClient)
 
 
@@ -59,8 +59,8 @@ def test_build_client_defaults_to_openai():
     La regresión es explícita: el default no cambia; el harness queda
     opt-in y la suite por defecto (sin SDK ni servidor) sigue verde.
     """
-    from delm.config import ModelConfig, build_client
-    from delm.core.llm import OpenAICompatibleClient
+    from smcp.config import ModelConfig, build_client
+    from smcp.core.llm import OpenAICompatibleClient
     client = build_client(ModelConfig(model="m", base_url="http://x/v1"))
     assert isinstance(client, OpenAICompatibleClient)
 
@@ -71,8 +71,8 @@ def test_build_client_use_harness_returns_harness():
     Import lazy: construir el cliente NO importa el SDK (lázy import), y el
     objeto resultante es un ``LLMClient`` (sustituible por el normal).
     """
-    from delm.config import ModelConfig, build_client
-    from delm.core.llm import LLMClient
+    from smcp.config import ModelConfig, build_client
+    from smcp.core.llm import LLMClient
     client = build_client(ModelConfig(
         model="unsloth/Qwen3.8-27B-GGUF",
         base_url="http://127.0.0.1:8888/v1",
@@ -85,7 +85,7 @@ def test_build_client_use_harness_returns_harness():
 
 def test_load_config_honors_delm_harness_env(monkeypatch):
     """``DELM_HARNESS=1`` en el env activa el backend harness en el config."""
-    from delm.config import load_config
+    from smcp.config import load_config
     # env mínimo: el resto de DELM_* queda vacío (defaults).
     monkeypatch.setenv("DELM_MODEL", "m")
     monkeypatch.setenv("DELM_BASE_URL", "http://x/v1")
@@ -96,7 +96,7 @@ def test_load_config_honors_delm_harness_env(monkeypatch):
 
 def test_load_config_harness_defaults_off(monkeypatch):
     """Sin ``DELM_HARNESS``, el config queda con el backend normal."""
-    from delm.config import load_config
+    from smcp.config import load_config
     monkeypatch.setenv("DELM_MODEL", "m")
     monkeypatch.setenv("DELM_BASE_URL", "http://x/v1")
     monkeypatch.delenv("DELM_HARNESS", raising=False)
@@ -131,7 +131,7 @@ def test_harness_adapter_turn():
     except Exception:
         pytest.skip("servidor local 127.0.0.1:8888 no activo")
 
-    mod = importlib.import_module("delm.core.harness_client")
+    mod = importlib.import_module("smcp.core.harness_client")
     client = mod.HarnessLLMClient(
         model="unsloth/Qwen3.8-27B-GGUF",
         base_url="http://127.0.0.1:8888/v1",
@@ -166,9 +166,9 @@ def test_harness_pipeline_runs_with_real_backend():
     except Exception:
         pytest.skip("servidor local 127.0.0.1:8888 no activo")
 
-    from delm.config import ModelConfig, build_client
-    from delm.core.pipeline import DelmPipeline
-    from delm.core.task_queue import Task
+    from smcp.config import ModelConfig, build_client
+    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.task_queue import Task
 
     client = build_client(ModelConfig(
         model="unsloth/Qwen3.8-27B-GGUF",

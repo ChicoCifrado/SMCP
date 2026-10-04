@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.anchor import AnchorLedger, AnchorRecord
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.contrib import CapacityReport, ContributionLedger
-from delm.core.membership import BlockHeader, InclusionProof, MembershipOutput, merkle_root
-from delm.core.provenance import KeyPair
-from delm.core.reputation import (
+from smcp.core.anchor import AnchorLedger, AnchorRecord
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.contrib import CapacityReport, ContributionLedger
+from smcp.core.membership import BlockHeader, InclusionProof, MembershipOutput, merkle_root
+from smcp.core.provenance import KeyPair
+from smcp.core.reputation import (
     ReputationBoard,
     ReputationEntry,
     board_from_counters,
@@ -186,7 +186,7 @@ def test_an_anchor_cannot_be_signed_by_a_key_that_is_not_the_membership_one():
     atribuir el gasto al nodo correcto y una firma de otra clave no lo haria.
     Es mejor no construirlo que construirlo y rechazarlo despues.
     """
-    from delm.core.membership import ProtocolError
+    from smcp.core.membership import ProtocolError
 
     worker = Secp256k1KeyPair.new("n1")
     rec = AnchorRecord(membership_txid=MEMBERSHIP_TXID, membership_vout=0,

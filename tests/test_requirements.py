@@ -1,4 +1,4 @@
-"""Tests de ``delm.core.requirements`` — requisitos inmutables y admisión.
+"""Tests de ``smcp.core.requirements`` — requisitos inmutables y admisión.
 
 Cubre:
 * ``MeshRequirements`` — inmutabilidad y hash de política.
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.requirements import (
+from smcp.core.requirements import (
     AdmissionEvaluator,
     MeshRequirements,
     ReleaseAttestation,

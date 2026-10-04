@@ -2,13 +2,13 @@
 
 import asyncio
 
-from delm.core.benchmark import (
+from smcp.core.benchmark import (
     BenchmarkPoint,
     run_point,
     scale_sweep,
     summarize,
 )
-from delm.core.llm import FakeLLMClient
+from smcp.core.llm import FakeLLMClient
 
 
 def test_run_point_measures():

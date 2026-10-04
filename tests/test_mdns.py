@@ -1,9 +1,9 @@
 """Tests de la Capa 4 — transporte de descubrimiento mDNS.
 
-El :class:`~delm.core.mdns.MdnsDiscoveryTransport` es *swappable* con
-:class:`~delm.core.deployment.DiscoveryBus`: implementa el mismo contrato
+El :class:`~smcp.core.mdns.MdnsDiscoveryTransport` es *swappable* con
+:class:`~smcp.core.deployment.DiscoveryBus`: implementa el mismo contrato
 (``register``/``publish``/``deliver``/``nodes``), así
-:class:`~delm.core.deployment.DeploymentNode` lo usa sin cambiar.
+:class:`~smcp.core.deployment.DeploymentNode` lo usa sin cambiar.
 
 Estos tests cubren:
 
@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.deployment import (
+from smcp.core.deployment import (
     Announcement,
     DiscoveryBus,
     DeploymentNode,
     Owner,
 )
-from delm.core.mdns import MdnsBus, MdnsDiscoveryTransport
+from smcp.core.mdns import MdnsBus, MdnsDiscoveryTransport
 
 
 # -- fixtures ---------------------------------------------------------------

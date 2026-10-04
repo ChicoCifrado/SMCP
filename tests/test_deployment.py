@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.deployment import (
+from smcp.core.deployment import (
     Command,
     DiscoveryBus,
     DeploymentNode,
@@ -82,7 +82,7 @@ def test_bootstrap_tampered_announcement_dropped(owner, bus):
     a = _node(owner, bus, "A")
     b = _node(owner, bus, "B")
     # A publica, pero el owner *no* firma (signature vacío) -> B lo descarta.
-    from delm.core.deployment import Announcement
+    from smcp.core.deployment import Announcement
     bad = Announcement(node_id="A", endpoint="ep-A", epoch=1, ts=0.0)
     bus.publish("A", bad)
     assert b.poll() == 0          # nada aceptado
@@ -94,7 +94,7 @@ def test_bootstrap_wrong_owner_key_dropped(owner, bus):
     other = Owner("owner-2")
     a = _node(owner, bus, "A")
     b = _node(owner, bus, "B")
-    from delm.core.deployment import Announcement
+    from smcp.core.deployment import Announcement
     bad = Announcement(node_id="A", endpoint="ep-A", epoch=1, ts=0.0)
     other.sign_announcement(bad)  # firmado por owner-2, no por owner-1
     bus.publish("A", bad)
@@ -180,7 +180,7 @@ def test_nostr_transport_same_contract_as_discovery_bus(owner):
     la firma BIP340** del evento (no lo descargó). El anuncio llega igual que
     por el bus in-memory (mismo contrato).
     """
-    from delm.core.nostr import NostrKey, NostrRelay, NostrDiscoveryTransport
+    from smcp.core.nostr import NostrKey, NostrRelay, NostrDiscoveryTransport
 
     relay = NostrRelay()
     key = NostrKey.new()
@@ -203,7 +203,7 @@ def test_nostr_transport_relay_rejects_bad_signature(owner):
     (El transporte real solo emite eventos firmados por su ``key``, así esto
     cubre el caso de un evento corrupto/falsificado en el relay.)
     """
-    from delm.core.nostr import NostrEvent, NostrKey, NostrRelay, NostrDiscoveryTransport
+    from smcp.core.nostr import NostrEvent, NostrKey, NostrRelay, NostrDiscoveryTransport
 
     relay = NostrRelay()
     key = NostrKey.new()
@@ -234,7 +234,7 @@ def test_nostr_transport_network_form(owner):
     reciba (polling), como en ``test_mesh.py::test_mesh_pipeline_runs_over_quic``.
     """
     import time
-    from delm.core.nostr import (
+    from smcp.core.nostr import (
         NostrKey,
         NostrRelayServer,
         NostrRelayClient,

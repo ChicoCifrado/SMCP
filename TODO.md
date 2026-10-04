@@ -35,7 +35,7 @@
 
 - [ ] **Onboarding guiado** (primer arranque: generar claves, unirse a malla)
 - [ ] **Dashboard de nodo** (VRAM, inferencias, sats, DELM, reputacion)
-- [ ] **CLI amigable**: `delm mesh join` interactivo, `delm status`
+- [ ] **CLI amigable**: `smcp mesh join` interactivo, `smcp status`
 - [ ] **Web UI** (ya existe en `delm/web/`) — pulir:
   - [ ] vista de contexto compartido `C` verificado
   - [ ] cola de tareas `T` en tiempo real
@@ -58,9 +58,14 @@
 
 ## 4. Rebrand total a SMCP
 
-- [ ] **Paquete Python**: `delm` -> `smcp` (`pyproject.toml` name, imports)
-  - [ ] `import delm.core.*` -> `import smcp.core.*` (149 ficheros)
-  - [ ] CLI `delm` -> `smcp` (`smcp-serve` ya existe)
+- [x] **Paquete Python**: `delm` -> `smcp` (`pyproject.toml` name, imports)
+  - [x] `import delm.core.*` -> `import smcp.core.*` (149 ficheros)
+  - [x] CLI `delm` -> `smcp` (`smcp-serve` ya existe)
+  - [x] Entry points: `smcp`, `smcp-serve`, `smcp-serve-web`
+    (alias `delm-demo`/`delm-real-demo` se conservan por compat)
+  - [x] Env vars `DELM_*` se conservan (config, no paquete)
+  - [x] Docs: README, CHANGELOG, DESIGNCOMPAT, docs/*.md, ci.yml, requirements.txt
+  - [x] "DeLM" (paper) y "DELM" (token) se conservan — solo cambia el paquete/CLI
 - [ ] **Docs**: README (ya tiene titulo SMCP), CHANGELOG, DESIGNCOMPAT
 - [ ] **Token**: simbolo DELM -> decidir (¿SMCP? ¿mantener DELM como homenaje al paper?)
 - [ ] **Nombres internos**: clases/funciones `Delm*` -> `Smcp*`

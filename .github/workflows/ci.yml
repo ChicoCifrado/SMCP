@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             pyproject.toml
-      - name: Instalar delm[all] + deps de test
+      - name: Instalar smcp[all] + deps de test
         run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
       - name: Suite completa (pytest)
         run: python -m pytest
@@ -62,16 +62,16 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             pyproject.toml
-      - name: Instalar delm[all] + deps de test
+      - name: Instalar smcp[all] + deps de test
         run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
       - name: "demo 1: run_demo (pipeline end-to-end)"
-        run: python -m delm.demo.run_demo
+        run: python -m smcp.demo.run_demo
       - name: "demo 2: run_security_demo (Capas 1+2)"
-        run: python -m delm.demo.run_security_demo
+        run: python -m smcp.demo.run_security_demo
       - name: "demo 3: run_taint_demo (Capa 5)"
-        run: python -m delm.demo.run_taint_demo
+        run: python -m smcp.demo.run_taint_demo
       - name: "demo 4: run_real_demo --dry-run (resuelve la config)"
-        run: python -m delm.demo.run_real_demo --dry-run
+        run: python -m smcp.demo.run_real_demo --dry-run
 
   # Gates de calidad (P4). Antes de esto el CI no tenia NINGUNO: ni lint, ni
   # tipos, ni cobertura. Una suite verde no puede detectar ni el drift del
@@ -97,21 +97,21 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             pyproject.toml
-      - name: Instalar delm[all] + deps de test
+      - name: Instalar smcp[all] + deps de test
         run: python -m pip install --upgrade pip && pip install -e ".[all]" -r requirements.txt
-      # Los gates viven en delm/core/gates.py y el CI llama al mismo runner
-      # que `delm gates`. `readme` esta aqui porque el README declara un conteo
+      # Los gates viven en smcp/core/gates.py y el CI llama al mismo runner
+      # que `smcp gates`. `readme` esta aqui porque el README declara un conteo
       # de tests que debe cuadrar con `pytest --collect-only -q`; el job
       # readme-check que lo hacia por su cuenta fue eliminado, porque dos
       # copias de un gate es una que se puede encoger sin que nada falle.
-      # que `delm gates`. Una lista de gates duplicada en el workflow es una
+      # que `smcp gates`. Una lista de gates duplicada en el workflow es una
       # lista que se encoge sin que nada falle: el build se debilita en
       # silencio. `ruff format --check` NO es gate todavia, a proposito:
       # reformatear 81 de 92 archivos mezclaria un cambio cosmetico sobre
       # 12.100 lineas con los hallazgos reales del type-checker. Formatear
       # es un commit propio (sin logica) y despues se activa.
       - name: Gates (readme, ruff, pyright, tests)
-        run: python -m delm gates --blocking
+        run: python -m smcp gates --blocking
       - name: Cobertura
-        run: python -m pytest --cov=delm --cov-report=term:skip-covered -q
+        run: python -m pytest --cov=smcp --cov-report=term:skip-covered -q
 

@@ -29,27 +29,27 @@ import asyncio
 
 import pytest
 
-from delm.core.arc import ACCEPTED_BY_NETWORK, ArcTxStatus
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.contrib import CapacityReport, ContributionLedger
-from delm.core.inscripcion import ORDINAL_SATOSHIS
-from delm.core.intercambio import (
+from smcp.core.arc import ACCEPTED_BY_NETWORK, ArcTxStatus
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.contrib import CapacityReport, ContributionLedger
+from smcp.core.inscripcion import ORDINAL_SATOSHIS
+from smcp.core.intercambio import (
     InferenceRequest,
     InferenceServer,
     sign_payment,
 )
-from delm.core.llm import FakeLLMClient
-from delm.core.membership import ProtocolError
-from delm.core.registro import (
+from smcp.core.llm import FakeLLMClient
+from smcp.core.membership import ProtocolError
+from smcp.core.registro import (
     InferenceRegistry,
     PAY_BSV,
     PAY_DELM,
 )
-from delm.core.placement import ModelSpec, plan_placement
-from delm.core.provenance import KeyPair
-from delm.core.reputation import board_from_counters
-from delm.core.tiers import PER_INFERENCE_SATOSHIS
-from delm.core.txbuild import Transaction, TxIn
+from smcp.core.placement import ModelSpec, plan_placement
+from smcp.core.provenance import KeyPair
+from smcp.core.reputation import board_from_counters
+from smcp.core.tiers import PER_INFERENCE_SATOSHIS
+from smcp.core.txbuild import Transaction, TxIn
 
 MESH = "malla-v3"
 NOW = 1_000.0

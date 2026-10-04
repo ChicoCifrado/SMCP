@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from delm.core.wiring import (
+from smcp.core.wiring import (
     DEFAULT_FRESH_TTL_S,
     MAX_CLOCK_SKEW_S,
     R_BAD_SIGNATURE,

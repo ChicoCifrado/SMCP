@@ -14,8 +14,8 @@ import asyncio
 
 import pytest
 
-from delm.core.gist import GistKind
-from delm.core.rsi import RSILoop, Rule, Successor
+from smcp.core.gist import GistKind
+from smcp.core.rsi import RSILoop, Rule, Successor
 
 
 # ------------------------------------------------------------------ helpers
@@ -128,8 +128,8 @@ def test_apply_rejects_unaccepted_rule():
     # Forzamos un outcome no aceptado: usamos un Rule cuyo verifier rechace.
     # Como gist==evidence, el verifier siempre acepta; por tanto simulamos
     # un RSIOutcome con accepted=False directamente.
-    from delm.core.rsi import RSIOutcome
-    from delm.core.verifier import VerifyResult
+    from smcp.core.rsi import RSIOutcome
+    from smcp.core.verifier import VerifyResult
     r = Rule("x", "s", "p", 1, "short")
     out = RSIOutcome(accepted=False, rule=r,
                     verify=VerifyResult(ok=False, reasons=["synthetic"]),

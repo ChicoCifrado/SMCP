@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 
-from delm.core.quic_host import (
+from smcp.core.quic_host import (
     QuicHostSwarm,
     _deframe,
     _frame,

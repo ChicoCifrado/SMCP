@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from delm.core import contrib as C
-from delm.core.contrib import (
+from smcp.core import contrib as C
+from smcp.core.contrib import (
     CapacityReport,
     ContribReject,
     ContributionLedger,
@@ -28,7 +28,7 @@ from delm.core.contrib import (
 
 
 def _key(tmp_path, peer_id="local"):
-    from delm.core.provenance import KeyPair
+    from smcp.core.provenance import KeyPair
 
     return KeyPair.new(peer_id, kind="ed25519")
 
@@ -244,7 +244,7 @@ def test_offering_a_share_is_allowed():
 
 def _ledger_with(peer_id: str, vram_gb: float, advertised_gb: float,
                  key=None) -> ContributionLedger:
-    from delm.core.provenance import KeyPair
+    from smcp.core.provenance import KeyPair
 
     led = ContributionLedger("malla-test")
     key = key or KeyPair.new(peer_id)
@@ -489,7 +489,7 @@ def test_planning_never_uses_the_physical_headline():
     *plan* honours it. A node offering 2 of 24 must not receive a 20 GiB
     slice, so the oversized stage must be impossible.
     """
-    from delm.core.placement import ModelSpec, Stage, plan_placement
+    from smcp.core.placement import ModelSpec, Stage, plan_placement
 
     led = ContributionLedger()
     key = _key(None)

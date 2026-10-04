@@ -4,8 +4,8 @@ This is the P1 acceptance test: it proves the whole real-model path works,
 without depending on any external network, API key, or a live model.
 
 It stands up a tiny in-process OpenAI-compatible HTTP server (a *mock*),
-points a :class:`~delm.config.ModelConfig` at it, builds the
-:class:`OpenAICompatibleClient` via :func:`delm.config.build_client`, and
+points a :class:`~smcp.config.ModelConfig` at it, builds the
+:class:`OpenAICompatibleClient` via :func:`smcp.config.build_client`, and
 runs a real :class:`DelmPipeline` over it. The mock answers the same role
 prompts the pipeline sends (SOLVER / SUMMARIZER / FINALIZER) exactly the way
 the deterministic demo does, so the gist is verbatim the result and the
@@ -13,7 +13,7 @@ deterministic :class:`RuleVerifier` passes on the first attempt (no retries).
 
 What this proves (and only this):
 
-* :func:`delm.config.build_client` returns a working
+* :func:`smcp.config.build_client` returns a working
   :class:`OpenAICompatibleClient` for a :class:`ModelConfig`.
 * The client issues real HTTP ``POST /v1/chat/completions`` calls and parses
   the OpenAI response shape.
@@ -31,10 +31,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from delm.config import ModelConfig, build_client
-from delm.core.llm import OpenAICompatibleClient
-from delm.core.pipeline import DelmPipeline
-from delm.core.task_queue import Task
+from smcp.config import ModelConfig, build_client
+from smcp.core.llm import OpenAICompatibleClient
+from smcp.core.pipeline import DelmPipeline
+from smcp.core.task_queue import Task
 
 
 # ---------------------------------------------------------------- mock server

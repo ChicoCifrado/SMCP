@@ -15,8 +15,8 @@ import time
 
 import pytest
 
-from delm.core.contrib import PeerContribution
-from delm.core.reservation import (
+from smcp.core.contrib import PeerContribution
+from smcp.core.reservation import (
     ALREADY_HELD,
     MOVED,
     NOT_ENOUGH,
@@ -392,7 +392,7 @@ def stalled_free_gb():
     the code reads it inline or caches it in a local first, the threads all sit
     in the same window. Restored afterwards.
     """
-    from delm.core import reservation as rs
+    from smcp.core import reservation as rs
 
     original = rs._NodeBook.free_gb
 
@@ -476,7 +476,7 @@ def test_the_free_figure_is_read_once_per_claim(stalled_free_gb: None) -> None:
     records without a second look. More than one read per attempt is the shape
     that makes check-then-act possible.
     """
-    from delm.core import reservation as rs
+    from smcp.core import reservation as rs
 
     reads = 0
     counter_guard = threading.Lock()

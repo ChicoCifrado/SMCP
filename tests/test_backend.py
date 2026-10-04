@@ -18,8 +18,8 @@ import json
 
 import pytest
 
-from delm.core import backend as be
-from delm.core.provenance import KeyPair
+from smcp.core import backend as be
+from smcp.core.provenance import KeyPair
 
 OPENAI_MODELS = {
     "object": "list",

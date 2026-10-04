@@ -28,7 +28,7 @@ Qué NO es este test (y por qué importa decirlo):
   lo que se prueba es la contabilidad de ese hecho, no que un modelo sepa
   Contestar.
 * **El pago no se comprueba aqui.** Que la inferencia se pagara es cosa de
-  `delm.core.x402` (challenge/proof) y de la cadena; este test empieza donde
+  `smcp.core.x402` (challenge/proof) y de la cadena; este test empieza donde
   esa parte ya dio por buena.
 """
 
@@ -36,13 +36,13 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.anchor import AnchorRecord
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.contrib import CapacityReport, ContributionLedger
-from delm.core.membership import BlockHeader, InclusionProof, merkle_root
-from delm.core.placement import ModelSpec, plan_placement
-from delm.core.provenance import KeyPair
-from delm.core.reputation import board_from_counters, board_from_verified
+from smcp.core.anchor import AnchorRecord
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.contrib import CapacityReport, ContributionLedger
+from smcp.core.membership import BlockHeader, InclusionProof, merkle_root
+from smcp.core.placement import ModelSpec, plan_placement
+from smcp.core.provenance import KeyPair
+from smcp.core.reputation import board_from_counters, board_from_verified
 
 MESH = "malla-tesis"
 NOW = 1_000.0
@@ -192,8 +192,8 @@ def test_the_verified_board_counts_what_the_chain_supports():
     verificado deja de contarla **aunque el contador local siga diciendo que
     sí** — y esa discrepancia es justo la que un tercero vería.
     """
-    from delm.core.anchor import AnchorLedger
-    from delm.core.membership import MembershipOutput
+    from smcp.core.anchor import AnchorLedger
+    from smcp.core.membership import MembershipOutput
 
     led = ContributionLedger(MESH)
     wk = Secp256k1KeyPair.new("proveedor")
@@ -246,7 +246,7 @@ def test_a_self_served_inference_cannot_be_anchored_at_all():
     pudiera saltarse por otro camino — no hay registro que saltarse.
     """
     node = Secp256k1KeyPair.new("n1")
-    from delm.core.membership import ProtocolError
+    from smcp.core.membership import ProtocolError
 
     with pytest.raises(ProtocolError) as exc:
         AnchorRecord(membership_txid="ab" * 32, membership_vout=0,

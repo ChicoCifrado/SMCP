@@ -29,11 +29,11 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
-from delm.web import api as smcp_api
-from delm.web.app import app
-from delm.core.contrib import ContributionLedger
-from delm.core.provenance import KeyPair
-from delm.web.api import MANAGER
+from smcp.web import api as smcp_api
+from smcp.web.app import app
+from smcp.core.contrib import ContributionLedger
+from smcp.core.provenance import KeyPair
+from smcp.web.api import MANAGER
 
 MESH = "malla-api-test"
 
@@ -240,14 +240,14 @@ def test_plan_splits_and_carries_mesh_context(client, mesh_paths):
 
 def test_plan_uses_llmfit_when_no_memory_is_given(client, mesh_paths,
                                                  monkeypatch):
-    from delm.core.llmfit import FitReport
+    from smcp.core.llmfit import FitReport
 
     payload = {"models": [{
         "name": "Qwen/Qwen3-30B-A3B", "params_b": 30.0,
         "memory_required_gb": 15.6, "best_quant": "Q3_K_M",
         "fit_level": "marginal", "estimated_tps": 34.9, "runtime": "llama.cpp",
     }], "total_models": 1}
-    monkeypatch.setattr("delm.core.llmfit.LlmfitRunner.catalog",
+    monkeypatch.setattr("smcp.core.llmfit.LlmfitRunner.catalog",
                         lambda self, **kw: FitReport.from_payload(payload))
     contribute(client, "nodo-a", 24.0)
     observe(client, "nodo-a", 3600)
@@ -260,12 +260,12 @@ def test_plan_uses_llmfit_when_no_memory_is_given(client, mesh_paths,
 
 def test_plan_without_llmfit_is_not_an_http_error(client, mesh_paths,
                                                   monkeypatch):
-    from delm.core.llmfit import LlmfitNotFound
+    from smcp.core.llmfit import LlmfitNotFound
 
     def boom(self, **kw):
         raise LlmfitNotFound("llmfit no esta instalado")
 
-    monkeypatch.setattr("delm.core.llmfit.LlmfitRunner.catalog", boom)
+    monkeypatch.setattr("smcp.core.llmfit.LlmfitRunner.catalog", boom)
     j = client.get("/api/mesh/plan", params={
         "mesh_id": MESH, "model": "m"}).json()
     assert j["available"] is False
@@ -277,9 +277,9 @@ def test_plan_without_llmfit_is_not_an_http_error(client, mesh_paths,
 def test_plan_of_an_unknown_model_is_400_with_the_escape_hatch(client,
                                                                mesh_paths,
                                                                monkeypatch):
-    from delm.core.llmfit import FitReport
+    from smcp.core.llmfit import FitReport
 
-    monkeypatch.setattr("delm.core.llmfit.LlmfitRunner.catalog",
+    monkeypatch.setattr("smcp.core.llmfit.LlmfitRunner.catalog",
                         lambda self, **kw: FitReport.from_payload({"models": []}))
     r = client.get("/api/mesh/plan", params={"mesh_id": MESH, "model": "nope"})
     assert r.status_code == 400
@@ -359,7 +359,7 @@ def test_the_cli_sees_what_the_web_contributed(client, mesh_paths, tmp_path):
     contribute(client, "nodo-a", 16.0)
     observe(client, "nodo-a", 3600)
     p = subprocess.run(
-        [sys.executable, "-m", "delm", "mesh", "status", "--state", str(state),
+        [sys.executable, "-m", "smcp", "mesh", "status", "--state", str(state),
          "--mesh-id", MESH],
         capture_output=True, text=True, timeout=120,
     )

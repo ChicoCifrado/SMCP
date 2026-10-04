@@ -18,9 +18,9 @@ import sys
 
 import pytest
 
-from delm.core.anchor import AnchorRecord
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.membership import InclusionProof, merkle_root
+from smcp.core.anchor import AnchorRecord
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.membership import InclusionProof, merkle_root
 
 TXID = "aa" * 32
 REPO = "/mnt/d/Hermes/DeLM/delm"
@@ -63,7 +63,7 @@ def _write(tmp_path, *, txid: str = TXID, height: int = 100,
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-m", "delm", "mesh", "anchor", *args],
+        [sys.executable, "-m", "smcp", "mesh", "anchor", *args],
         cwd=REPO, capture_output=True, text=True, timeout=300)
 
 

@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from delm.core.registro import (
+from smcp.core.registro import (
     DEFAULT_REGISTRY_PATH,
     PAY_BOTH,
     PAY_BSV,

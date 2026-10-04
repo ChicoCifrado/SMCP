@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from delm.core.token_bsv21 import (
+from smcp.core.token_bsv21 import (
     TOKEN_DECIMALS,
     TOKEN_SUPPLY,
     TOKEN_SYMBOL,
@@ -53,8 +53,8 @@ class TestTokenId:
 class TestDeploy:
     """deployBsv21Mint via bridge."""
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_deploy_default(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -71,8 +71,8 @@ class TestDeploy:
         assert payload["amount"] == TOKEN_SUPPLY
         assert payload["decimals"] == TOKEN_DECIMALS
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_deploy_with_destination(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -82,7 +82,7 @@ class TestDeploy:
         payload = json.loads(run.call_args.kwargs["input"])
         assert payload["destination"] == "1MjR4vi4aa1sfXcZbz2vAm1bpZhJ37ozAQ"
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
     def test_deploy_no_node(self, run):
         run.side_effect = FileNotFoundError()
         res = deploy()
@@ -93,8 +93,8 @@ class TestDeploy:
 class TestSend:
     """sendBsv21 value-based."""
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_send_one_recipient(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -117,8 +117,8 @@ class TestSend:
         assert not res.ok
         assert "destinatarios" in res.error
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_send_error(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -132,8 +132,8 @@ class TestSend:
 class TestBalances:
     """getBsv21Balances."""
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_balances(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -147,8 +147,8 @@ class TestBalances:
 class TestBuy:
     """buyBsv21 (marketplace)."""
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_buy(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -164,8 +164,8 @@ class TestBuy:
 class TestPayForInference:
     """Comodin DeLM: pagar a un nodo en DELM."""
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_pay_for_inference(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -184,8 +184,8 @@ class TestPayForInference:
 class TestListTokenUtxos:
     """listBsv21."""
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_list(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge(
@@ -199,8 +199,8 @@ class TestListTokenUtxos:
 class TestBadOutput:
     """Manejo de salidas no JSON / vacias."""
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_non_json_output(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge("not json at all")
@@ -209,8 +209,8 @@ class TestBadOutput:
         assert "no JSON" in res.error
         assert res.raw is None
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_empty_output(self, _wif, run):
         _wif.return_value = "WIF"
         run.return_value = _fake_bridge("")
@@ -218,8 +218,8 @@ class TestBadOutput:
         assert not res.ok
         assert res.raw is None
 
-    @mock.patch("delm.core.token_bsv21.subprocess.run")
-    @mock.patch("delm.core.token_bsv21._read_wif")
+    @mock.patch("smcp.core.token_bsv21.subprocess.run")
+    @mock.patch("smcp.core.token_bsv21._read_wif")
     def test_timeout(self, _wif, run):
         _wif.return_value = "WIF"
         import subprocess

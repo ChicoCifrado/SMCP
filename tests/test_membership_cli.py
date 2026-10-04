@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from delm.cli import main
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.membership import (
+from smcp.cli import main
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.membership import (
     InclusionProof,
     MembershipLock,
     MembershipOutput,

@@ -300,14 +300,14 @@ fuente envenenada puede orientar a todos los que la lean.
 
 ## 7. La CLI, la web y las demos
 
-- **`cli.py` + `__main__.py`** — una sola CLI (`delm` == `python -m delm`, el
-  mismo parser). `delm demo <nombre>` despacha la demo como **subprocess** a su
+- **`cli.py` + `__main__.py`** — una sola CLI (`smcp` == `python -m smcp`, el
+  mismo parser). `smcp demo <nombre>` despacha la demo como **subprocess** a su
   módulo (cada demo conserva su propio `main()` y, en multi-host, sus procesos
   hijos) y devuelve su exit code; `delm test` corre la suite; `delm
   config-check` resuelve la config con la key enmascarada. Detalle en el
   README → "La CLI `delm`".
 - **`web/app.py` + `web/api.py`** — la API de la web (FastAPI), montada bajo
-  `delm/web/` y expuesta con `delm-serve-web`: estado en vivo, lanzar la
+  `smcp/web/` y expuesta con `smcp-serve-web`: estado en vivo, lanzar la
   suite/demos, y las acciones de sesión (scan, taint, config, export del
   ledger, SSE, meshllm). Sirve el estático de `web/static/`, que viaja en el
   wheel como *package data*. Antes vivía en `api_server.py` / `smcp_api.py`
@@ -323,7 +323,7 @@ fuente envenenada puede orientar a todos los que la lean.
     devuelve un motivo accionable en vez de un error de pytest, y la página
     *estado* muestra un aviso visible. Es degradación explícita, no silenciosa.
   - `delm/core/contrib.py` comparte ese mismo `REPO_ROOT` para resolver
-    `config/`, con el import **lazy**: `delm.web` arrastra fastapi (extra
+    `config/`, con el import **lazy**: `smcp.web` arrastra fastapi (extra
     opcional) y `contrib` es núcleo, así que un import de nivel superior
     haría que toda la librería necesitara el extra web para leer una ruta.
 - **`serve.py`** — `smcp-serve`: SMCP como agente **ACP por stdio**. Un cliente

@@ -1,4 +1,4 @@
-"""Tests de la integración llmfit (`delm fit`, `delm.core.llmfit`).
+"""Tests de la integración llmfit (`delm fit`, `smcp.core.llmfit`).
 
 Qué se cubre y por qué:
 
@@ -30,8 +30,8 @@ from pathlib import Path
 
 import pytest
 
-from delm.cli import EXIT_LLMFIT, main
-from delm.core.llmfit import (
+from smcp.cli import EXIT_LLMFIT, main
+from smcp.core.llmfit import (
     FitReport,
     FitRow,
     LlmfitFailed,
@@ -577,7 +577,7 @@ def test_cli_fit_write_config(fake_llmfit, capsys, tmp_path, monkeypatch):
     assert 'model: "Qwen/Qwen2.5-Coder-7B-Instruct"' in text
     assert 'base_url: "http://127.0.0.1:9337/v1"' in text
     # Y el resultado es una config que el propio repo sabe resolver.
-    from delm.config import load_config
+    from smcp.config import load_config
     cfg = load_config(target)
     assert cfg.model == "Qwen/Qwen2.5-Coder-7B-Instruct"
     assert cfg.base_url == "http://127.0.0.1:9337/v1"
@@ -635,7 +635,7 @@ def test_cli_fit_reports_a_failing_llmfit(fake_llmfit, capsys, monkeypatch):
 
 
 def test_cli_fit_is_in_the_help_and_the_examples():
-    from delm.cli import build_parser
+    from smcp.cli import build_parser
     help_txt = build_parser().format_help()
     assert "fit" in help_txt
     assert "delm fit --check" in help_txt

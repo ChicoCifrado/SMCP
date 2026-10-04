@@ -13,15 +13,15 @@ import json
 
 import pytest
 
-from delm.core.expansion import ExpansionPolicy, ExpansionState
-from delm.core.gist import Gist, GistKind
-from delm.core.injection_hardened import detect_injection_hardened, normalize
-from delm.core.llm import FakeLLMClient
-from delm.core.metrics import MetricsTracker, TaskMetrics
-from delm.core.pipeline import DelmPipeline
-from delm.core.provenance import KeyPair, digest_of
-from delm.core.taint import TaintLevel
-from delm.core.task_queue import Task
+from smcp.core.expansion import ExpansionPolicy, ExpansionState
+from smcp.core.gist import Gist, GistKind
+from smcp.core.injection_hardened import detect_injection_hardened, normalize
+from smcp.core.llm import FakeLLMClient
+from smcp.core.metrics import MetricsTracker, TaskMetrics
+from smcp.core.pipeline import DelmPipeline
+from smcp.core.provenance import KeyPair, digest_of
+from smcp.core.taint import TaintLevel
+from smcp.core.task_queue import Task
 
 from test_security import _ctx  # reused trust-gate helper
 
@@ -392,7 +392,7 @@ def test_metrics_tracker_is_in_process_and_loses_everything():
     """El tracker no es un log de auditoria: perder el proceso pierde las cifras.
 
     Lo que es append-only y a prueba de manipulacion en este proyecto es el
-    ledger (`delm.core.ledger`), no esto. Este test fija esa distincion para
+    ledger (`smcp.core.ledger`), no esto. Este test fija esa distincion para
     que nadie cite `aggregate()` como evidencia durable.
     """
     t = MetricsTracker()

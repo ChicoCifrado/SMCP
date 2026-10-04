@@ -10,8 +10,8 @@ es **lenta** (el handshake QUIC en WSL tarda ~60-120s). Se marca con
 
 Uso::
 
-    python -m delm.demo.run_multihost_demo            # QUIC (default)
-    python -m delm.demo.run_multihost_demo --nostr   # Nostr (relay)
+    python -m smcp.demo.run_multihost_demo            # QUIC (default)
+    python -m smcp.demo.run_multihost_demo --nostr   # Nostr (relay)
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import pytest
 
 
 def _run_demo(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
-    """Corre la demo (``python -m delm.demo.run_multihost_demo <args>``).
+    """Corre la demo (``python -m smcp.demo.run_multihost_demo <args>``).
 
     El orquestador arranca los nodos (subprocess), verifica la convergencia
     y muestra ``=== demo OK ===``. Si la demo no converge, el orquestador
@@ -32,7 +32,7 @@ def _run_demo(args: list[str], timeout: int = 300) -> subprocess.CompletedProces
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
     return subprocess.run(
-        [sys.executable, "-m", "delm.demo.run_multihost_demo", *args],
+        [sys.executable, "-m", "smcp.demo.run_multihost_demo", *args],
         capture_output=True, text=True, timeout=timeout, env=env,
     )
 

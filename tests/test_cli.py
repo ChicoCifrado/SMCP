@@ -28,8 +28,8 @@ import sys
 
 import pytest
 
-from delm import __version__
-from delm.cli import DEMOS, build_parser, main
+from smcp import __version__
+from smcp.cli import DEMOS, build_parser, main
 
 
 # ------------------------------------------------------------------ parser
@@ -83,13 +83,13 @@ def dispatched(monkeypatch):
         calls.append((module, list(argv)))
         return 0
 
-    monkeypatch.setattr("delm.cli._run_module", fake_run_module)
+    monkeypatch.setattr("smcp.cli._run_module", fake_run_module)
     return calls
 
 
 def test_demo_default_runs_the_pipeline_demo(dispatched):
     assert main(["demo"]) == 0
-    assert dispatched == [("delm.demo.run_demo", [])]
+    assert dispatched == [("smcp.demo.run_demo", [])]
 
 
 def test_demo_names_route_to_their_module(dispatched):
@@ -102,7 +102,7 @@ def test_demo_names_route_to_their_module(dispatched):
 def test_demo_multihost_nostr_flag_is_forwarded(dispatched):
     assert main(["demo", "multihost", "--nostr"]) == 0
     module, argv = dispatched[0]
-    assert module == "delm.demo.run_multihost_demo"
+    assert module == "smcp.demo.run_multihost_demo"
     assert "--nostr" in argv
 
 
@@ -110,7 +110,7 @@ def test_demo_real_forwards_its_flags(dispatched):
     assert main(["demo", "real", "--dry-run", "--tasks", "5",
                  "--workers", "3"]) == 0
     module, argv = dispatched[0]
-    assert module == "delm.demo.run_real_demo"
+    assert module == "smcp.demo.run_real_demo"
     assert "--dry-run" in argv
     assert argv[argv.index("--tasks") + 1] == "5"
     assert argv[argv.index("--workers") + 1] == "3"
@@ -119,7 +119,7 @@ def test_demo_real_forwards_its_flags(dispatched):
 def test_demo_real_dry_run_works_end_to_end():
     """El único demo que corre de verdad: dry-run (no llama al modelo)."""
     p = subprocess.run(
-        [sys.executable, "-m", "delm", "demo", "real", "--dry-run"],
+        [sys.executable, "-m", "smcp", "demo", "real", "--dry-run"],
         capture_output=True, text=True, timeout=120,
     )
     assert p.returncode in (0, 2), p.stderr  # 2 = config no resuelta (entorno vacío)
@@ -129,7 +129,7 @@ def test_demo_real_dry_run_works_end_to_end():
 def test_demo_pipeline_runs_end_to_end():
     """`delm demo` == la demo sin API key, con su exit code."""
     p = subprocess.run(
-        [sys.executable, "-m", "delm", "demo"],
+        [sys.executable, "-m", "smcp", "demo"],
         capture_output=True, text=True, timeout=300,
     )
     assert p.returncode == 0, p.stderr
@@ -139,7 +139,7 @@ def test_demo_pipeline_runs_end_to_end():
 # ------------------------------------------------------------------ test
 def test_test_command_forwards_to_pytest(monkeypatch, capsys):
     seen: list[list[str]] = []
-    monkeypatch.setattr("delm.cli.subprocess.call",
+    monkeypatch.setattr("smcp.cli.subprocess.call",
                         lambda cmd: seen.append(list(cmd)) or 0)
     assert main(["test"]) == 0
     cmd = seen[0]
@@ -149,7 +149,7 @@ def test_test_command_forwards_to_pytest(monkeypatch, capsys):
 
 def test_test_slow_appends_marker(monkeypatch):
     seen: list[list[str]] = []
-    monkeypatch.setattr("delm.cli.subprocess.call",
+    monkeypatch.setattr("smcp.cli.subprocess.call",
                         lambda cmd: seen.append(list(cmd)) or 0)
     assert main(["test", "--slow"]) == 0
     cmd = seen[0]
@@ -160,7 +160,7 @@ def test_test_slow_appends_marker(monkeypatch):
 
 def test_test_forwards_extra_args(monkeypatch):
     seen: list[list[str]] = []
-    monkeypatch.setattr("delm.cli.subprocess.call",
+    monkeypatch.setattr("smcp.cli.subprocess.call",
                         lambda cmd: seen.append(list(cmd)) or 0)
     main(["test", "tests/test_delm.py", "-k", "admission"])
     cmd = seen[0]
@@ -202,15 +202,15 @@ def test_config_check_reports_unset_config(monkeypatch, capsys):
 
 
 # ------------------------------------------------------------------ entry point
-def test_python_m_delm_equals_the_console_script():
-    """`python -m delm` y `delm` son el mismo parser (issue #9)."""
+def test_python_m_smcp_equals_the_console_script():
+    """`python -m smcp` y `smcp` son el mismo parser (issue #9)."""
     mod = subprocess.run(
-        [sys.executable, "-m", "delm", "version"],
+        [sys.executable, "-m", "smcp", "version"],
         capture_output=True, text=True, timeout=120,
     )
     assert mod.returncode == 0, mod.stderr
     assert __version__ in mod.stdout
     # Y el target del console script apunta al mismo main.
-    assert "delm = \"delm.cli:main\"" in (
+    assert "smcp = \"smcp.cli:main\"" in (
         __import__("pathlib").Path(__file__).resolve().parent.parent
         / "pyproject.toml").read_text(encoding="utf-8")

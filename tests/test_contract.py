@@ -4,13 +4,13 @@ import hashlib
 
 import pytest
 
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.contract import (
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.contract import (
     InferenceBounty,
     build_claim_tx,
     p2pkh_lock,
 )
-from delm.core.txbuild import Transaction
+from smcp.core.txbuild import Transaction
 
 
 def _key() -> Secp256k1KeyPair:

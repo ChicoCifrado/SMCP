@@ -37,14 +37,14 @@ import urllib.request
 
 import pytest
 
-from delm.core.anchor import AnchorLedger, AnchorRecord
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.contrib import CapacityReport, ContributionLedger
-from delm.core.llm import OpenAICompatibleClient
-from delm.core.membership import BlockHeader, InclusionProof, MembershipOutput, merkle_root
-from delm.core.placement import ModelSpec, plan_placement
-from delm.core.provenance import KeyPair
-from delm.core.reputation import board_from_counters
+from smcp.core.anchor import AnchorLedger, AnchorRecord
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.contrib import CapacityReport, ContributionLedger
+from smcp.core.llm import OpenAICompatibleClient
+from smcp.core.membership import BlockHeader, InclusionProof, MembershipOutput, merkle_root
+from smcp.core.placement import ModelSpec, plan_placement
+from smcp.core.provenance import KeyPair
+from smcp.core.reputation import board_from_counters
 
 MESH_URL = os.environ.get("MESH_LLM_URL", "http://127.0.0.1:8888/v1")
 PROBE_TIMEOUT = float(os.environ.get("MESH_PROBE_TIMEOUT", "10.0"))

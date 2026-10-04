@@ -16,7 +16,7 @@ Qué se cubre:
 - **El prompt corre el pipeline real** (no un mock): se comprueba que un
   prompt produce una respuesta y que se emitieron updates al cliente. Esa es
   la garantía que importa: un ACP run == el pipeline de SMCP, no un stub.
-- **Un smoke por stdio** con el SDK real: se lanza ``python -m delm.serve``
+- **Un smoke por stdio** con el SDK real: se lanza ``python -m smcp.serve``
   como subprocess y se le habla JSON-RPC. Marca la frontera de que el protocolo
   funciona de punta a punta (``@pytest.mark.slow``).
 
@@ -35,7 +35,7 @@ import sys
 
 import pytest
 
-from delm import serve
+from smcp import serve
 
 
 # ------------------------------------------------------------------ helpers
@@ -351,7 +351,7 @@ def test_overrides_match_the_acp_contract():
 # ------------------------------------------------- smoke real por stdio
 @pytest.mark.slow
 def test_stdio_smoke_real_jsonrpc():
-    """Hablar JSON-RPC real con ``python -m delm.serve`` por stdio.
+    """Hablar JSON-RPC real con ``python -m smcp.serve`` por stdio.
 
     Es la prueba de que el protocolo funciona de punta a punta (no solo
     in-proceso). Es ``slow`` (spawn + handshake) y se skipea sin el extra.
@@ -359,7 +359,7 @@ def test_stdio_smoke_real_jsonrpc():
     pytest.importorskip("acp", reason="extra delm[acp] no instalado")
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "delm.serve"],
+        [sys.executable, "-m", "smcp.serve"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, bufsize=1,
     )

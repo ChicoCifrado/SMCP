@@ -24,12 +24,12 @@ import struct
 
 import pytest
 
-from delm.core.bsv_keys import (
+from smcp.core.bsv_keys import (
     HAVE_ECDSA,
     Secp256k1KeyPair,
     verify_public,
 )
-from delm.core.inscripcion import (
+from smcp.core.inscripcion import (
     INSCRIPTION_VERSION,
     ORDINAL_SATOSHIS,
     InscriptionRequest,
@@ -44,15 +44,15 @@ from delm.core.inscripcion import (
     verify_inscription,
     verify_payment_terms,
 )
-from delm.core.membership import (
+from smcp.core.membership import (
     BlockHeader,
     InclusionProof,
     ProtocolError,
     merkle_root,
 )
-from delm.core.spv import hash160
-from delm.core.tiers import PER_INFERENCE_SATOSHIS
-from delm.core.txbuild import (
+from smcp.core.spv import hash160
+from smcp.core.tiers import PER_INFERENCE_SATOSHIS
+from smcp.core.txbuild import (
     OP_0,
     OP_1,
     OP_2,

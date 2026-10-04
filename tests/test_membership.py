@@ -29,8 +29,8 @@ from typing import Any
 
 import pytest
 
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.membership import (
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.membership import (
     BlockHeader,
     InclusionProof,
     MembershipLock,
@@ -93,7 +93,7 @@ def _tree(leaves: list[bytes]) -> tuple[str, list[list[str]], list[int]]:
                      for i in range(0, len(level), 2)]
             idx //= 2
         proofs.append([h[::-1].hex() for h in path])
-    from delm.core.membership import _present
+    from smcp.core.membership import _present
     return _present(root), proofs, list(range(len(leaves)))
 
 
@@ -154,7 +154,7 @@ def test_an_inclusion_proof_verifies_against_its_own_header():
     elevando esos hashes, asi que un arbol de hojas inventadas daria una raiz
     que ninguna transaccion real produce.
     """
-    from delm.core.membership import _present
+    from smcp.core.membership import _present
     txids = ["11" * 32, "22" * 32, "33" * 32, "44" * 32]
     leaves = [bytes.fromhex(t)[::-1] for t in txids]
     root = merkle_root(leaves)
@@ -167,7 +167,7 @@ def test_an_inclusion_proof_verifies_against_its_own_header():
 
 
 def test_an_inclusion_proof_against_another_header_fails():
-    from delm.core.membership import _present
+    from smcp.core.membership import _present
     txids = ["11" * 32, "22" * 32, "33" * 32, "44" * 32]
     leaves = [bytes.fromhex(t)[::-1] for t in txids]
     root = _present(merkle_root(leaves))
@@ -179,7 +179,7 @@ def test_an_inclusion_proof_against_another_header_fails():
 
 
 def test_merkle_proof_with_the_wrong_index_fails():
-    from delm.core.membership import _present
+    from smcp.core.membership import _present
     txids = ["11" * 32, "22" * 32]
     leaves = [bytes.fromhex(t)[::-1] for t in txids]
     root = _present(merkle_root(leaves))
@@ -189,7 +189,7 @@ def test_merkle_proof_with_the_wrong_index_fails():
 
 
 def test_merkle_proof_with_a_tampered_sibling_fails():
-    from delm.core.membership import _present
+    from smcp.core.membership import _present
     txids = ["11" * 32, "22" * 32]
     leaves = [bytes.fromhex(t)[::-1] for t in txids]
     root = _present(merkle_root(leaves))
@@ -516,7 +516,7 @@ def test_spv_does_not_validate_the_blockchain_and_the_docstring_says_so():
     docstring porque un gate de pertenencia que se creyera mas fuerte de lo que
     es invites a confiarle decisiones que no puede sostener.
     """
-    from delm.core import membership
+    from smcp.core import membership
     doc = membership.__doc__ or ""
     assert "cadena no se valida" in doc or "BRC-96" in doc
     assert "No decide qu" in doc or "no hay nada en la cadena" in doc
@@ -563,7 +563,7 @@ def test_a_forged_inclusion_with_a_valid_looking_path_is_rejected():
     raiz **si** coincide con la del atacante: la unica defensa posible es
     recomputar la raiz desde el camino, que es lo que hace la funcion.
     """
-    from delm.core.membership import _present
+    from smcp.core.membership import _present
     real = [bytes.fromhex(t)[::-1] for t in ("11" * 32, "22" * 32)]
     attacker_root = _present(merkle_root(real))
     # camino inventado: un solo hermano que no combina
@@ -588,7 +588,7 @@ def test_rotating_to_the_same_key_is_rejected_at_verification_not_only_at_build(
     inc = InclusionProof(txid="dd" * 32, index=0, path=[],
                          merkle_root="dd" * 32)
     # fabrication a mano: misma clave en los dos lados
-    import delm.core.membership as M
+    import smcp.core.membership as M
     payload = {
         "v": M.MEMBERSHIP_VERSION, "domain": "smcp-rotation",
         "spent": spent.outpoint(),
@@ -611,7 +611,7 @@ def test_the_rotation_retires_the_old_membership_key_from_the_set():
     la clave antigua — dos membresias vivas para un solo UTXO, que es el
     Sybil que la pertenencia de pago deberia impedir.
     """
-    from delm.core.membership import _present
+    from smcp.core.membership import _present
     lock = MembershipLock(script_hash="11" * 20)
     old_key = Secp256k1KeyPair.new("m1")
     ms = MembershipSet(lock=lock)
@@ -641,7 +641,7 @@ def test_a_domained_signature_cannot_be_replayed_across_domains():
     firma de membresia no vale como rotacion. Sin el dominio, cualquier
     firma de 64 bytes emitida para otra capa pasaria aqui.
     """
-    from delm.core import membership as M
+    from smcp.core import membership as M
     member = Secp256k1KeyPair.new("m")
     spent = MembershipOutput(txid="dd" * 32, vout=0, satoshis=4800,
                              script_hash="11" * 20)
@@ -776,7 +776,7 @@ def test_the_digest_domain_is_not_optional():
     quitarlo no sea un cambio invisible: cualquier par de firmas de dominios
     distintos deja de ser intercambiable.
     """
-    from delm.core import membership as M
+    from smcp.core import membership as M
     lock = MembershipLock(script_hash="11" * 20)
     member = Secp256k1KeyPair.new("m")
     out = MembershipOutput(txid="cc" * 32, vout=0, satoshis=5000,
@@ -826,8 +826,8 @@ def test_three_mutations_that_cannot_be_caught_because_the_guard_is_doubled():
     (defensa en profundidad entre capas), y la consecuencia aceptada es que la
     mutacion no puede distinguirla de la redundancia.
     """
-    from delm.core import bsv_keys
-    from delm.core.membership import MembershipProof as MP
+    from smcp.core import bsv_keys
+    from smcp.core.membership import MembershipProof as MP
 
     # (1) y (2): la segunda guarda, en bsv_keys
     assert bsv_keys.verify_public(bytes.fromhex("ab" * 33), "11" * 32,

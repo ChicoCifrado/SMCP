@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.hci import (
+from smcp.core.hci import (
     Benchmark,
     BenchFamily,
     DeterministicScorer,
@@ -193,7 +193,7 @@ def test_hci_is_not_wired_into_the_rsi_loop():
     """
     import inspect
 
-    from delm.core import rsi
+    from smcp.core import rsi
 
     src = inspect.getsource(rsi)
     assert "hci" not in src.lower(), (

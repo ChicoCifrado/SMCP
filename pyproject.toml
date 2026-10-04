@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "delm"
+name = "smcp"
 version = "0.4.0"
-description = "Decentralized Language Models (DELM) — clean-room implementation: shared verified context, dependency-aware task queue, admission verification, selective unfolding, parallel workers."
+description = "SMCP (Shared Mesh Context Protocol) — clean-room DeLM implementation: shared verified context, dependency-aware task queue, admission verification, selective unfolding, parallel workers."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "GPL-3.0-only" }
@@ -28,35 +28,35 @@ dependencies = [
 ]
 
 [project.scripts]
-# CLI unificada: un solo binario `delm`. Todo lo que se hacia con scripts
+# CLI unificada: un solo binario `smcp`. Todo lo que se hacia con scripts
 # sueltos (`python -m pytest`, `ruff check .`, `pyright`,
-# `scripts/check_readme_count.py`) ahora es `delm gates <nombre>`, y las demos
-# son `delm demo <nombre>`. Ver `delm gates --list`.
-delm = "delm.cli:main"
+# `scripts/check_readme_count.py`) ahora es `smcp gates <nombre>`, y las demos
+# son `smcp demo <nombre>`. Ver `smcp gates --list`.
+smcp = "smcp.cli:main"
 # Alias deprecados. Se conservan porque quitarlos rompe instalaciones
 # existentes; no aparece en la documentacion porque ya no son la via. Sus
-# equivalentes en la CLI unificada son `delm demo` y `delm demo real`.
-delm-demo = "delm.demo.run_demo:main"
-delm-real-demo = "delm.demo.run_real_demo:main"
+# equivalentes en la CLI unificada son `smcp demo` y `smcp demo real`.
+delm-demo = "smcp.demo.run_demo:main"
+delm-real-demo = "smcp.demo.run_real_demo:main"
 # SMCP como agente ACP por stdio (la via A de DESIGNCOMPAT.md): esto es lo
 # que hace de SMCP un *agente* para un cliente ACP (OpenDesign, Zed, VS Code)
-# en vez de solo un endpoint HTTP. Requiere el extra `delm[acp]`.
-smcp-serve = "delm.serve:main"
+# en vez de solo un endpoint HTTP. Requiere el extra `smcp[acp]`.
+smcp-serve = "smcp.serve:main"
 # API + UI web. Antes vivia en `api_server.py` / `smcp_api.py` en la raiz del
-# repo, FUERA del paquete: el wheel no los shippeaba, asi que `delm[web]`
+# repo, FUERA del paquete: el wheel no los shippeaba, asi que `smcp[web]`
 # instalaba dependencias para un modulo ausente y la UI solo se podia lanzar
 # con `cd` al checkout. Ahora es superficie del paquete (P1).
-delm-serve-web = "delm.web.app:main"
+smcp-serve-web = "smcp.web.app:main"
 
 # Extras: dependencias opcionales por transporte/capa.
-#   delm[nostr]  -> websockets (relay Nostr de red, capa 4)
-#   delm[quic]   -> aioquic (QUIC entre hosts, capa 3)
-#   delm[mdns]   -> aiozeroconf (mDNS discovery, capa 4)
-#   delm[web]    -> fastapi + uvicorn (delm-serve-web :8099)
-#   delm[acp]    -> agent-client-protocol (smcp-serve: SMCP como agente ACP)
-#   delm[docs]   -> pdoc (doc generable de la API; opt-in, no obligatoria)
-#   delm[dev]    -> ruff + pyright + pytest-cov (los gates de P4)
-#   delm[all]    -> los anteriores
+#   smcp[nostr]  -> websockets (relay Nostr de red, capa 4)
+#   smcp[quic]   -> aioquic (QUIC entre hosts, capa 3)
+#   smcp[mdns]   -> aiozeroconf (mDNS discovery, capa 4)
+#   smcp[web]    -> fastapi + uvicorn (smcp-serve-web :8099)
+#   smcp[acp]    -> agent-client-protocol (smcp-serve: SMCP como agente ACP)
+#   smcp[docs]   -> pdoc (doc generable de la API; opt-in, no obligatoria)
+#   smcp[dev]    -> ruff + pyright + pytest-cov (los gates de P4)
+#   smcp[all]    -> los anteriores
 [project.optional-dependencies]
 nostr = ["websockets>=12.0"]
 quic = ["aioquic>=1.0"]
@@ -93,12 +93,12 @@ where = ["."]
 include = ["delm*"]
 
 # Los estaticos de la web son datos de paquete, no codigo. Sin esto el wheel
-# instala `delm-serve-web` pero no los .html/.css/.js que sirve, y la UI cae
+# instala `smcp-serve-web` pero no los .html/.css/.js que sirve, y la UI cae
 # en un 404 silencioso al primer asset. `packages.find` solo recoge modulos
 # Python, de ahi el patron explicito. El OTF (wordmark) va dentro por el
 # `assets/*`: sin el, la fuente cae al fallback del sistema en silencio.
 [tool.setuptools.package-data]
-"delm.web" = ["static/*", "static/assets/*", "static/js/*"]
+"smcp.web" = ["static/*", "static/assets/*", "static/js/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -339,7 +339,7 @@ source = ["delm"]
 branch = false
 # `delm/demo/` se omite a proposito: son scripts ejecutables cuyo contrato es
 # producir un informe en stdout, y el pipeline las ejercita como SUBPROCESO
-# (`delm demo <n>`), no por import. Incluirlas baja la cifra sin medir nada
+# (`smcp demo <n>`), no por import. Incluirlas baja la cifra sin medir nada
 # que no midiese ya el job `demos` del CI.
 omit = [
     "*/__pycache__/*",

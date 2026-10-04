@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.inscripcion import ORDINAL_SATOSHIS
-from delm.core.tiers import (
+from smcp.core.inscripcion import ORDINAL_SATOSHIS
+from smcp.core.tiers import (
     DEDICATED_SATOSHIS,
     BSV_DUST_LIMIT_SATOSHIS,
     BSV_SINGLE_SAT_OUTPUTS,

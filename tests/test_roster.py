@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from delm.core.provenance import KeyPair
-from delm.core.roster import (
+from smcp.core.provenance import KeyPair
+from smcp.core.roster import (
     Admission,
     Endorsement,
     MAX_ENDORSEMENT_DEPTH,

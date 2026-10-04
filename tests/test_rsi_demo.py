@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from delm.demo import run_rsi_demo
+from smcp.demo import run_rsi_demo
 
 
 def _run():

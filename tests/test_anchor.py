@@ -23,14 +23,14 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.anchor import (
+from smcp.core.anchor import (
     ANCHOR_VERSION,
     ANCLAIM_AMOUNT_SATS,
     AnchorLedger,
     AnchorRecord,
 )
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.membership import (
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.membership import (
     BlockHeader,
     InclusionProof,
     MembershipOutput,
@@ -158,7 +158,7 @@ def test_a_signature_from_another_node_does_not_verify():
     Con la misma membresia declarada, cambiada la firma: es el caso de un nodo
     que copia el registro de otro y lo reenvia.
     """
-    from delm.core.membership import _canonical_digest
+    from smcp.core.membership import _canonical_digest
 
     key = Secp256k1KeyPair.new("n1")
     atacante = Secp256k1KeyPair.new("atacante")
@@ -415,7 +415,7 @@ def test_the_amount_is_not_a_price_because_nothing_verifies_it():
     assert ok, why
     # y la verificacion no importa ningun precio de la malla: `anchor` no
     # depende de `tiers`, y eso es lo que hace que "satoshis" no sea un pago
-    import delm.core.anchor as anchor_mod
+    import smcp.core.anchor as anchor_mod
     src = (anchor_mod.__doc__ or "") + (anchor_mod.AnchorRecord.__doc__ or "")
     assert "tiers" not in src, "anchor no debe hablar de precios de nivel"
 

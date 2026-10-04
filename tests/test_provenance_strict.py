@@ -1,6 +1,6 @@
 """Tests del **modo estricto** del provenance (issue #7).
 
-El módulo :mod:`delm.core.provenance` soporta dos backends de firma:
+El módulo :mod:`smcp.core.provenance` soporta dos backends de firma:
 
 * **ed25519** (asimétrica, real) — cuando ``cryptography`` está instalado.
 * **HMAC-SHA256** (pre-shared key) — fallback cuando ``cryptography`` no está.
@@ -27,8 +27,8 @@ import warnings
 
 import pytest
 
-import delm.core.provenance as provenance
-from delm.core.provenance import KeyPair
+import smcp.core.provenance as provenance
+from smcp.core.provenance import KeyPair
 
 
 # ---------------------------------------------------------------------------

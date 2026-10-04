@@ -13,19 +13,19 @@ import asyncio
 
 import pytest
 
-from delm.core.gist import Gist, GistKind
-from delm.core.llm import FakeLLMClient
-from delm.core.provenance import KeyPair
-from delm.core.requirements import MeshRequirements
-from delm.core.secure_context import SecureSharedContext
-from delm.core.task_queue import Task
-from delm.core.transport import InMemoryTransport, QuicTransport, _Bus, MeshTransport
-from delm.core.mesh_node import (
+from smcp.core.gist import Gist, GistKind
+from smcp.core.llm import FakeLLMClient
+from smcp.core.provenance import KeyPair
+from smcp.core.requirements import MeshRequirements
+from smcp.core.secure_context import SecureSharedContext
+from smcp.core.task_queue import Task
+from smcp.core.transport import InMemoryTransport, QuicTransport, _Bus, MeshTransport
+from smcp.core.mesh_node import (
     MeshNode, MSG_ANNOUNCE, MSG_GIST, MSG_HEARTBEAT,
     encode_msg, decode_msg,
 )
-from delm.core.mesh_network import MeshNetwork
-from delm.core.mesh_pipeline import MeshPipeline
+from smcp.core.mesh_network import MeshNetwork
+from smcp.core.mesh_pipeline import MeshPipeline
 
 
 # ===========================================================================
@@ -83,7 +83,7 @@ def _node(peer_id: str, bus: _Bus) -> MeshNode:
 
 def _handshake(sender, receiver) -> None:
     """Deliver ``sender``'s announce to ``receiver`` (binds its key)."""
-    from delm.core.mesh_node import _ann_to_json, encode_msg
+    from smcp.core.mesh_node import _ann_to_json, encode_msg
     receiver.on_datagram(sender.peer_id,
                          encode_msg(MSG_ANNOUNCE,
                                     _ann_to_json(sender.self_announcement()).encode()))
@@ -212,7 +212,7 @@ def test_mesh_pipeline_runs_over_quic():
     """El pipeline corre **sobre QUIC** (aioquic) y converge igual.
 
     Mismo contrato que :func:`test_mesh_pipeline_runs_and_converges`, pero el
-    transporte es un :class:`~delm.core.transport.QuicSwarm` (handshake
+    transporte es un :class:`~smcp.core.transport.QuicSwarm` (handshake
     ECDSA P-256 + ALPN ``smcp/1`` + datos bidireccionales), no el bus
     in-memory. La malla converge y cada nodo recibe todos los gists.
     """
@@ -257,12 +257,12 @@ def test_mesh_pipeline_runs_over_nostr():
     """El pipeline corre **sobre red vía Nostr** y converge igual.
 
     Mismo contrato que :func:`test_mesh_pipeline_runs_and_converges`, pero el
-    transporte es un :class:`~delm.core.nostr.NostrTransport` (el relay Nostr
+    transporte es un :class:`~smcp.core.nostr.NostrTransport` (el relay Nostr
     hace el fan-out: cada nodo firma un ``NostrEvent`` BIP340 y el relay lo
     reemite a los demás). La malla converge y cada nodo recibe todos los
     gists.
     """
-    from delm.core.nostr import NostrTransport
+    from smcp.core.nostr import NostrTransport
     llm = FakeLLMClient()
     req = MeshRequirements(mesh_id="m1", version_floor=(1, 0),
                            protocol_generation=1)

@@ -2,8 +2,8 @@
 
 El mismo patrón de los tests de v3 (secuencia de punta a
 punta, offline), con las piezas del roster
-(:mod:`delm.core.roster`) y el intercambio
-(:mod:`delm.core.intercambio`):
+(:mod:`smcp.core.roster`) y el intercambio
+(:mod:`smcp.core.intercambio`):
 
     cada nodo funda su roster  ->  se intercambian
     claves  ->  cada uno avala al otro  ->
@@ -13,7 +13,7 @@ punta, offline), con las piezas del roster
 No toca red ni cadena: no hay nada que tocar — el join
 no gasta sats, no firma una tx, no llama a ARC. Eso es
 lo que lo separa del join de v2 (la membresía de 1
-satoshi en cadena, :mod:`delm.core.membership`).
+satoshi en cadena, :mod:`smcp.core.membership`).
 
 Lo que sujetan los tests, en orden de importancia:
 
@@ -31,19 +31,19 @@ from __future__ import annotations
 
 import asyncio
 
-from delm.core.bsv_keys import Secp256k1KeyPair
-from delm.core.contrib import CapacityReport, ContributionLedger
-from delm.core.intercambio import (
+from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.contrib import CapacityReport, ContributionLedger
+from smcp.core.intercambio import (
     InferenceRequest,
     InferenceServer,
     sign_payment,
 )
-from delm.core.join import found, pair
-from delm.core.llm import FakeLLMClient
-from delm.core.provenance import KeyPair
-from delm.core.roster import cert_fingerprint
-from delm.core.tiers import PER_INFERENCE_SATOSHIS
-from delm.core.txbuild import Transaction, TxIn
+from smcp.core.join import found, pair
+from smcp.core.llm import FakeLLMClient
+from smcp.core.provenance import KeyPair
+from smcp.core.roster import cert_fingerprint
+from smcp.core.tiers import PER_INFERENCE_SATOSHIS
+from smcp.core.txbuild import Transaction, TxIn
 
 CLUSTER = "malla-v3"
 NOW = 1_000.0
@@ -56,7 +56,7 @@ class _FakeArc:
         self.broadcasts: list[str] = []
 
     async def broadcast(self, tx_hex: str, **kwargs):
-        from delm.core.arc import ACCEPTED_BY_NETWORK, ArcTxStatus
+        from smcp.core.arc import ACCEPTED_BY_NETWORK, ArcTxStatus
 
         self.broadcasts.append(tx_hex)
         return ArcTxStatus(

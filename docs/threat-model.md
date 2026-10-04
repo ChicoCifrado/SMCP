@@ -8,13 +8,13 @@ un threat model que solo dice "esto es seguro" es peor que ninguno.
 - **Doc relacionada**: [`architecture.md`](architecture.md) — qué piezas hay en
   cada capa. Este documento asume que las leíste.
 - **Alcance**: el paquete `delm/`, sus capas de red (3 y 4) y la capa 5. La web
-  (`delm/web/`, `app.py` + `api.py`) es una *vista* sobre el estado local y
+  (`smcp/web/`, `app.py` + `api.py`) es una *vista* sobre el estado local y
   **no** es una superficie de exposición propia: corre en `127.0.0.1` y su API
   refleja el estado en memoria/proceso. Lo mismo para `smcp-serve` (`serve.py`,
   ACP por stdio): su confianza es la del **límite de proceso** (ver §2,
   superficie ACP).
 - **No-garantía de la capa web**: que la UI servida desde el wheel tenga todo
-  lo que la UI del checkout enseña. `delm-serve-web` sin checkout arranca y
+  lo que la UI del checkout enseña. `smcp-serve-web` sin checkout arranca y
   sirve la UI, pero los contadores que leen el árbol de fuentes
   (`test_fns`, `test_files`, `core_modules`) no existen y se declaran como no
   disponibles — la degradación es explícita, pero la *capacidad* de la UI sí
@@ -266,7 +266,7 @@ porque un `RotationProof` puede llegar de la red, no solo de este constructor.
   sigue siendo una membresia valida. La presion economica la decide el
   lock elegido, y sin ella el Sybil es barato. Hay test que lo fija.
   (v3 mueve el join al roster — off-chain y gratis,
-  :mod:`delm.core.join` — y el freno de Sybil pasa a ser la fee
+  :mod:`smcp.core.join` — y el freno de Sybil pasa a ser la fee
   de servir: lineal con el trabajo, no con las identidades.)
 * **`MembershipSet` es una vista local.** `is_member` responde "lo que este
   nodo ha visto". Un nodo desconectado puede tener una respuesta desactualizada,

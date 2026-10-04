@@ -1,6 +1,6 @@
 """Tests de la **guardia de relay Nostr** (issue #6).
 
-El :class:`~delm.core.nostr.NostrRelayServer` (el relay de red) tiene una
+El :class:`~smcp.core.nostr.NostrRelayServer` (el relay de red) tiene una
 guardia:
 
 * **Rate-limit por ``pubkey``**: umbral de eventos/segundo por identidad
@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import tempfile
 
-from delm.core.nostr import NostrEvent, NostrKey, NostrRelayClient, NostrRelayServer
+from smcp.core.nostr import NostrEvent, NostrKey, NostrRelayClient, NostrRelayServer
 
 
 # -- Helpers ---------------------------------------------------------------

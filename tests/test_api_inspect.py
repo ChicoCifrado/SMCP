@@ -6,8 +6,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from delm.web.app import app
-from delm.web.api import MANAGER
+from smcp.web.app import app
+from smcp.web.api import MANAGER
 
 
 @pytest.fixture()

@@ -17,15 +17,15 @@ import json
 
 import pytest
 
-from delm.core import telemetry as tel
-from delm.core.capability import (
+from smcp.core import telemetry as tel
+from smcp.core.capability import (
     CapabilityReport,
     GpuInfo,
     SignedCapability,
     detect_gpus,
     nvidia_smi_csv,
 )
-from delm.core.provenance import KeyPair
+from smcp.core.provenance import KeyPair
 
 
 # --------------------------------------------------------------------- GPUs

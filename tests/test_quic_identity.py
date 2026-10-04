@@ -1,6 +1,6 @@
 """Tests del **enlace identidad-cert** del transporte QUIC (issue #5).
 
-El cert de cada :class:`~delm.core.quic_host.QuicHostNode` tiene
+El cert de cada :class:`~smcp.core.quic_host.QuicHostNode` tiene
 ``CN = peer_id`` (la identidad del nodo): el **enlace identidad-cert**
 (issue #5). El cliente, tras el handshake, verifica que el ``CN`` del
 cert del par (el servidor) coincida con el ``peer_id`` del par. Si no
@@ -25,7 +25,7 @@ import time
 
 import pytest
 
-from delm.core.quic_host import QuicHostSwarm
+from smcp.core.quic_host import QuicHostSwarm
 
 
 def _send_and_wait(swarm, sender: str, receiver: str, timeout=20.0):

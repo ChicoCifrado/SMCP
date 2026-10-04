@@ -21,8 +21,8 @@ import json
 
 import pytest
 
-from delm.core.ledger import AdmissionLedger, LedgerFile
-from delm.core.secure_context import SecureSharedContext
+from smcp.core.ledger import AdmissionLedger, LedgerFile
+from smcp.core.secure_context import SecureSharedContext
 
 
 # ------------------------------------------------------------------ helpers
@@ -212,7 +212,7 @@ def test_default_path_is_in_memory_no_io():
     assert type(c.ledger) is AdmissionLedger
     assert not isinstance(c.ledger, LedgerFile)
     # Aceptar no crea ningún archivo.
-    from delm.core.gist import Gist
+    from smcp.core.gist import Gist
     g = Gist(label="x", gist="hi")
     # (sin firma/autor: se rechaza, pero sin I/O en el camino)
     # Un append directo también es sin I/O.

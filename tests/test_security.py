@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from delm.core.gist import Gist, GistKind
-from delm.core.ledger import AdmissionLedger, TrustGate, TrustPolicy
-from delm.core.provenance import (
+from smcp.core.gist import Gist, GistKind
+from smcp.core.ledger import AdmissionLedger, TrustGate, TrustPolicy
+from smcp.core.provenance import (
     KeyPair,
     digest_of,
     verify_public,
 )
-from delm.core.secure_context import SecureSharedContext
+from smcp.core.secure_context import SecureSharedContext
 
 
 # ------------------------------------------------------------------ helpers
@@ -185,9 +185,9 @@ def test_ledger_records_rejections():
 # gist carries a valid signature under its author.
 def test_pipeline_uses_secure_context_and_signs():
     import asyncio
-    from delm.core.pipeline import DelmPipeline
-    from delm.core.llm import FakeLLMClient
-    from delm.core.task_queue import Task
+    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.llm import FakeLLMClient
+    from smcp.core.task_queue import Task
 
     llm = FakeLLMClient()
     pipe = DelmPipeline(llm=llm, n_workers=2)
@@ -214,9 +214,9 @@ def test_pipeline_uses_secure_context_and_signs():
 
 def test_pipeline_rejects_forged_signature():
     import asyncio
-    from delm.core.pipeline import DelmPipeline
-    from delm.core.llm import FakeLLMClient
-    from delm.core.task_queue import Task
+    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.llm import FakeLLMClient
+    from smcp.core.task_queue import Task
 
     llm = FakeLLMClient()
     pipe = DelmPipeline(llm=llm, n_workers=1)
@@ -230,7 +230,7 @@ def test_pipeline_rejects_forged_signature():
 
     asyncio.run(go())
     # A forged signature (garbage bytes) must be rejected, not admitted.
-    from delm.core.gist import Gist
+    from smcp.core.gist import Gist
     forged = Gist(label="forged", gist="x", author_id="worker-0")
     forged.digest = "not-a-real-digest"
     forged.signature = b"garbage"

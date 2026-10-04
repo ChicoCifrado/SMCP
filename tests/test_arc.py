@@ -28,7 +28,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from delm.core.arc import (
+from smcp.core.arc import (
     ACCEPTED_BY_NETWORK,
     ArcClient,
     ArcError,
@@ -42,7 +42,7 @@ from delm.core.arc import (
     STORED,
     broadcast_transaction,
 )
-from delm.core.txbuild import (
+from smcp.core.txbuild import (
     Transaction,
     TxIn,
     TxOut,

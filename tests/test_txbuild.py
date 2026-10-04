@@ -15,13 +15,13 @@ import hashlib
 
 import pytest
 
-from delm.core.bsv_keys import (
+from smcp.core.bsv_keys import (
     HAVE_ECDSA,
     Secp256k1KeyPair,
     verify_public,
 )
-from delm.core.spv import hash160
-from delm.core.txbuild import (
+from smcp.core.spv import hash160
+from smcp.core.txbuild import (
     SIGHASH_ALL,
     Transaction,
     TxIn,

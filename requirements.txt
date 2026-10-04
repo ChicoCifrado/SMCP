@@ -10,11 +10,11 @@ pytest-asyncio>=0.23
 
 # ---------------------------------------------------------------------------
 # Extras (opcionales, por transporte/capa) — ver pyproject.toml [project.optional-dependencies]
-#   pip install delm[nostr]  -> relay Nostr de red (capa 4)
-#   pip install delm[quic]   -> QUIC entre hosts (capa 3)
-#   pip install delm[mdns]   -> mDNS discovery (capa 4)
-#   pip install delm[web]    -> api_server.py (FastAPI :8099)
-#   pip install delm[all]    -> los cuatro anteriores
+#   pip install smcp[nostr]  -> relay Nostr de red (capa 4)
+#   pip install smcp[quic]   -> QUIC entre hosts (capa 3)
+#   pip install smcp[mdns]   -> mDNS discovery (capa 4)
+#   pip install smcp[web]    -> api_server.py (FastAPI :8099)
+#   pip install smcp[all]    -> los cuatro anteriores
 # ---------------------------------------------------------------------------
 
 # [nostr] relay Nostr de red (capa 4)

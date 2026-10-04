@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from delm.core.run_store import RunStore, StoredRun
+from smcp.core.run_store import RunStore, StoredRun
 
 
 @pytest.fixture()

@@ -1,4 +1,4 @@
-"""Tests del intercambio de la malla (`delm.core.contrib`).
+"""Tests del intercambio de la malla (`smcp.core.contrib`).
 
 Qué se cubre, y por qué es lo que importa:
 
@@ -31,14 +31,14 @@ from dataclasses import replace
 
 import pytest
 
-from delm.core.contrib import (
+from smcp.core.contrib import (
     CapacityReport,
     Challenge,
     ContribReject,
     ContributionLedger,
 )
-from delm.core.llm import FakeLLMClient
-from delm.core.provenance import KeyPair
+from smcp.core.llm import FakeLLMClient
+from smcp.core.provenance import KeyPair
 
 MESH = "smcp-test"
 NOW = 1_000.0

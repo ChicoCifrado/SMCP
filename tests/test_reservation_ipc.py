@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from delm.core.reservation_ipc import (
+from smcp.core.reservation_ipc import (
     STATE_VERSION,
     InterprocessGuard,
     interprocess_available,
@@ -80,7 +80,7 @@ def test_state_round_trips(tmp_path):
 
 
 def _snap(generation: int = 1, seq: int = 0, ids: list[str] | None = None):
-    from delm.core.reservation_ipc import ReservationSnapshot
+    from smcp.core.reservation_ipc import ReservationSnapshot
     return ReservationSnapshot(
         generation=generation, seq=seq,
         reservations=[{"reservation_id": i, "peer_id": "n1", "memory_gb": 1.0,
@@ -188,9 +188,9 @@ def test_the_lock_file_is_separate_from_the_state_file(tmp_path):
 _CHILD = textwrap.dedent("""
     import json, sys
     sys.path.insert(0, "%(root)s")
-    from delm.core.contrib import PeerContribution
-    from delm.core.reservation import ReservationBook
-    from delm.core.reservation_ipc import InterprocessGuard
+    from smcp.core.contrib import PeerContribution
+    from smcp.core.reservation import ReservationBook
+    from smcp.core.reservation_ipc import InterprocessGuard
 
     state_path, cap_gb, want_gb, per_try, barrier = (
         sys.argv[1], float(sys.argv[2]), float(sys.argv[3]),

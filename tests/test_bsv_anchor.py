@@ -15,8 +15,8 @@ import os
 
 import pytest
 
-from delm.core import provenance
-from delm.core.bsv_keys import (
+from smcp.core import provenance
+from smcp.core.bsv_keys import (
     HAVE_ECDSA,
     PRIVKEY_LEN,
     PUBKEY_LEN,
@@ -25,7 +25,7 @@ from delm.core.bsv_keys import (
     Secp256k1KeyPair,
     verify_public,
 )
-from delm.core.timechain import AnchorRecord, Timechain
+from smcp.core.timechain import AnchorRecord, Timechain
 
 pytestmark = pytest.mark.skipif(
     not HAVE_ECDSA, reason="requiere 'cryptography' para secp256k1")
