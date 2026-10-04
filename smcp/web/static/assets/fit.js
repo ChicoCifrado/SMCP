@@ -102,6 +102,26 @@
           return "<b>" + esc(s) + "</b>";
         }).join(" · ")
       : "";
+
+    // Recomendacion proactiva: modelos que caben en la
+    // memoria de ejecucion del host (independientemente de
+    // cuanta haya). Siempre visible — es la regla del core.
+    var recBox = $("fit-verdict-rec");
+    var recList = $("fit-verdict-list");
+    var recMem = $("fit-verdict-mem");
+    var recs = check.recommendations || [];
+    if (recBox && recList && recs.length) {
+      recBox.style.display = "block";
+      if (recMem && check.exec_memory_gb != null) {
+        recMem.textContent = "presupuesto de ejecución: " + gb(check.exec_memory_gb) +
+          " × headroom " + Number(check.headroom || 0.85).toFixed(2);
+      }
+      recList.innerHTML = recs.map(function (r) {
+        return "<li><b>" + esc(r) + "</b></li>";
+      }).join("");
+    } else if (recBox) {
+      recBox.style.display = "none";
+    }
   }
 
   function fillTable(models) {

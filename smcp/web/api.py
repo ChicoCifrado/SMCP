@@ -1250,6 +1250,11 @@ def _verdict_dict(v) -> dict[str, Any]:
         "row_name": v.row_name,
         "exit_code": v.exit_code(),
         "suggestions": list(v.suggestions),
+        # Recomendacion proactiva: modelos que caben en la memoria
+        # de ejecucion del host (independientemente de cuanta haya).
+        "recommendations": list(v.recommendations),
+        "exec_memory_gb": v.exec_memory_gb,
+        "headroom": v.headroom,
     }
 
 

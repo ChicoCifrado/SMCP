@@ -364,6 +364,60 @@ class FitReport:
     def runnable(self) -> tuple[FitRow, ...]:
         return tuple(r for r in self.models if r.runnable)
 
+    def fits_memory(self, *, headroom: float = 0.85) -> tuple[FitRow, ...]:
+        """Rows that fit the host's *execution* memory with headroom.
+
+        The rule this module exists to enforce: a model is only a
+        recommendation if it actually runs here. ``memory_required_gb``
+        is compared against the memory the host has free for execution
+        — GPU VRAM when there is a discrete card, available RAM on a
+        CPU/unified host — scaled by ``headroom`` (default 0.85: keep
+        15% free for the runtime, KV cache and OS).
+
+        A row with no memory estimate is kept (llmfit could not size
+        it; excluding it would hide a model that may well run) but
+        sorts last, so sized rows win.
+        """
+        budget = self._exec_memory_gb()
+        if budget is None:
+            return self.runnable()
+        cap = budget * headroom
+        out: list[FitRow] = []
+        for r in self.models:
+            if not r.runnable:
+                continue
+            mem = r.memory_required_gb
+            if mem is None or mem <= cap:
+                out.append(r)
+        return tuple(out)
+
+    def _exec_memory_gb(self) -> float | None:
+        """Memory available for *execution* on this host."""
+        s = self.system
+        if s.has_gpu and (s.gpu_available_gb or s.gpu_vram_gb):
+            return s.gpu_available_gb or s.gpu_vram_gb
+        if s.available_ram_gb:
+            return s.available_ram_gb
+        if s.total_ram_gb:
+            return s.total_ram_gb
+        return None
+
+    def recommend(self, *, limit: int = 5, headroom: float = 0.85,
+                  min_fit: str | None = "good") -> tuple[FitRow, ...]:
+        """Models that fit this host's execution memory, best-first.
+
+        The proactive answer to "what can I run here": every row
+        (a) is runnable, (b) fits the execution memory with headroom,
+        (c) meets ``min_fit`` (default ``good`` — usable with margin,
+        not merely ``marginal``). llmfit already sorts best-first, so
+        the first ``limit`` rows are the recommendation.
+        """
+        floor = _FIT_ORDER.index(_norm_fit(min_fit)) if min_fit else 0
+        pool = self.fits_memory(headroom=headroom)
+        keep = [r for r in pool
+                if _FIT_ORDER.index(r.fit_level or "too_tight") >= floor]
+        return tuple(keep[:max(limit, 0)])
+
     def top(self, n: int | None = None) -> "FitReport":
         """The first *n* rows, as a new report (llmfit already sorts best-first).
 
@@ -511,7 +565,7 @@ def _n_rows(n: int) -> str:
 
 
 # -------------------------------------------------------------------- verdict
-@dataclass(frozen=True)
+@dataclass
 class ModelFitVerdict:
     """Does the model SMCP is *configured* to use fit this host?
 
@@ -533,6 +587,13 @@ class ModelFitVerdict:
     runtime: str = ""
     row_name: str = ""
     suggestions: tuple[str, ...] = ()
+    # Recomendacion proactiva: modelos que caben en la memoria de
+    # ejecucion del host (independientemente de cuanta haya).
+    # Siempre se rellena (con headroom), no solo cuando el modelo
+    # configurado no cabe — es la respuesta a "que puedo correr".
+    recommendations: tuple[str, ...] = ()
+    exec_memory_gb: float | None = None
+    headroom: float = 0.85
 
     def verdict_text(self) -> str:
         """Human line for the CLI: fits, does not fit, or unknown."""
@@ -600,24 +661,35 @@ def _match_row(model: str, rows: Sequence[FitRow]) -> FitRow | None:
 
 
 def verdict_for(model: str, report: FitReport, *,
-                limit: int = 3) -> ModelFitVerdict:
+                limit: int = 3, recommend: int = 5,
+                headroom: float = 0.85,
+                min_fit: str | None = "good") -> ModelFitVerdict:
     """Judge the configured *model* against *report* and suggest alternatives.
 
-    Suggestions are the best runnable rows that are *not* the configured one —
-    the actionable output when the answer is "it does not fit".
+    ``suggestions`` are the best runnable rows that are *not* the
+    configured one — the actionable output when the answer is
+    "it does not fit".
+
+    ``recommendations`` are filled **always**: the models that fit
+    this host's execution memory with ``headroom`` (the proactive
+    answer to "what can I run here"), independent of whether the
+    configured model fits. ``min_fit`` floors the recommendation
+    (default ``good`` — usable with margin, not merely marginal).
     """
     if not model:
-        return ModelFitVerdict(model="", matched=False)
+        v = ModelFitVerdict(model="", matched=False)
+        return _with_recommendations(v, report, recommend, headroom, min_fit)
 
     row = _match_row(model, report.models)
     if row is None:
-        return ModelFitVerdict(model=model, matched=False)
+        v = ModelFitVerdict(model=model, matched=False)
+        return _with_recommendations(v, report, recommend, headroom, min_fit)
 
     suggestions: tuple[str, ...] = ()
     if not row.runnable:
         suggestions = tuple(r.name for r in report.runnable()[:max(limit, 0)])
 
-    return ModelFitVerdict(
+    v = ModelFitVerdict(
         model=model,
         matched=True,
         runnable=row.runnable,
@@ -630,6 +702,18 @@ def verdict_for(model: str, report: FitReport, *,
         row_name=row.name,
         suggestions=suggestions,
     )
+    return _with_recommendations(v, report, recommend, headroom, min_fit)
+
+
+def _with_recommendations(v: ModelFitVerdict, report: FitReport,
+                          n: int, headroom: float,
+                          min_fit: str | None) -> ModelFitVerdict:
+    """Attach the proactive recommendation to *v* (in place)."""
+    recs = report.recommend(limit=n, headroom=headroom, min_fit=min_fit)
+    v.recommendations = tuple(r.name for r in recs)
+    v.exec_memory_gb = report._exec_memory_gb()
+    v.headroom = headroom
+    return v
 
 
 # ------------------------------------------------------------------- the YAML

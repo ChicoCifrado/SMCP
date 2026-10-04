@@ -75,6 +75,10 @@
     .fit-verdict .vd { margin-top: 6px; color: var(--muted); font-size: 12.5px; }
     .fit-verdict .vs { margin-top: 6px; font-size: 12.5px; }
     .fit-verdict .vs b { color: var(--accent); font-weight: 600; }
+    .fit-verdict .vrec { margin-top: 6px; font-size: 12.5px; padding-left: 18px; }
+    .fit-verdict .vrec li { margin-top: 3px; }
+    .fit-verdict .vrec b { color: var(--accent); font-weight: 600; }
+    .fit-verdict .vrec .rec-mem { color: var(--muted); }
     .fit-unavailable {
       margin-top: 12px; padding: 12px 14px; border-radius: 10px;
       border: 1px solid var(--line); background: var(--code-bg);
@@ -262,6 +266,11 @@
           <div class="vm" id="fit-verdict-model">—</div>
           <div class="vd" id="fit-verdict-detail"></div>
           <div class="vs" id="fit-verdict-suggest"></div>
+          <div class="vr" id="fit-verdict-rec" style="display:none">
+            <div class="vh" style="margin-top:10px">caben en este host (memoria de ejecución)</div>
+            <div class="vmem" id="fit-verdict-mem" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
+            <ol class="vrec" id="fit-verdict-list"></ol>
+          </div>
         </div>
         <div class="tbl-wrap" id="fit-wrap" style="display:none">
           <table class="runs" id="fit-table">
