@@ -1,0 +1,23 @@
+{
+  "name": "delm-bsv21-bridge",
+  "version": "1.0.0",
+  "description": "Bridge Node para el token BSV-21 DELM (DeLM mesh economy). Delega a @1sat/actions.",
+  "type": "module",
+  "main": "bsv21.mjs",
+  "bin": {
+    "delm-bsv21": "./bsv21.mjs"
+  },
+  "scripts": {
+    "start": "node bsv21.mjs"
+  },
+  "dependencies": {
+    "@1sat/actions": "*",
+    "@1sat/wallet-node": "*",
+    "@1sat/templates": "*",
+    "@bsv/sdk": "^2.8.11"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "GPL-3.0"
+}

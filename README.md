@@ -48,6 +48,42 @@ colaboran haciendo inferencia para recibir satoshis:
 Cubierto por `tests/test_contract.py` (9 tests): P2PKH, firma,
 pago al nodo, cambio, UTXO insuficiente, roundtrip.
 
+## Token BSV-21 DELM (capa F — economia tokenizada)
+
+`delm/core/token_bsv21.py` — la moneda de la red mesh.
+El token DELM es la contrapartida en token del bounty
+en sats: los nodos ganan DELM por resolver inferencias
+y el DELM se puede listar/vender en 1sat.market.
+
+Es un **bridge** al SDK nativo `@1sat/actions` (Node.js)
+— el unico SDK que opera BSV-21 de forma nativa contra
+el indexer unificado `api.1sat.app`. Python delega via
+subprocess al bridge (`bsv21-bridge/bsv21.mjs`).
+
+Operaciones:
+- `deploy` — `deployBsv21Mint` (supply fijo 1.000.000, 0 dec)
+- `send` — `sendBsv21` (value-based, a direcciones)
+- `balances` — `getBsv21Balances` (agregados)
+- `list` — `listBsv21` (UTXOs de token del wallet)
+- `buy` — `buyBsv21` (comprar listing OrdLock en 1sat.market)
+- `pay_for_inference` — comodo DeLM: pagar a un nodo en DELM
+
+El WIF viene de `DELM_TOKEN_WIF` o `~/.delm/token.wif`.
+El tokenId es `<deployTxid>_0`. El indexer 1sat solo
+activa el token una vez la tx de deploy confirma en bloque.
+
+**API**: `POST /api/token/pay` — paga a un nodo en DELM
+(`{token_id, node_address, amount}`). Es la contrapartida
+en token de `/api/contract/claim` (bounty en sats).
+
+Cubierto por `tests/test_token_bsv21.py` (15 tests):
+tokenId, deploy, send, balances, buy, pay_for_inference,
+list, y manejo de errores (no-JSON, timeout, node ausente).
+
+El bridge Node (`bsv21-bridge/`) usa:
+`@1sat/actions`, `@1sat/wallet-node`, `@1sat/templates`,
+`@bsv/sdk`. Requiere Node >= 18.
+
 ## Release 0.4.0 — La malla en vivo
 
 La malla deja de ser una biblioteca de pruebas y se convierte
@@ -942,7 +978,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1186 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1201 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +

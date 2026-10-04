@@ -1844,3 +1844,50 @@ def post_contract_claim(body: ContractClaim) -> dict[str, Any]:
         "gist_digest": registro["gist_digest"],
         "raw_hex": registro["raw_hex"],
     }
+
+
+# Token BSV-21 DELM (capa F — economia tokenizada)
+# ---------------------------------------------------------------------------
+
+class TokenPay(BaseModel):
+    """Pago a un nodo en DELM por una inferencia.
+
+    Es la contrapartida en token del bounty en sats
+    (``/contract/claim``). El nodo recibe ``amount``
+    DELM en su direccion BSV.
+    """
+
+    #: tokenId BSV-21 (<deployTxid>_0).
+    token_id: str = Field(min_length=65, max_length=66)
+    #: direccion BSV del nodo que resolvio.
+    node_address: str = Field(min_length=26, max_length=34)
+    #: cantidad de DELM (unidades raw, 0 decimales).
+    amount: str = Field(min_length=1, max_length=20)
+
+
+@router.post("/token/pay")
+def post_token_pay(body: TokenPay) -> dict[str, Any]:
+    """Paga a un nodo en DELM por una inferencia.
+
+    Envuelve ``delm.core.token_bsv21.pay_for_inference``
+    (``sendBsv21`` del SDK nativo ``@1sat/actions``).
+    El bridge Node se ejecuta via subprocess; el WIF
+    viene de ``DELM_TOKEN_WIF`` o ``~/.delm/token.wif``.
+
+    Requiere el token DELM activo (la tx de deploy
+    confirmada en bloque) y el indexer 1sat operativo.
+    """
+    from delm.core.token_bsv21 import pay_for_inference
+
+    res = pay_for_inference(
+        token_id=body.token_id,
+        node_address=body.node_address,
+        amount=body.amount,
+    )
+    return {
+        "ok": res.ok,
+        "txid": res.txid,
+        "token_id": res.token_id,
+        "error": res.error,
+        "reason": "DELM enviado al nodo" if res.ok else "error del bridge",
+    }
