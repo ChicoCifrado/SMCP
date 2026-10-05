@@ -350,34 +350,44 @@ class QuicHostNode:
             certificate=self._cert, private_key=self._cert_key,
             verify_mode=0,
         )
-        async with connect(peer_host, port, configuration=cfg) as protocol:
-            reader, writer = await protocol.create_stream()
-            # Verifica el enlace identidad-cert (salvo en modo ``insecure``).
-            # El cert del par se recibe durante el handshake (asíncrono); se
-            # espera a que esté disponible antes de verificarlo.
-            if not self.insecure:
-                peer_cert = await self._wait_for_peer_cert(protocol)
-                if not self._check_peer_identity(peer_cert, par):
-                    writer.close()
-                    return
-            write_task = asyncio.create_task(self._write(par, writer))
-            read_task = asyncio.create_task(self._read(par, reader))
-            stop_task = asyncio.create_task(self._wait_stop())
+        # El servidor puede no haber bindeado todavia (arranque en
+        # paralelo). Reintenta hasta que el enlace suba (o _stop).
+        while not self._stop.is_set():
             try:
-                await asyncio.wait(
-                    {write_task, read_task, stop_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-            finally:
-                stop_task.cancel()
-                write_task.cancel()
-                read_task.cancel()
-                await asyncio.gather(
-                    write_task, read_task, stop_task, return_exceptions=True)
-                try:
-                    writer.close()
-                except Exception:  # noqa: BLE001 - cierre tolerante
-                    pass
+                async with connect(peer_host, port, configuration=cfg) as protocol:
+                    reader, writer = await protocol.create_stream()
+                    # Verifica el enlace identidad-cert (salvo en modo
+                    # ``insecure``). El cert del par se recibe durante
+                    # el handshake (asincrono); se espera a que este
+                    # disponible antes de verificarlo.
+                    if not self.insecure:
+                        peer_cert = await self._wait_for_peer_cert(protocol)
+                        if not self._check_peer_identity(peer_cert, par):
+                            writer.close()
+                            return
+                    write_task = asyncio.create_task(self._write(par, writer))
+                    read_task = asyncio.create_task(self._read(par, reader))
+                    stop_task = asyncio.create_task(self._wait_stop())
+                    try:
+                        await asyncio.wait(
+                            {write_task, read_task, stop_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        stop_task.cancel()
+                        write_task.cancel()
+                        read_task.cancel()
+                        await asyncio.gather(
+                            write_task, read_task, stop_task,
+                            return_exceptions=True)
+                        try:
+                            writer.close()
+                        except Exception:  # noqa: BLE001 - cierre tolerante
+                            pass
+                return  # enlace cerrado limpio
+            except OSError:
+                # Servidor no disponible todavia: espera y reintenta.
+                await asyncio.sleep(0.5)
 
     async def _wait_for_peer_cert(self, protocol, timeout: float = 5.0):
         """Espera a que el cert del par esté disponible (handshake).

@@ -241,17 +241,20 @@ def _run_quic_node(name: str, tmpdir: str, gist_text: str) -> None:
         portmap = json.load(f)
     me = portmap[name]
     role, port = me["role"], me["port"]
-    # El par: el otro nodo (role/host/port). Para "serve", escucho en mi
-    # puerto; para "connect", me conecto al puerto del otro.
+    # Host de escucha/escape de este nodo (por defecto loopback).
+    my_host = me.get("host", "127.0.0.1")
+    # El par: el otro nodo (role/host/port). Para "serve", escucho
+    # en mi host/puerto; para "connect", me conecto al host/puerto
+    # del otro.
     other_name = me["peer"]
     other = portmap[other_name]
     if role == "serve":
-        # Escucho en mi puerto; el par (el otro) se conecta a mí.
-        peer_spec = (role, "127.0.0.1", port)
+        # Escucho en mi host/puerto; el par se conecta a mí.
+        peer_spec = (role, my_host, port)
     else:
-        # Me conecto al puerto del otro (el servidor).
-        peer_spec = (role, "127.0.0.1", other["port"])
-    node = QuicHostNode(name, "127.0.0.1", {other_name: peer_spec})
+        # Me conecto al host/puerto del otro (el servidor).
+        peer_spec = (role, other.get("host", "127.0.0.1"), other["port"])
+    node = QuicHostNode(name, my_host, {other_name: peer_spec})
     node.start()
     transport = QuicHostTransport(node)
 
