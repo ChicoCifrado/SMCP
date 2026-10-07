@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -110,8 +111,16 @@ def _run_bridge(action: str, **kwargs: Any) -> Bsv21Result:
     if wif:
         env["DELM_TOKEN_WIF"] = wif
     try:
+        # S607: resolvemos la ruta absoluta del ejecutable en vez de
+        # pasar "node" parcial — el bridge es el unico proceso que
+        # este modulo lanza, y la ausencia de Node es un resultado,
+        # no una excepcion que propagar.
+        node = shutil.which("node")
+        if node is None:
+            return Bsv21Result(
+                False, error="node no encontrado (instala Node >= 18)")
         proc = subprocess.run(
-            ["node", os.path.join(_BRIDGE_DIR, "bsv21.mjs")],
+            [node, os.path.join(_BRIDGE_DIR, "bsv21.mjs")],
             input=payload,
             capture_output=True,
             text=True,

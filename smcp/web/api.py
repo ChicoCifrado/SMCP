@@ -1867,8 +1867,8 @@ def post_contract_claim(body: ContractClaim) -> dict[str, Any]:
         satoshis=body.satoshis,
         task_digest=body.task_digest,
     )
-    # el cambio vuelve a la clave del nodo
-    tx, registro = build_claim_tx(
+    # el cambio vuelve a la clave del nodo; la tx ya va en el registro
+    _, registro = build_claim_tx(
         bounty, node_key,
         prev_txid=body.prev_txid,
         prev_vout=body.prev_vout,
@@ -2047,7 +2047,7 @@ def verify_inference(txid: str, body: VerifyInferenceIn) -> dict[str, Any]:
         tx = Transaction.parse(bytes.fromhex(body.tx_hex))
     except ValueError as exc:
         raise HTTPException(
-            status_code=400, detail=f"tx invalida: {exc}")
+            status_code=400, detail=f"tx invalida: {exc}") from exc
     if tx.txid() != txid.lower():
         raise HTTPException(
             status_code=400,
@@ -2067,9 +2067,10 @@ def verify_inference(txid: str, body: VerifyInferenceIn) -> dict[str, Any]:
     # 3. Verificar (inclusion + terminos de pago).
     try:
         requester_pubkey = bytes.fromhex(body.requester_pubkey)
-    except ValueError:
+    except ValueError as exc:
         raise HTTPException(
-            status_code=400, detail="requester_pubkey no es hex valido")
+            status_code=400,
+            detail="requester_pubkey no es hex valido") from exc
     ok, reason = verify_inscription(
         tx, mesh_id=body.mesh_id,
         requester_pubkey=requester_pubkey,
@@ -2084,7 +2085,7 @@ def verify_inference(txid: str, body: VerifyInferenceIn) -> dict[str, Any]:
         server_pubkey_hex = ""
     inference_id = (
         hashlib.sha256(
-            f"{txid}:{body.mesh_id}:{server_pubkey_hex}".encode("utf-8")
+            f"{txid}:{body.mesh_id}:{server_pubkey_hex}".encode()
         ).hexdigest()
         if server_pubkey_hex else None
     )

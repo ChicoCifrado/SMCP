@@ -22,6 +22,7 @@ classifiers = [
 #     solo se usa en el modo no-estricto (test/zero-deps).
 dependencies = [
     "openai>=1.40.0",
+    "httpx>=0.27",
     "pydantic>=2.0",
     "aiohttp>=3.9",
     "cryptography>=42.0",
@@ -138,7 +139,7 @@ target-version = "py311"
 # dejo ~1.900 lineas de Python (app.py + api.py) sin lintear: el sweep del CI
 # pasaba en verde mientras `ruff check delm/web/app.py`arnsE402 a mano. Ahora
 # se excluye SOLO el directorio de estaticos, que no es Python.
-extend-exclude = [".venv", "build", "dist", "/web", "delm/web/static"]
+extend-exclude = [".venv", "build", "dist", "/web", "smcp/web/static"]
 
 [tool.ruff.lint]
 select = [
@@ -270,10 +271,13 @@ ignore = [
                # desempaca el bus aunque el test solo use owner/node; la
                # tupla completa es mas legible que indexar [0] y [2].
 ]
-# Los demos son scripts ejecutables: el printing es su contrato de salida.
-"delm/demo/*" = ["T201", "S101"]
+# Los demos son scripts ejecutables: el printing es su contrato de
+# salida, se atan a todas las interfaces DELIBERADAMENTE (un demo
+# entre hosts no puede escuchar en una sola IP sin saber de antemano
+# cuál) y lanzan binarios del sistema por nombre ("ip", "node").
+"smcp/demo/*" = ["T201", "S101", "S104", "S607"]
 # La capa web lanza scripts de demo/pytest por design (es su proposito).
-"delm/web/*" = ["S603", "S607", "S108", "T201", "S104"]
+"smcp/web/*" = ["S603", "S607", "S108", "T201", "S104"]
 # El detector de prompt-injection contiene, DELIBERADAMENTE, una tabla de
 # homoglifos cirilicos y griegos: `_CONFUSABLES` mapea "а"->a, "о"->o, etc.
 # RUF001 (ambiguous-unicode) no puede distinguir "cirilico intencional" de
@@ -281,12 +285,12 @@ ignore = [
 # detectar, escrita al reves. Ignorar la regla en ESE archivo es correcto;
 # dejarla activa en el resto del repo es lo que atrapa una corrupcion real
 # de un write_file largo.
-"delm/core/injection_hardened.py" = ["RUF001"]
+"smcp/core/injection_hardened.py" = ["RUF001"]
 # La UI estatica no es Python: no entra en el analisis.
-"delm/web/static/*" = ["ALL"]
+"smcp/web/static/*" = ["ALL"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["delm"]
+known-first-party = ["smcp"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "parents"

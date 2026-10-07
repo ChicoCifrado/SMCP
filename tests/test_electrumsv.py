@@ -250,4 +250,4 @@ def test_read_wif_vacio_levanta(tmp_path):
 
 
 def test_default_tx_log_bajo_smcp():
-    assert DEFAULT_TX_LOG == Path.home() / ".smcp" / "electrumsv.txs.jsonl"
+    assert Path.home() / ".smcp" / "electrumsv.txs.jsonl" == DEFAULT_TX_LOG

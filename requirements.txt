@@ -1,5 +1,6 @@
 # Runtime (dependencias principales; ver pyproject.toml [project] dependencies)
 openai>=1.40.0        # OpenAI-compatible client (OpenRouter, etc.)
+httpx>=0.27           # Anthropic Messages client (/v1/messages, sin SDK)
 pydantic>=2.0         # structured LLM output parsing
 aiohttp>=3.9          # async http for optional fetches
 cryptography>=42.0    # ed25519 (default del modo estricto del provenance)
