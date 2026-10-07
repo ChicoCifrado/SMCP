@@ -1288,6 +1288,14 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   simple sigue disponible y `authenticated` (`True`/`False`/`None`) lo
   dice. BRC-52 (certificados con revelación selectiva) queda como opción
   sobre este handshake: necesita una política de certificadores. 8 tests.
+- **Fee por defecto del intercambio, medida** — `intercambio.py`: una tx
+  sin fee no la reenvía ningún nodo con relay normal, así que el default
+  dejó de ser 0: `DEFAULT_FEE_SATOSHIS = 50` es la **fee media de BSV
+  medida el 2026-10-08** (WhatsOnChain: tasa media en bloque ~0.11
+  sat/vB, tx mediana ~180 sats, pools mayoritarios desde ~0.07, el más
+  estricto 0.5) aplicada al tamaño fijo de la plantilla (453 B). Fija en
+  sats porque el template fija el tamaño; Bob cobra 199 de 249. El knob
+  sigue siendo `fee_sats`.
 - **x402, ahora BRC-120** — `x402.py`: el verificador del role de
   verifier de la x402 v1.0 congelada (challenge/proof en
   `X402-Challenge`/`X402-Proof`, binding determinista de la petición,

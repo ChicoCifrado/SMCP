@@ -34,6 +34,7 @@ from smcp.core.bsv_keys import Secp256k1KeyPair
 from smcp.core.contrib import CapacityReport, ContributionLedger
 from smcp.core.inscripcion import ORDINAL_SATOSHIS
 from smcp.core.intercambio import (
+    DEFAULT_FEE_SATOSHIS,
     InferenceRequest,
     InferenceServer,
     sign_payment,
@@ -136,9 +137,12 @@ def test_the_whole_chain_from_request_to_ranking():
         assert ack.txid == tx.txid()
         assert len(arc.broadcasts) == 1
         assert led.peers["bob"].inferences_served == 1
-        # 250 sats de fondeo: 1 de ordinal a Alice, 249 a Bob.
+        # 250 sats de fondeo: 1 de ordinal a Alice,
+        # 249 menos la fee por defecto (la fee media
+        # de relay) a Bob.
         assert led.peers["bob"].satoshis_earned == (
             PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
+            - DEFAULT_FEE_SATOSHIS
         )
 
         # 5. y el ranking lo muestra.
@@ -249,7 +253,7 @@ def test_the_fee_comes_out_of_the_server_share():
         _, tx = await server.serve(req)
         sign_payment(tx, requester_key=alice, mesh_id=MESH)
         await server.settle(tx, req)
-        # 100 - 1 (ordinal) - 10 (fee) = 89 para el servidor.
+        # 250 - 1 (ordinal) - 10 (fee) = 239 para el servidor.
         assert led.peers["bob"].satoshis_earned == (
             PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS - 10
         )
@@ -300,7 +304,10 @@ def test_completion_registered_with_timestamp_and_payment():
         assert rec.server_pubkey == bob.public_key.hex()
         assert rec.requester_pubkey == alice.public_key.hex()
         assert rec.pay_method == PAY_BSV
-        assert rec.satoshis == PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
+        assert rec.satoshis == (
+            PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
+            - DEFAULT_FEE_SATOSHIS
+        )
         assert rec.delm_amount == 0
         # el inference_id es consultable
         assert registry.by_inference_id(rec.inference_id) is rec
@@ -336,7 +343,10 @@ def test_completion_paid_in_delm():
         assert rec is not None
         assert rec.pay_method == PAY_DELM
         assert rec.satoshis == 0  # no cobra sats
-        assert rec.delm_amount == PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
+        assert rec.delm_amount == (
+            PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
+            - DEFAULT_FEE_SATOSHIS
+        )
         assert rec.delm_token_id == "8d7f4834..._0"
 
     asyncio.run(go())

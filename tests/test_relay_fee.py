@@ -80,8 +80,9 @@ def test_la_banda_objetivo_cierra_entera() -> None:
     # el rango común de los pools (0.05-0.25) cierra con
     # margen: a 0.25 la fee son ~113 sats.
     assert b.cierra_a(BSV_RELAY_POOL_SAT_PER_BYTE) is True
-    # con la fee por defecto del intercambio (0), la tx no
-    # paga relay alguno — solo la minan pools sin fee.
+    # una fee de 0 sats no paga relay alguno — solo
+    # la minan pools sin fee. Por eso el default del
+    # intercambio ya no es 0, sino la fee media.
     gratis = relay_budget(_tx(fee_sats=0), fee_sats=0)
     assert gratis.max_rate_sat_per_byte == 0
     assert gratis.cierra_a(0.05) is False

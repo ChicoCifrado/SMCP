@@ -34,6 +34,7 @@ import asyncio
 from smcp.core.bsv_keys import Secp256k1KeyPair
 from smcp.core.contrib import CapacityReport, ContributionLedger
 from smcp.core.intercambio import (
+    DEFAULT_FEE_SATOSHIS,
     InferenceRequest,
     InferenceServer,
     sign_payment,
@@ -154,6 +155,7 @@ def test_join_and_exchange_compose_the_v3_flow():
         assert led.peers["bob"].inferences_served == 1
         assert led.peers["bob"].satoshis_earned == (
             PER_INFERENCE_SATOSHIS - 1  # 1 sat de ordinal
+            - DEFAULT_FEE_SATOSHIS        # la fee media de relay
         )
 
     asyncio.run(go())

@@ -69,11 +69,46 @@ from smcp.core.tiers import PER_INFERENCE_SATOSHIS
 from smcp.core.txbuild import Transaction, TxIn
 
 __all__ = [
+    "DEFAULT_FEE_SATOSHIS",
     "InferenceRequest",
     "InferenceServer",
     "PaymentAck",
     "sign_payment",
 ]
+
+
+#: Fee por defecto que paga el servidor, en sats.
+#:
+#: **Fija en sats, no en tasa**: el tamaño de la
+#: plantilla lo fija el template (~453 bytes; solo
+#: la firma DER varía uno), así que una fee fija es
+#: una tasa fija. El número sale de la **fee media
+#: de BSV, medida el 2026-10-08** (WhatsOnChain,
+#: mainnet):
+#:
+#: * tasa media en bloque (total_fee / tamaño) en
+#:   los bloques 970088-970090: 0.110, 0.110 y
+#:   0.111 sat/vB — **~0.11 sat/vB**;
+#: * la tx mediana paga ~180 sats por ~1790 B
+#:   (~0.10 sat/vB);
+#: * los pools mayoritarios (taal, GorillaPool,
+#:   qdlnk, CUVVE, SA100) aceptan desde ~69
+#:   sat/KB (**~0.07 sat/vB**); el más estricto
+#:   (Bitofsin) pide 0.5.
+#:
+#: 0.11 sat/vB x 453 B = 49.96 -> 50 sats: la fee media de
+#: la red aplicada a esta plantilla, con margen
+#: sobre el mínimo de los pools mayoritarios. Con
+#: ella, Bob cobra ``249 - 50 = 199`` de los 250
+#: que paga Alice. ¿Por qué no 0 (el default
+#: anterior)? Una tx sin fee no la reenvía ningún
+#: nodo con relay normal — solo la minan los pools
+#: que aceptan txs sin fee. ¿Por qué no 227 (0.5,
+#: el techo del pool más estricto)? Porque la fee
+#: media es 0.11, no 0.5: pagar el techo por
+#: defecto es regalar 4.5 veces la relay que la
+#: red pide. El knob sigue siendo ``fee_sats``.
+DEFAULT_FEE_SATOSHIS = 50
 
 
 # ---------------------------------------------------------------------------
@@ -143,13 +178,17 @@ class InferenceServer:
     fee_sats:
         La fee que paga el servidor de sus 249 sats
         (0 a 248; el knob es :data:`PER_INFERENCE_SATOSHIS`).
+        Por defecto :data:`DEFAULT_FEE_SATOSHIS` — la
+        fee media de relay de BSV (medida) aplicada
+        al tamaño de la plantilla: una tx sin fee no
+        la reenvía ningún nodo con relay normal.
     """
 
     def __init__(self, *, server_key: Secp256k1KeyPair,
                  llm: LLMClient, arc: Broadcaster,
                  ledger: ContributionLedger | None = None,
                  peer_id: str | None = None,
-                 fee_sats: int = 0,
+                 fee_sats: int = DEFAULT_FEE_SATOSHIS,
                  registry: InferenceRegistry | None = None,
                  pay_method: str = PAY_BSV,
                  delm_token_id: str = "") -> None:

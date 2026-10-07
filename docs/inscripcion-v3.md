@@ -281,22 +281,42 @@ frenado por coste de entrada.
    * el default del software (`minrelaytxfee` =
      1 sat/vB) **sigue sin cerrar** — harían
      falta ~453 sats;
-   * la banda objetivo (0.1–0.5 sat/vB) **cierra
-     entera**: a 0.1 bastan ~46 sats, a 0.5
-     ~227, y a Bob le quedan 203–22 sats;
-   * el rango común de los pools (0.05–0.25
-     sat/vB) cierra con margen (a 0.25, ~113
-     sats);
-   * con la fee por defecto del intercambio
-     (0 sats) la tx no paga relay alguno — solo la
-     minan pools que aceptan txs sin fee.
+    * la banda objetivo (0.1-0.5 sat/vB) **cierra
+      entera**: a 0.1 bastan ~46 sats, a 5
+      ~227, y a Bob le quedan 203-22 sats;
+    * **comprobado contra la red el 2026-10-08**
+      (WhatsOnChain, mainnet): la tasa media en
+      bloque de los últimos bloques (970088-
+      970090) es **~0.11 sat/vB**, la tx mediana
+      paga ~180 sats por ~1790 B (~0.10), los
+      pools mayoritarios (taal, GorillaPool, qdlnk,
+      CUVVE, SA100) aceptan desde ~69 sat/KB
+      (**~0.07 sat/vB**) y el más estricto
+      (Bitofsin) pide 0.5 — la banda queda
+      validada por medición, no por suposición;
+    * **la fee por defecto del intercambio es
+      `DEFAULT_FEE_SATOSHIS = 50`**
+      (`smcp/core/intercambio.py`): la fee media
+      de la red (0.11 sat/vB) aplicada al tamaño
+      de la plantilla (453 B). Es **fija en sats**
+      porque el template fija el tamaño (solo la
+      firma DER varía 1 byte) — una fee fija es
+      una tasa fija. Con ella la tx paga relay a
+      la tasa media con margen sobre el mínimo de
+      los pools mayoritarios, y Bob cobra 199 de
+      los 249. El default anterior (0) dejaba la
+      tx sin relay alguno — solo la minan pools
+      que aceptan txs sin fee. El knob sigue
+      siendo ``fee_sats`` (0 a 248).
    El corte de `tier_for_inferences` se movió con
    el precio: 100 000 / 250 = **400 inferencias**
    (la división sigue siendo exacta). La medición
-   vive en `relay_budget()` (`smcp/core/inscripcion.py`)
-   y `tests/test_relay_fee.py`. El knob, si la
-   tarifa objetivo sube, es `PER_INFERENCE_SATOSHIS`
-   (`precio = tamaño × tarifa + 1`).
+    vive en `relay_budget()` (`smcp/core/inscripcion.py`)
+    y `tests/test_relay_fee.py`; la fee por defecto,
+    en `DEFAULT_FEE_SATOSHIS` (`smcp/core/intercambio.py`).
+    El knob, si la tarifa objetivo sube, es
+    `PER_INFERENCE_SATOSHIS`
+    (`precio = tamaño x tarifa + 1`).
 4. **Identidad en el join** — *cerrado con BRC-103*.
    El intercambio de claves afirmaba la clave del
    par sin probar que la controla (un MITM activo

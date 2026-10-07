@@ -460,9 +460,12 @@ def relay_budget(tx: Transaction, fee_sats: int) -> RelayBudget:
       entera**: a 0.1 bastan ~46 sats, a 0.5 ~227;
     * el rango común de los pools (0.05-0.25) cierra con
       margen: a 0.25 la fee son ~113 sats;
-    * con la fee por defecto del intercambio (0 sats) la
-      tx no paga relay alguno — solo la minan los pools
-      que aceptan txs sin fee.
+    * con la fee por defecto del intercambio
+      (:data:`smcp.core.intercambio.DEFAULT_FEE_SATOSHIS`,
+      la fee media medida) la tx paga relay a la
+      tasa media de la red; solo una fee de 0 la
+      dejan sin relay alguno — y eso ya no es el
+      default.
 
     El knob, si la tx no cierra donde se quiere minar, es
     :data:`smcp.core.tiers.PER_INFERENCE_SATOSHIS` (y el
