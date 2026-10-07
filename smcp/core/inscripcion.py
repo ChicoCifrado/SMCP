@@ -308,8 +308,10 @@ def build_payment_terms(*, request: InscriptionRequest,
     El fondeo es **exactamente** :data:`PER_INFERENCE_SATOSHIS`: la
     plantilla v3.0 no lleva cambio (Alice consolida un UTXO exacto,
     operación normal de wallet). La fee sale de los 99 sats del
-    servidor, así que una fee de 99 o más no cierra — el knob es
-    :data:`PER_INFERENCE_SATOSHIS` (abierto 3 de la spec).
+    servidor, así que una fee de 99 o más no cierra — y la tx
+    (~453 bytes) solo pasa relay por debajo de ~0.219 sat/vB, ver
+    :func:`relay_budget`. El knob es
+    :data:`PER_INFERENCE_SATOSHIS`.
     """
     if funding_sats != PER_INFERENCE_SATOSHIS:
         raise ProtocolError(
@@ -388,6 +390,80 @@ def build_inscription(*, mesh_id: str, requester_key: Secp256k1KeyPair,
     )
     sign_requester_input(tx, 0, requester_key)
     return tx
+
+
+# ---------------------------------------------------------------------------
+# Presupuesto de relay (abierto 3 de la spec, cerrado por medición)
+# ---------------------------------------------------------------------------
+#: Tarifa de relay que el **software** de nodo BSV aplica
+#: por defecto (``minrelaytxfee`` = 0.00001 BSV/kB). Es el
+#: techo del software, no del mercado: los pools de BSV
+#: minan habitualmente por debajo de él.
+BSV_RELAY_SOFTWARE_SAT_PER_BYTE = 1.0
+
+#: Techo del rango que los pools de BSV aceptan de forma
+#: común (0.05-0.25 sat/vB). Con él, la plantilla v3.0
+#: **no** cierra ni pagando los 99 sats enteros.
+BSV_RELAY_POOL_SAT_PER_BYTE = 0.25
+
+
+@dataclass(frozen=True)
+class RelayBudget:
+    """Lo que una tx de inscripción puede pagar de relay.
+
+    Atributos:
+        size_bytes: tamaño serializado de la tx. Varía un
+            byte de una construcción a otra (la firma DER
+            mide 71 u 72 bytes), así que cualquier decisión
+            que dependa del tamaño mide la tx, no la
+            estima.
+        fee_sats: la fee que la tx paga (de los 99 sats
+            del servidor).
+    """
+
+    size_bytes: int
+    fee_sats: int
+
+    @property
+    def max_rate_sat_per_byte(self) -> float:
+        """La mayor tarifa de relay a la que la tx cierra."""
+        return self.fee_sats / self.size_bytes
+
+    def cierra_a(self, rate_sat_per_byte: float) -> bool:
+        """¿La tx paga su relay a esta tarifa (sat/vB)?"""
+        return self.size_bytes * rate_sat_per_byte <= self.fee_sats
+
+
+def relay_budget(tx: Transaction, fee_sats: int) -> RelayBudget:
+    """Presupuesto de relay de una tx de inscripción construida.
+
+    La medición que cierra el abierto 3 de la spec
+    (``docs/inscripcion-v3.md``): la plantilla v3.0
+    serializa **~453 bytes**, no los ~250 que la spec
+    estimó — el envelope de BRC-160 viaja en el script de
+    bloqueo del ordinal (campo 5 = firma de 64 B en hex,
+    campo 0 = ``H`` de 64 B en hex). Con 100 sats de
+    precio la tx solo cierra por debajo de
+    ``99 / 453 ≈ 0.22 sat/vB`` (techo teórico; la fee
+    máxima construible son 98, que dejan 1 sat al
+    servidor):
+
+    * el default del software (1 sat/vB) **no cierra** con
+      ninguna fee posible — harían falta ~453 sats;
+    * el rango común de los pools (0.05-0.25) cierra solo
+      en su mitad baja: a 0.05 bastan ~23 sats, a 0.25 no
+      alcanza ni la fee máxima;
+    * con la fee por defecto del intercambio (0 sats) la
+      tx no paga relay alguno — solo la minan los pools
+      que aceptan txs sin fee.
+
+    El knob, si la tx no cierra donde se quiere minar, es
+    :data:`smcp.core.tiers.PER_INFERENCE_SATOSHIS` (y el
+    corte de :func:`smcp.core.tiers.tier_for_inferences`
+    se mueve con él).
+    """
+    return RelayBudget(size_bytes=len(tx.serialize()),
+                       fee_sats=fee_sats)
 
 
 # ---------------------------------------------------------------------------

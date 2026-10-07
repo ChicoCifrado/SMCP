@@ -265,10 +265,28 @@ frenado por coste de entrada.
    en una tx) y BRC-122 (épocas con pre-commitment) como optimización
    de coste. Rompe "una inferencia = una tx", así que requiere
    rediseñar el conteo antes de adoptarlo.
-3. **Fee de relay** — verificar que una tx de ~250 bytes cierra dentro
-   de 99 sats a las tarifas actuales de BSV. Si no, el knob es
-   `PER_INFERENCE_SATOSHIS` (y el corte de 1 000 inferencias de
-   `tier_for_inferences` se mueve con él).
+3. **Fee de relay** — *cerrado por medición*. La plantilla
+   serializa **452–453 bytes** (varía 1 byte por la firma
+   DER), no los ~250 estimados: el envelope de BRC-160 viaja
+   en el script de bloqueo del ordinal (campo 5 = firma de
+   64 B en hex, campo 0 = `H` de 64 B en hex). Con 100 sats
+   de precio la tx cierra solo por debajo de ~0.22 sat/vB:
+   * el default del software (`minrelaytxfee` = 1 sat/vB)
+     **no cierra** con ninguna fee posible — harían falta
+     ~453 sats;
+   * el rango común de los pools (0.05–0.25 sat/vB) cierra
+     solo en su mitad baja: a 0.05 bastan ~23 sats, a 0.25
+     no alcanza ni la fee máxima construible (98, que dejan
+     1 sat al servidor);
+   * con la fee por defecto del intercambio (0 sats) la tx no
+     paga relay alguno — solo la minan pools que aceptan txs
+     sin fee.
+   La medición vive en `relay_budget()`
+   (`smcp/core/inscripcion.py`) y `tests/test_relay_fee.py`.
+   El knob, si se quiere minar donde las tarifas son más
+   altas, es `PER_INFERENCE_SATOSHIS` (y el corte de
+   1 000 inferencias de `tier_for_inferences` se mueve con
+   él).
 4. **Identidad en el join** — BRC-52 (identity certificates) o
    BRC-103 (auth mutua) para que el intercambio de claves off-chain
    demuestre quién es quién; hoy es intercambio simple.

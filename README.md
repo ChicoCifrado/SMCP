@@ -1125,7 +1125,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1236 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1240 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1260,7 +1260,9 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   solicitante)` + la firma del servidor sobre `H`, BRC-220) y viaja a
   Alice; Bob cobra el resto menos la fee de la tx. El **txid** es la clave
   que cuenta el historial: una inferencia = una inscripción = un txid.
-  38 tests.
+  42 tests (incluida la medición de la fee de relay: la plantilla
+  serializa 452–453 bytes y cierra solo por debajo de ~0.22 sat/vB —
+  `relay_budget()`, ver doc).
 - **Emisión por ARC y la secuencia completa** — `arc.py` +
   `intercambio.py`: DPP (BRC-27) sobre ARC (el servicio de emisión de BSV,
   no un nodo): `serve` ejecuta la inferencia y construye los `PaymentTerms`
@@ -1287,8 +1289,11 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
 - **La inscripción v3: lo abierto, decidido y escrito** —
   `docs/inscripcion-v3.md` §Abierto: `hash(resultado)` (SMCP4), batching
   (BRC-220 modo *batch*, BRC-122 — rompe "una inferencia = una tx"), la
-  fee de relay contra 99 sats a tarifas actuales, la identidad en el join
-  (BRC-52/BRC-103) y BRC-77 como opción de interoperabilidad.
+  identidad en el join (BRC-52/BRC-103) y BRC-77 como opción de
+  interoperabilidad. La fee de relay ya está **cerrada por medición**:
+  452–453 bytes, techo ~0.22 sat/vB — cierra en la mitad baja del rango
+  que los pools de BSV aceptan (0.05–0.25), no al default del software
+  (1 sat/vB); el knob es `PER_INFERENCE_SATOSHIS`.
 - **Dónde y cómo entra el RSI** — el código de exploración (`rsi.py`, `hci.py`,
   `run_rsi_demo.py`, sus tests) sigue en el repo y en verde, pero **no es parte
   de la tesis** ni de la hoja de ruta. Está por decidir si el bucle de mejora
