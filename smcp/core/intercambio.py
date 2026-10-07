@@ -141,8 +141,8 @@ class InferenceServer:
         un nodo que sirve sin estar en el roster de
         contribuciones.
     fee_sats:
-        La fee que paga el servidor de sus 99 sats
-        (0 a 98; el knob es :data:`PER_INFERENCE_SATOSHIS`).
+        La fee que paga el servidor de sus 249 sats
+        (0 a 248; el knob es :data:`PER_INFERENCE_SATOSHIS`).
     """
 
     def __init__(self, *, server_key: Secp256k1KeyPair,
@@ -153,7 +153,7 @@ class InferenceServer:
                  registry: InferenceRegistry | None = None,
                  pay_method: str = PAY_BSV,
                  delm_token_id: str = "") -> None:
-        # La fee sale de los 99 sats del servidor: con 99 o
+        # La fee sale de los 249 sats del servidor: con 249 o
         # más, el pago no cierra (le quedaría 0 o menos).
         tope = PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS - 1
         if not 0 <= fee_sats <= tope:
@@ -250,7 +250,7 @@ class InferenceServer:
         if self._registry is not None:
             # En modo DELM el servidor no cobra los sats del
             # output (el pago es el token); en modo BSV cobra
-            # los sats de la tx (99 menos fee).
+            # los sats de la tx (249 menos fee).
             satoshis = (
                 receipt.server_satoshis
                 if self._pay_method == PAY_BSV
@@ -285,7 +285,7 @@ def sign_payment(tx: Transaction, *,
     Verifica **antes** de firmar — lo que Alice comprueba es
     que ``H`` compromete su petición, que la firma del
     servidor es de quien dice servir, y que la aritmética es
-    la pactada (1 sat de ordinal a su nombre + 99 menos fee
+    la pactada (1 sat de ordinal a su nombre + 249 menos fee
     al servidor). Un término que no verifica no se firma.
     """
     ok, why = verify_payment_terms(

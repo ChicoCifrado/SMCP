@@ -251,13 +251,13 @@ def test_fee_arithmetic() -> None:
     alice, bob = Secp256k1KeyPair.new("alice"), Secp256k1KeyPair.new(
         "bob"
     )
-    for fee in (0, 10, 98):
+    for fee in (0, 10, 248):
         tx = _build(alice, bob, fee_sats=fee)
         assert tx.outputs[1].satoshis == (
             PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS - fee
         )
     with pytest.raises(ProtocolError):
-        _build(alice, bob, fee_sats=99)
+        _build(alice, bob, fee_sats=249)
 
 
 def test_tampered_hash_rejected() -> None:

@@ -5,8 +5,8 @@ Qué resuelve este módulo
 La pregunta que v2 dejó abierta: **cuál es el template de la
 transacción que paga y ancla una inferencia.** La respuesta (en
 ``docs/inscripcion-v3.md``) es una sola transacción: Alice paga
-100 sats, Bob sirve la inferencia y ancla el hash por 1 satoshi —
-un ordinal que viaja a Alice como comprobante — y cobra 99 sats
+250 sats, Bob sirve la inferencia y ancla el hash por 1 satoshi —
+un ordinal que viaja a Alice como comprobante — y cobra 249 sats
 menos la fee, que paga Bob de su parte.
 
 El flujo es DPP (BRC-27): Bob construye la tx
@@ -307,9 +307,9 @@ def build_payment_terms(*, request: InscriptionRequest,
 
     El fondeo es **exactamente** :data:`PER_INFERENCE_SATOSHIS`: la
     plantilla v3.0 no lleva cambio (Alice consolida un UTXO exacto,
-    operación normal de wallet). La fee sale de los 99 sats del
-    servidor, así que una fee de 99 o más no cierra — y la tx
-    (~453 bytes) solo pasa relay por debajo de ~0.219 sat/vB, ver
+    operación normal de wallet). La fee sale de los 249 sats del
+    servidor, así que una fee de 249 o más no cierra — y la tx
+    (~453 bytes) solo pasa relay por debajo de ~0.55 sat/vB, ver
     :func:`relay_budget`. El knob es
     :data:`PER_INFERENCE_SATOSHIS`.
     """
@@ -402,9 +402,15 @@ def build_inscription(*, mesh_id: str, requester_key: Secp256k1KeyPair,
 BSV_RELAY_SOFTWARE_SAT_PER_BYTE = 1.0
 
 #: Techo del rango que los pools de BSV aceptan de forma
-#: común (0.05-0.25 sat/vB). Con él, la plantilla v3.0
-#: **no** cierra ni pagando los 99 sats enteros.
+#: común (0.05-0.25 sat/vB). Con el precio de 250 sats la
+#: plantilla **cierra** en todo él (a 0.25 la fee son
+#: ~113 sats).
 BSV_RELAY_POOL_SAT_PER_BYTE = 0.25
+
+#: Techo de la banda de relay objetivo de la v3: el precio
+#: (250 sats, presupuesto de 249) cierra hasta ~0.55
+#: sat/vB, que cubre 0.1-0.5 con margen.
+BSV_RELAY_TARGET_SAT_PER_BYTE = 0.5
 
 
 @dataclass(frozen=True)
@@ -417,7 +423,7 @@ class RelayBudget:
             mide 71 u 72 bytes), así que cualquier decisión
             que dependa del tamaño mide la tx, no la
             estima.
-        fee_sats: la fee que la tx paga (de los 99 sats
+        fee_sats: la fee que la tx paga (de los 249 sats
             del servidor).
     """
 
@@ -442,17 +448,18 @@ def relay_budget(tx: Transaction, fee_sats: int) -> RelayBudget:
     serializa **~453 bytes**, no los ~250 que la spec
     estimó — el envelope de BRC-160 viaja en el script de
     bloqueo del ordinal (campo 5 = firma de 64 B en hex,
-    campo 0 = ``H`` de 64 B en hex). Con 100 sats de
-    precio la tx solo cierra por debajo de
-    ``99 / 453 ≈ 0.22 sat/vB`` (techo teórico; la fee
-    máxima construible son 98, que dejan 1 sat al
-    servidor):
+    campo 0 = ``H`` de 64 B en hex). Con el precio de
+    250 sats el presupuesto de fee son 249, y la tx
+    cierra por debajo de ``249 / 453 ≈ 0.55 sat/vB``
+    (techo; la fee máxima construible son 248, que dejan
+    1 sat al servidor):
 
-    * el default del software (1 sat/vB) **no cierra** con
-      ninguna fee posible — harían falta ~453 sats;
-    * el rango común de los pools (0.05-0.25) cierra solo
-      en su mitad baja: a 0.05 bastan ~23 sats, a 0.25 no
-      alcanza ni la fee máxima;
+    * el default del software (1 sat/vB) **no cierra** —
+      harían falta ~453 sats;
+    * la banda objetivo de la v3 (0.1-0.5 sat/vB) **cierra
+      entera**: a 0.1 bastan ~46 sats, a 0.5 ~227;
+    * el rango común de los pools (0.05-0.25) cierra con
+      margen: a 0.25 la fee son ~113 sats;
     * con la fee por defecto del intercambio (0 sats) la
       tx no paga relay alguno — solo la minan los pools
       que aceptan txs sin fee.

@@ -709,8 +709,8 @@ def _mesh_tiers(args: argparse.Namespace) -> int:
             print(f"  x402 adecuado    : {t['x402_suitable']}")
             if not t["x402_suitable"]:
                 print(f"                     {t['x402_note']}")
-        print("\nEl corte entre pago por uso y pago único son 1 000 inferencias "
-              "(100 000 / 100). En el empate gana el pago único: mismo precio, "
+        print("\nEl corte entre pago por uso y pago único son 400 inferencias "
+              "(100 000 / 250). En el empate gana el pago único: mismo precio, "
               "capacidad reservada.")
         print("BSV no tiene umbral de polvo: una salida de 1 satoshi es válida "
               "y gastable, que es lo que hace posible 1sat ordinals (el ordinal "

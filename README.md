@@ -210,7 +210,7 @@ produce un `InferenceRecord`:
 El `InferenceServer` (capa de intercambio) registra la
 inferencia en `settle()`: tras verificar, emitir por ARC y
 contar, el libro guarda *cual* tx, *cuando* ocurrio y *como*
-se cobro. El nodo puede cobrar en BSV (el flujo v3, 100 sats)
+se cobro. El nodo puede cobrar en BSV (el flujo v3, 250 sats)
 o en DELM (capa F, `pay_method="delm"`).
 
 **Identificar una inferencia específica** (tres claves):
@@ -1255,14 +1255,15 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   *es* el secreto compartido, o sea, el trust anchor del verificador.
 - **La inscripción de inferencia v3 (SMCP3)** — `inscripcion.py` +
   `txbuild.py`: una tx por inferencia — pago y anclaje son la misma
-  transacción. Alice paga 100 sats; el ordinal de 1 sat es el comprobante
+  transacción. Alice paga 250 sats; el ordinal de 1 sat es el comprobante
   (envelope BRC-160 en el locking script: `H = SHA-256(len‖mesh_id‖
   solicitante)` + la firma del servidor sobre `H`, BRC-220) y viaja a
   Alice; Bob cobra el resto menos la fee de la tx. El **txid** es la clave
   que cuenta el historial: una inferencia = una inscripción = un txid.
   42 tests (incluida la medición de la fee de relay: la plantilla
-  serializa 452–453 bytes y cierra solo por debajo de ~0.22 sat/vB —
-  `relay_budget()`, ver doc).
+  serializa 452–453 bytes y, con el precio de 250 sats (presupuesto
+  de fee de 249), cierra hasta ~0.55 sat/vB — cubre la banda objetivo
+  de 0.1–0.5 entera; `relay_budget()`, ver doc).
 - **Emisión por ARC y la secuencia completa** — `arc.py` +
   `intercambio.py`: DPP (BRC-27) sobre ARC (el servicio de emisión de BSV,
   no un nodo): `serve` ejecuta la inferencia y construye los `PaymentTerms`
@@ -1300,11 +1301,12 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   `docs/inscripcion-v3.md` §Abierto: `hash(resultado)` (SMCP4) y batching
   (BRC-220 modo *batch*, BRC-122 — rompe "una inferencia = una tx") son
   decisiones pendientes, y BRC-77 queda como opción de interoperabilidad.
-  Cerrados por trabajo real: la fee de relay (medida: 452–453 bytes, techo
-  ~0.22 sat/vB — cierra en la mitad baja del rango que los pools de BSV
-  aceptan (0.05–0.25), no al default del software (1 sat/vB); el knob es
-  `PER_INFERENCE_SATOSHIS`) y la identidad en el join (BRC-103, handshake
-  simétrico en `identidad.py`; BRC-52 como opción sobre él).
+  Cerrados por trabajo real: la fee de relay (medida: 452–453 bytes;
+  el precio subió de 100 a 250 sats para que el presupuesto de 249
+  cierre la banda de 0.1–0.5 sat/vB — hasta ~0.55; el default del
+  software, 1 sat/vB, sigue sin cerrar y el knob es
+  `PER_INFERENCE_SATOSHIS`) y la identidad en el join (BRC-103,
+  handshake simétrico en `identidad.py`; BRC-52 como opción sobre él).
 - **Dónde y cómo entra el RSI** — el código de exploración (`rsi.py`, `hci.py`,
   `run_rsi_demo.py`, sus tests) sigue en el repo y en verde, pero **no es parte
   de la tesis** ni de la hoja de ruta. Está por decidir si el bucle de mejora

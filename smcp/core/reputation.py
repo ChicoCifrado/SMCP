@@ -186,7 +186,7 @@ def board_from_verified(ledgers: Mapping[str, AnchorLedger],
     would compute for itself.
 
     Satohis come from the verified anchors too, and are reported separately
-    because they are money, not merit: a node paid 100 sats per inference is
+    because they are money, not merit: a node paid 250 sats per inference is
     not twice as good a node.
     """
     if header is None:

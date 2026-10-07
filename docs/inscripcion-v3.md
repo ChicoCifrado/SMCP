@@ -38,9 +38,9 @@ Las decisiones de economía que fija (y que no son de este documento
 sino de la conversación que la originó):
 
 * Una sola tx por inferencia: pago y anclaje son la misma transacción.
-* Alice (solicitante) paga 100 sats; Bob (servidor) ejecuta la
+* Alice (solicitante) paga 250 sats; Bob (servidor) ejecuta la
   inferencia, ancla el hash por 1 satoshi (un ordinal), y cobra
-  99 sats menos la fee de la tx — la fee la paga Bob de su parte.
+  249 sats menos la fee de la tx — la fee la paga Bob de su parte.
 * El ordinal se transfiere al solicitante: es el comprobante.
 * El **txid** de la tx de inscripción es la clave que cuenta
   `record_inference`. Una inferencia = una inscripción = un txid.
@@ -53,7 +53,7 @@ sino de la conversación que la originó):
 | | v2 (hoy) | v3 (esta spec) |
 |---|---|---|
 | Unión a la malla | output de membresía anclado en BSV (`membership.py`) | intercambio de claves off-chain (el roster que ya existe) |
-| Pago por inferencia | el ancla *declara* satoshis sin verificar pago alguno | una tx paga 100 sats y ancla, las dos cosas a la vez |
+| Pago por inferencia | el ancla *declara* satoshis sin verificar pago alguno | una tx paga 250 sats y ancla, las dos cosas a la vez |
 | Qué se publica | outpoints y pubkeys del ancla | `hash(mesh_id ‖ solicitante)` + firma del servidor, dentro de un ordinal de 1 sat |
 | Comprobante | `InclusionProof` contra cabecera que elige el verificador | txid + ordinal en poder del solicitante + certificado SPV |
 | Freno Sybil | 1 sat por inscripción (débil; documentado en `tiers.py`) | la fee de una tx por inferencia, pagada por el servidor |
@@ -84,7 +84,7 @@ queda como referencia para el batching futuro.
 
 Una tx, construida por Bob (DPP), firmada por Alice, emitida por Bob:
 
-* **Input:** un UTXO de Alice con ≥ 100 sats (si es más, el exceso
+* **Input:** un UTXO de Alice con ≥ 250 sats (si es más, el exceso
   vuelve a Alice como cambio — DPP lo prevé).
 * **Output 1 — 1 sat → Alice**, locking script:
 
@@ -137,7 +137,7 @@ este mesh, para este solicitante, servida por este nodo* — no qué dijo.
    petición — prompt, `mesh_id`, su pubkey de solicitante.
 2. **Bob**: ejecuta la inferencia, calcula `H`, la firma (secp256k1,
    64 bytes `r‖s` — la convención BRC-220 del repo),
-   construye la tx (`PaymentTerms`): input de Alice (100 sats),
+   construye la tx (`PaymentTerms`): input de Alice (250 sats),
    outputs [1 sat → Alice con envelope, 99−fee → Bob].
 3. **Alice**: verifica `H` (lo recomputa de `mesh_id` y su pubkey),
    la firma contra la identidad de Bob, y los outputs (¿1 sat a mí con
@@ -158,7 +158,7 @@ este mesh, para este solicitante, servida por este nodo* — no qué dijo.
 
 Prueba: que el poseedor de la clave que firmó (la pubkey de 33 bytes
 incrustada en la inscripción) ancló `H`; que `H` compromete (`mesh_id`,
-solicitante); que la tx movió 100 sats de Alice a (1 sat ordinal a
+solicitante); que la tx movió 250 sats de Alice a (1 sat ordinal a
 Alice + 99−fee a Bob) — el grafo de la tx dice quién pagó y quién
 cobró; que Alice posee el ordinal; y, con el certificado, en qué altura
 salió.
@@ -166,7 +166,7 @@ salió.
 No prueba: qué se respondió (ver arriba; añadir `hash(resultado)` es
 SMCP4, un campo nuevo y una decisión futura); que la respuesta fue
 correcta (la cadena no ejecuta el modelo); ni que la fee fue "justa"
-— la paga Bob de los 99, y si la fee de relay superara 99 sats el
+— la paga Bob de los 249, y si la fee de relay superara 249 sats el
 tier no cierra (supuesto económico, ver Abierto).
 
 ## Tiers bajo v3
@@ -179,7 +179,7 @@ consumo con este mecanismo.
 |---|---|---|
 | `free` (tier 3) | **0** — off-chain, intercambio de claves | 0 por capacidad propia; metered al consumir de otros |
 | `ded` (tier 2) | 100 000 sats (0.001 BSV) | incluye metered |
-| `metered` (tier 1) | 0 | 100 sats (esta tx) |
+| `metered` (tier 1) | 0 | 250 sats (esta tx) |
 
 El cambio contra v2 es uno: `JOIN_SATOSHIS` de `free`, de 1 a 0.
 
@@ -265,28 +265,38 @@ frenado por coste de entrada.
    en una tx) y BRC-122 (épocas con pre-commitment) como optimización
    de coste. Rompe "una inferencia = una tx", así que requiere
    rediseñar el conteo antes de adoptarlo.
-3. **Fee de relay** — *cerrado por medición*. La plantilla
-   serializa **452–453 bytes** (varía 1 byte por la firma
-   DER), no los ~250 estimados: el envelope de BRC-160 viaja
-   en el script de bloqueo del ordinal (campo 5 = firma de
-   64 B en hex, campo 0 = `H` de 64 B en hex). Con 100 sats
-   de precio la tx cierra solo por debajo de ~0.22 sat/vB:
-   * el default del software (`minrelaytxfee` = 1 sat/vB)
-     **no cierra** con ninguna fee posible — harían falta
-     ~453 sats;
-   * el rango común de los pools (0.05–0.25 sat/vB) cierra
-     solo en su mitad baja: a 0.05 bastan ~23 sats, a 0.25
-     no alcanza ni la fee máxima construible (98, que dejan
-     1 sat al servidor);
-   * con la fee por defecto del intercambio (0 sats) la tx no
-     paga relay alguno — solo la minan pools que aceptan txs
-     sin fee.
-   La medición vive en `relay_budget()`
-   (`smcp/core/inscripcion.py`) y `tests/test_relay_fee.py`.
-   El knob, si se quiere minar donde las tarifas son más
-   altas, es `PER_INFERENCE_SATOSHIS` (y el corte de
-   1 000 inferencias de `tier_for_inferences` se mueve con
-   él).
+3. **Fee de relay** — *cerrado por medición, y el
+   precio se movió con ella*. La plantilla serializa
+   **452–453 bytes** (varía 1 byte por la firma
+   DER), no los ~250 estimados: el envelope de
+   BRC-160 viaja en el script de bloqueo del
+   ordinal (campo 5 = firma de 64 B en hex, campo
+   0 = `H` de 64 B en hex). La medición dictó el
+   precio: para cerrar la banda objetivo de
+   **0.1–0.5 sat/vB** hacían falta 46–227 sats de
+   fee, y el presupuesto es el precio menos el
+   ordinal — así que `PER_INFERENCE_SATOSHIS`
+   subió de 100 a **250 sats** (presupuesto de
+   249, techo de ~0.55 sat/vB):
+   * el default del software (`minrelaytxfee` =
+     1 sat/vB) **sigue sin cerrar** — harían
+     falta ~453 sats;
+   * la banda objetivo (0.1–0.5 sat/vB) **cierra
+     entera**: a 0.1 bastan ~46 sats, a 0.5
+     ~227, y a Bob le quedan 203–22 sats;
+   * el rango común de los pools (0.05–0.25
+     sat/vB) cierra con margen (a 0.25, ~113
+     sats);
+   * con la fee por defecto del intercambio
+     (0 sats) la tx no paga relay alguno — solo la
+     minan pools que aceptan txs sin fee.
+   El corte de `tier_for_inferences` se movió con
+   el precio: 100 000 / 250 = **400 inferencias**
+   (la división sigue siendo exacta). La medición
+   vive en `relay_budget()` (`smcp/core/inscripcion.py`)
+   y `tests/test_relay_fee.py`. El knob, si la
+   tarifa objetivo sube, es `PER_INFERENCE_SATOSHIS`
+   (`precio = tamaño × tarifa + 1`).
 4. **Identidad en el join** — *cerrado con BRC-103*.
    El intercambio de claves afirmaba la clave del
    par sin probar que la controla (un MITM activo

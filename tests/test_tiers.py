@@ -2,7 +2,7 @@
 
 Lo que estos tests sujetan:
 
-* **El cruce es 1 000 inferencias**, y sale de la division de los dos precios. Si
+* **El cruce es 400 inferencias**, y sale de la division de los dos precios. Si
   un precio cambia, el corte se mueve — asi que hay test de los dos lados del
   corte, no solo del valor bonito.
 * **Un empate se resuelve hacia la garantia.** En exactamente 1 000 cuestan lo
@@ -50,7 +50,7 @@ from smcp.core.tiers import (
 # Los precios, tal cual los fijaste
 # --------------------------------------------------------------------------
 def test_the_prices_are_the_ones_that_were_decided():
-    """Entrada gratis, 100 000 por la dedicada, 100 por inferencia.
+    """Entrada gratis, 100 000 por la dedicada, 250 por inferencia.
 
     Escritos como constantes nombradas porque un numero suelto incrustado en
     un script es un numero que nadie vuelve a encontrar. Y en satoshis, porque
@@ -59,44 +59,44 @@ def test_the_prices_are_the_ones_that_were_decided():
     """
     assert JOIN_SATOSHIS == 0
     assert DEDICATED_SATOSHIS == 100_000          # 0.001 BSV
-    assert PER_INFERENCE_SATOSHIS == 100
+    assert PER_INFERENCE_SATOSHIS == 250
 
 
 # --------------------------------------------------------------------------
 # El cruce
 # --------------------------------------------------------------------------
-def test_the_crossover_is_exactly_one_thousand_inferences():
+def test_the_crossover_is_exactly_four_hundred_inferences():
     """El corte sale de la division, no de una decision.
 
-    100 000 / 100 = 1 000. Por debajo gana el pago por uso, por encima el pago
-    unico. Ese numero redondo es lo que hace que el cliente elija sin hacer
-    cuentas.
+    100 000 / 250 = 400. Por debajo gana el pago por uso, por
+    encima el pago unico. Ese numero redondo es lo que hace que
+    el cliente elija sin hacer cuentas.
     """
-    assert DEDICATED_SATOSHIS // PER_INFERENCE_SATOSHIS == 1_000
-    assert tier_for_inferences(999) == "metered"
-    assert tier_for_inferences(1_000) == "ded"
-    assert tier_for_inferences(1_001) == "ded"
+    assert DEDICATED_SATOSHIS // PER_INFERENCE_SATOSHIS == 400
+    assert tier_for_inferences(399) == "metered"
+    assert tier_for_inferences(400) == "ded"
+    assert tier_for_inferences(401) == "ded"
 
 
 def test_at_the_crossover_they_cost_exactly_the_same():
-    """1 000 inferencias cuestan 100 000 sats por las dos vias.
+    """400 inferencias cuestan 100 000 sats por las dos vias.
 
     Y el pago unico gana el empate porque da capacidad **reservada**: mismo
     precio, mas garantia. Ante un empate, el lado con mas promesa.
     """
-    assert metered_cost_sats(1_000) == DEDICATED_SATOSHIS
-    assert tier_for_inferences(1_000) == "ded", "el empate va a la garantia"
+    assert metered_cost_sats(400) == DEDICATED_SATOSHIS
+    assert tier_for_inferences(400) == "ded", "el empate va a la garantia"
 
 
 def test_one_below_the_crossover_metered_is_strictly_cheaper():
-    assert metered_cost_sats(999) == 99_900
-    assert not dedicated_is_cheaper(999)
-    assert metered_cost_sats(999) < DEDICATED_SATOSHIS
+    assert metered_cost_sats(399) == 99_750
+    assert not dedicated_is_cheaper(399)
+    assert metered_cost_sats(399) < DEDICATED_SATOSHIS
 
 
 def test_one_above_the_crossover_dedicated_is_strictly_cheaper():
-    assert metered_cost_sats(1_001) == 100_100
-    assert dedicated_is_cheaper(1_001)
+    assert metered_cost_sats(401) == 100_250
+    assert dedicated_is_cheaper(401)
 
 
 def test_negative_inferences_are_rejected_not_counted():
@@ -212,17 +212,17 @@ def test_a_large_plan_asking_for_dedicated_gets_dedicated():
     q = quote(inferences=5_000, wants_dedicated=True)
     assert q.tier_name == "ded"
     assert q.total_satoshis == DEDICATED_SATOSHIS
-    assert q.savings_vs_metered_sats == 500_000 - DEDICATED_SATOSHIS
+    assert q.savings_vs_metered_sats == 1_250_000 - DEDICATED_SATOSHIS
 
 
 def test_the_exact_crossover_says_empate_not_mas_que():
-    """En 1 000 los numeros son iguales, y el motivo tiene que decirlo.
+    """En 400 los numeros son iguales, y el motivo tiene que decirlo.
 
     Decir "cuestan mas que" cuando cuestan lo mismo es una mentira pequena que
     hace que el cliente dude de los numeros — que es justo para lo que existen
     estos motivos.
     """
-    q = quote(inferences=1_000, wants_dedicated=True)
+    q = quote(inferences=400, wants_dedicated=True)
     assert q.total_satoshis == DEDICATED_SATOSHIS
     assert q.savings_vs_metered_sats == 0, "empate exacto"
     assert any("exactamente" in r for r in q.reasons)
@@ -239,7 +239,7 @@ def test_a_small_plan_asking_for_dedicated_is_told_it_is_cheaper():
     """
     q = quote(inferences=10, wants_dedicated=True)
     assert q.tier_name == "metered"
-    assert q.total_satoshis == 1_000
+    assert q.total_satoshis == 2_500
     assert any("mas barato" in r or "más barato" in r for r in q.reasons)
     assert any("compartida" in r for r in q.reasons), (
         "el motivo tiene que decir que la capacidad no sera reservada")
@@ -249,11 +249,11 @@ def test_a_quote_shows_the_saving_against_paying_per_use():
     """El numero que hace la eleccion visible en vez de una recomendacion opaca.
 
     Negativo = el pago por uso era mas barato. Con 5 000 inferencias y
-    dedicacion, se ahorran 400 000 sats.
+    dedicacion, se ahorran 1 150 000 sats.
     """
     q = quote(inferences=5_000, wants_dedicated=True)
-    assert q.metered_equivalent_sats == 500_000
-    assert q.savings_vs_metered_sats == 400_000
+    assert q.metered_equivalent_sats == 1_250_000
+    assert q.savings_vs_metered_sats == 1_150_000
     assert q.savings_vs_metered_sats > 0
 
 
@@ -274,7 +274,7 @@ def test_the_join_is_free_and_the_brake_is_the_work():
     assert JOIN_SATOSHIS == 0
     assert TIER_FREE.join_satoshis == JOIN_SATOSHIS
     # El freno es por inferencia servida, y es lineal.
-    assert PER_INFERENCE_SATOSHIS == 100
+    assert PER_INFERENCE_SATOSHIS == 250
 
 
 def test_bsv_has_no_dust_limit_and_that_is_what_makes_one_sat_ordinals_work():

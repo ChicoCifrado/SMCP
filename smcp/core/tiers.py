@@ -5,10 +5,10 @@ Los tres niveles y lo que compra cada uno
 =========  ==================  ==========================  ==================
 Nivel      Coste                Que compra                  Que puede dar
 =========  ==================  ==========================  ==================
- ``free``   gratis (roster)  entrar en la malla          compartir GPU
+``free``   gratis (roster)  entrar en la malla          compartir GPU
 ``ded``    100 000 sats         VRAM dedicada por un rato    capacidad aislada
-``metered``100 sats/inferencia  inferencia de pago por uso  **nada**: puede
-                                 ser 0 GB de VRAM publicados
+``metered``250 sats/inferencia  inferencia de pago por uso  **nada**: puede
+                                  ser 0 GB de VRAM publicados
 =========  ==================  ==========================  ==================
 
 Los nombres siguen lo que compra, no una numeracion. La numeracion que se uso
@@ -18,11 +18,11 @@ se acaba llamando "tier 2" a dos cosas distintas.
 
 El punto de cruce, escrito porque la aritmetica no lo dice solo
 -----------------------------------------------------------------
-``ded`` cuesta 100 000 sats, y ``metered`` cuesta 100 sats por inferencia. El
-corte cae exactamente en **1 000 inferencias**:
+``ded`` cuesta 100 000 sats, y ``metered`` cuesta 250 sats por inferencia. El
+corte cae exactamente en **400 inferencias**:
 
-* menos de 1 000 -> sale mas barato pagar por uso (100 sats x 999 = 99 900)
-* mas de 1 000 -> sale mas barato el pago unico (100 x 1 001 = 100 100)
+* menos de 400 -> sale mas barato pagar por uso (250 sats x 399 = 99 750)
+* mas de 400 -> sale mas barato el pago unico (250 x 401 = 100 250)
 
 Es un numero redondo, y probablemente sea intencionado: el cliente elige sin
 tener que hacer cuentas, y el nodo tiene una respuesta estable a "cuanto me
@@ -99,7 +99,7 @@ Para los otros dos, x402 **no aporta y estorba**:
 
 Y hay un argumento tecnico mas, independiente de la intencion: la
 ``amount_sats`` de un proof de x402 esta atada a un challenge concreto, con su
-nonce del servidor. Para ``metered`` eso encaja (100 sats, peticion a peticion).
+nonce del servidor. Para ``metered`` eso encaja (250 sats, peticion a peticion).
 Para la entrada (gratis, en el roster) **o** para una reserva de 100 000, el
 importe esta en el **contrato**, no en el proof — asi que el proof de x402 no
 lleva informacion que_verify_, y el gasto de un proof por operacion no compra nada.
@@ -159,7 +159,16 @@ JOIN_SATOSHIS = 0
 DEDICATED_SATOSHIS = 100_000
 
 #: Pago por uso, por inferencia, en satoshis.
-PER_INFERENCE_SATOSHIS = 100
+#:
+#: 250, no 100: el presupuesto de fee de la tx de
+#: inscripcion es el precio menos el ordinal (249 sats), y
+#: la tx serializa ~453 bytes — 249 sats cierran el relay
+#: hasta ~0.55 sat/vB, que cubre el rango de 0.1 a 0.5
+#: sat/vB con margen (a 0.5 la fee son ~227 sats). El knob
+#: es este: si la tarifa objetivo sube, el precio sube con
+#: ella (:func:`smcp.core.inscripcion.relay_budget` es la
+#: medicion).
+PER_INFERENCE_SATOSHIS = 250
 
 #: Umbral de polvo de BSV: **cero**. No es "un umbral bajo" — es que BSV no
 #: tiene ninguno. El dust limit de 546 sats era de Bitcoin Core (y ABC, del que
@@ -183,16 +192,16 @@ BSV_SINGLE_SAT_OUTPUTS = True
 def tier_for_inferences(n: int) -> TierName:
     """Que nivel conviene para *n* inferencias previstas.
 
-    El corte son 1 000, y sale de la division exacta de los dos precios:
+    El corte son 400, y sale de la division exacta de los dos precios:
     :data:`DEDICATED_SATOSHIS` / :data:`PER_INFERENCE_SATOSHIS`.
 
-    Se elige ``ded`` a partir de 1 000 **inclusive**: exactamente en el corte
+    Se elige ``ded`` a partir de 400 **inclusive**: exactamente en el corte
     cuestan lo mismo, y el pago unico da capacidad reservada, que el metered no
     da. Ante un empate, el nivel con mas garantia.
     """
     if n < 0:
         raise ValueError(f"inferencias negativas: {n}")
-    # Estricto a proposito: en el empate exacto (1 000) van **iguales**, y
+    # Estricto a proposito: en el empate exacto (400) van **iguales**, y
     # gana `ded` porque da capacidad reservada. Con `<=` el empate caeria en
     # `metered`, que es la via que da menos garantia por el mismo precio.
     if n * PER_INFERENCE_SATOSHIS < DEDICATED_SATOSHIS:
@@ -332,7 +341,7 @@ TIER_DEDICATED = Tier(
               "reservation. Un proof por inferencia para algo ya pagado "
               "devolveria la eleccion al cliente cuando ya se decidio.",
     description="Pago unico de 0.001 BSV por VRAM dedicada durante el tiempo "
-                "acordado. A partir de 1 000 inferencias sale mas barato que "
+                "acordado. A partir de 400 inferencias sale mas barato que "
                 "el pago por uso.",
 )
 
@@ -350,7 +359,7 @@ TIER_METERED = Tier(
               "estado entre una y otra, y el pago por uso es justamente un "
               "producto sin membresia. La amount_sats del proof es el precio "
               "de esta inferencia.",
-    description="100 sats por inferencia, con 0 GB de VRAM publicados. No "
+    description="250 sats por inferencia, con 0 GB de VRAM publicados. No "
                 "concede pertenencia: es un cliente de la malla.",
 )
 

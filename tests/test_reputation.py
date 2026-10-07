@@ -8,7 +8,7 @@ un campo más en el ledger:
   empate, porque un ranking que se reordena entre dos ejecuciones no es
   discutible: es ilegible.
 * **distingue el dinero del mérito.** Los satoshis van en su propia columna. Un
-  nodo al que le pagan 100 sats por inferencia no es el doble de bueno, y una
+  nodo al que le pagan 250 sats por inferencia no es el doble de bueno, y una
   tabla con un solo número de "valor" invita a inventar un tipo de cambio que no
   existe.
 * **no es un saldo.** No hay con qué gastarlo ni a quién transferírselo. Eso se

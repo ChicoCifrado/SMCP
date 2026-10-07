@@ -136,7 +136,7 @@ def test_the_whole_chain_from_request_to_ranking():
         assert ack.txid == tx.txid()
         assert len(arc.broadcasts) == 1
         assert led.peers["bob"].inferences_served == 1
-        # 100 sats de fondeo: 1 de ordinal a Alice, 99 a Bob.
+        # 250 sats de fondeo: 1 de ordinal a Alice, 249 a Bob.
         assert led.peers["bob"].satoshis_earned == (
             PER_INFERENCE_SATOSHIS - ORDINAL_SATOSHIS
         )
