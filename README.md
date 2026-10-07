@@ -1125,7 +1125,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1240 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1248 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1277,6 +1277,16 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   mutua queda **verificada** sin gastar nada. `JOIN_SATOSHIS` pasó de 1 a
   0: el freno Sybil es el trabajo —cada inferencia servida cuesta una fee
   que paga el servidor, lineal con el fraude—, no la entrada. 5 tests.
+- **Identidad en el join (BRC-103)** — `identidad.py`: el intercambio de
+  claves afirmaba la clave del par sin probar que la controla; ahora un
+  handshake simétrico (cada lado genera un nonce de 32 bytes y firma
+  `nonce_del_par ‖ nonce_propio` con la misma clave que avala el roster)
+  prueba el control vivo de ambas claves, ligado a la sesión. `pair()`
+  verifica la sesión **antes** de intercambiar nada y falla cerrado si
+  alguna prueba no cuadra (MITM o bug) — sin sesión, el intercambio
+  simple sigue disponible y `authenticated` (`True`/`False`/`None`) lo
+  dice. BRC-52 (certificados con revelación selectiva) queda como opción
+  sobre este handshake: necesita una política de certificadores. 8 tests.
 - **x402, ahora BRC-120** — `x402.py`: el verificador del role de
   verifier de la x402 v1.0 congelada (challenge/proof en
   `X402-Challenge`/`X402-Proof`, binding determinista de la petición,
@@ -1287,13 +1297,14 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
 **En construcción / pendiente:**
 
 - **La inscripción v3: lo abierto, decidido y escrito** —
-  `docs/inscripcion-v3.md` §Abierto: `hash(resultado)` (SMCP4), batching
-  (BRC-220 modo *batch*, BRC-122 — rompe "una inferencia = una tx"), la
-  identidad en el join (BRC-52/BRC-103) y BRC-77 como opción de
-  interoperabilidad. La fee de relay ya está **cerrada por medición**:
-  452–453 bytes, techo ~0.22 sat/vB — cierra en la mitad baja del rango
-  que los pools de BSV aceptan (0.05–0.25), no al default del software
-  (1 sat/vB); el knob es `PER_INFERENCE_SATOSHIS`.
+  `docs/inscripcion-v3.md` §Abierto: `hash(resultado)` (SMCP4) y batching
+  (BRC-220 modo *batch*, BRC-122 — rompe "una inferencia = una tx") son
+  decisiones pendientes, y BRC-77 queda como opción de interoperabilidad.
+  Cerrados por trabajo real: la fee de relay (medida: 452–453 bytes, techo
+  ~0.22 sat/vB — cierra en la mitad baja del rango que los pools de BSV
+  aceptan (0.05–0.25), no al default del software (1 sat/vB); el knob es
+  `PER_INFERENCE_SATOSHIS`) y la identidad en el join (BRC-103, handshake
+  simétrico en `identidad.py`; BRC-52 como opción sobre él).
 - **Dónde y cómo entra el RSI** — el código de exploración (`rsi.py`, `hci.py`,
   `run_rsi_demo.py`, sus tests) sigue en el repo y en verde, pero **no es parte
   de la tesis** ni de la hoja de ruta. Está por decidir si el bucle de mejora
@@ -1454,7 +1465,8 @@ smcp/
        inscripcion.py     template SMCP3 v3: una tx paga e inscribe (BRC-160/220/27)
        arc.py             cliente ARC: emisión por HTTP (el PaymentACK de DPP)
         intercambio.py     la secuencia v3 de punta a punta (DPP + ARC + historial)
-        join.py            el join v3: gratis, off-chain, en el roster (avales)
+         join.py            el join v3: gratis, off-chain, en el roster (avales)
+        identidad.py       auth mutua BRC-103: prueba de control de la clave del par
      reservation.py     reserva atomica de VRAM dedicada (tier de pago unico)
      reservation_ipc.py el cerrojo entre procesos de la reserva
      wiring.py          el camino de admision que une reserva y ledger

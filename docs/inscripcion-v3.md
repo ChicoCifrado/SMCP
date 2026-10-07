@@ -287,9 +287,34 @@ frenado por coste de entrada.
    altas, es `PER_INFERENCE_SATOSHIS` (y el corte de
    1 000 inferencias de `tier_for_inferences` se mueve con
    él).
-4. **Identidad en el join** — BRC-52 (identity certificates) o
-   BRC-103 (auth mutua) para que el intercambio de claves off-chain
-   demuestre quién es quién; hoy es intercambio simple.
+4. **Identidad en el join** — *cerrado con BRC-103*.
+   El intercambio de claves afirmaba la clave del
+   par sin probar que la controla (un MITM activo
+   la sustituía en el cable y el aval acababa
+   firmado contra la clave del atacante). Ahora
+   `smcp/core/identidad.py` lleva el handshake de
+   BRC-103, adaptado en su **variante simétrica**
+   (el join no tiene iniciador: los dos lados
+   generan un nonce de 32 bytes y firman
+   `nonce_del_par ‖ nonce_propio` con la misma
+   `KeyPair` que avala el roster). `pair()` toma
+   una `Session` opcional: con ella, cada clave
+   debe probar su control vivo ligado a la sesión
+   — una prueba que no cuadra es MITM o bug y el
+   join **falla cerrado**; sin ella, el intercambio
+   simple de hoy sigue disponible (`authenticated`
+   en el resultado distingue los tres estados:
+   `True`/`False`/`None`). Desviación documentada:
+   BRC-103 firma con derivación BRC-100; SMCP
+   firma con la clave directamente (la malla no
+   tiene derivación de claves) — la propiedad de
+   prueba de control se preserva. **BRC-52**
+   (certificados de identidad con campos firmados
+   por un certificador, revelación selectiva y
+   revocación por outpoint) queda como opción
+   *sobre* este handshake: necesita una política de
+   certificadores, que es una decisión de diseño,
+   no código.
 5. **BRC-77** — v3.0 adopta la convención BRC-220 que ya tiene el repo
    (64 bytes `r‖s`, pubkey incrustada). BRC-77 (firmas con claves
    derivadas, BRC-42/43) queda como opción de interoperabilidad con el

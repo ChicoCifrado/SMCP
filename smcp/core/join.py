@@ -30,6 +30,21 @@ sino el trabajo: cada inferencia servida exige una tx con
 fee que paga el servidor (:mod:`smcp.core.intercambio`),
 así que fabricar *N* inferencias cuesta *N* fees.
 
+La identidad
+------------
+El intercambio de claves **afirma** la clave del par sin
+probar que la controla: un MITM activo puede sustituirla
+en el cable. Cuando la capa de identidad
+(:mod:`smcp.core.identidad`, handshake BRC-103) entrega
+una :class:`~smcp.core.identidad.Session`, el join la
+verifica **antes** de intercambiar nada: cada clave debe
+probar su control vivo, ligado a esta sesión por los
+nonces. Una prueba que no cuadra es un MITM o un bug, y
+el join **falla cerrado** — no se degrada al intercambio
+simple. Sin sesión, el join sigue siendo el intercambio
+simple de hoy (``authenticated`` es ``None`` en el
+resultado, para que quien llama vea la diferencia).
+
 Lo que este módulo NO hace
 --------------------------
 * No es transporte: el intercambio de rosters es de la
@@ -47,6 +62,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from smcp.core.identidad import Session
 from smcp.core.provenance import KeyPair
 from smcp.core.roster import (
     Roster,
@@ -90,6 +106,12 @@ class JoinResult:
     rejected_a: int
     pinned_b: int
     rejected_b: int
+    #: ¿La identidad del par quedó probada (BRC-103)?
+    #: ``True`` con sesión verificada, ``False`` con sesión
+    #: ofrecida que no cuadra (el join no siguió), ``None``
+    #: sin sesión — el intercambio simple, donde la clave
+    #: del par se afirma sin probar su control.
+    authenticated: Optional[bool]
 
     @property
     def mutual(self) -> bool:
@@ -124,12 +146,18 @@ def pair(*, a_roster: Roster, a_key: KeyPair,
          a_keyring: dict[str, bytes],
          b_roster: Roster, b_key: KeyPair,
          b_keyring: dict[str, bytes],
-         now: Optional[float] = None) -> JoinResult:
+         now: Optional[float] = None,
+         session: Session | None = None) -> JoinResult:
     """El join v3: dos nodos se emparejan off-chain, gratis.
 
     La secuencia, con los dos nodos en los papeles de
     ``a`` y ``b`` (simétricos — ninguno es especial):
 
+    0. **Identidad** (BRC-103, cuando hay ``session``).
+       Cada clave que se va a intercambiar debe probar su
+       control vivo sobre los nonces de la sesión. Si alguna
+       prueba no cuadra el join **falla cerrado**: no se
+       intercambia nada, no hay avales, no hay confianza.
     1. **Intercambio de claves.** Cada keyring aprende la
        clave pública del par: el certificado de cada nodo
        es su clave, y es contra el keyring propio contra lo
@@ -169,6 +197,23 @@ def pair(*, a_roster: Roster, a_key: KeyPair,
             a_trusts_b=False, b_trusts_a=False,
             pinned_a=0, rejected_a=len(b_roster.members),
             pinned_b=0, rejected_b=len(a_roster.members),
+            authenticated=None,
+        )
+
+    # 0. La identidad (BRC-103): con sesión, las claves
+    #    que se intercambian deben probar su control vivo.
+    #    Una prueba que no cuadra es un MITM o un bug — el
+    #    join falla cerrado, no se degrada al intercambio
+    #    simple (degradarse sería aceptar la sustitución).
+    if session is not None and not session.verified(
+            a_key=a_key, b_key=b_key):
+        return JoinResult(
+            roster_a=a_roster, roster_b=b_roster,
+            keyring_a=a_keyring, keyring_b=b_keyring,
+            a_trusts_b=False, b_trusts_a=False,
+            pinned_a=0, rejected_a=0,
+            pinned_b=0, rejected_b=0,
+            authenticated=False,
         )
 
     # 1. El intercambio de claves: cada keyring aprende
@@ -201,4 +246,5 @@ def pair(*, a_roster: Roster, a_key: KeyPair,
         a_trusts_b=a_trusts_b, b_trusts_a=b_trusts_a,
         pinned_a=pinned_a, rejected_a=rejected_a,
         pinned_b=pinned_b, rejected_b=rejected_b,
+        authenticated=None if session is None else True,
     )
