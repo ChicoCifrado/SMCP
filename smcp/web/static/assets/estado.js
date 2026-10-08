@@ -230,6 +230,32 @@
     });
   }
 
+  function discoverTools() {
+    var st = $("tools-status");
+    show("GET /api/tools …");
+    if (st) st.textContent = "descubriendo…";
+    SMCP.get("/api/tools").then(function (j) {
+      $("tools-url").textContent = j.mesh_llm_url || "—";
+      $("tools-model").textContent = j.mesh_llm_model != null
+        ? j.mesh_llm_model : "no responde (doble en test)";
+      $("tools-model").style.color = j.mesh_llm_model != null
+        ? "var(--accent)" : "var(--muted)";
+      $("tools-fit").textContent = j.llmfit != null
+        ? j.llmfit : "no hay en el host";
+      $("tools-fit").style.color = j.llmfit != null
+        ? "var(--accent)" : "var(--muted)";
+      $("tools-ver").textContent = j.llmfit_version != null
+        ? j.llmfit_version : "—";
+      if (st) st.textContent = "descubierto · " +
+        (j.mesh_llm_model != null ? "meshllm " + j.mesh_llm_model : "sin meshllm") +
+        (j.llmfit != null ? " · llmfit " + (j.llmfit_version || "") : " · sin llmfit");
+      show("herramientas descubiertas", "ok");
+    }).catch(function (e) {
+      if (st) st.textContent = "";
+      show("tools error: " + e.message, "err");
+    });
+  }
+
   function startLive() {
     // Lightweight live tick: refresh signals + runs while page is open.
     var live = SMCP.poll("/api/status", 4000, function (st) {
@@ -302,6 +328,8 @@
     if (save) save.addEventListener("click", saveConfig);
     var mesh = $("btn-meshllm");
     if (mesh) mesh.addEventListener("click", probeMeshLLM);
+    var tools = $("btn-tools");
+    if (tools) tools.addEventListener("click", discoverTools);
   }
 
   if (document.readyState === "loading") {

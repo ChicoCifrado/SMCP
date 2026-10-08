@@ -1125,7 +1125,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1263 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1266 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1224,11 +1224,14 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   21 ACP (`smcp-serve`: handshake, ciclo de vida, el contrato de firmas de los
   overrides contra `acp.Agent`, prompt con el pipeline real, cancelación, smoke
   JSON-RPC por stdio) +
-  38 API: 12 acciones de sesión (scan, taint, config, export del ledger) +
+  41 API: 12 acciones de sesión (scan, taint, config, export del ledger) +
   7 demos in-proceso + 7 inspección del contexto + 6 gestor de runs +
   3 config + 3 red v3 (la malla en la web: dos nodos se emparejan y
   sirven una inferencia por `/api/mesh/v3`, con cada datagrama por el
   SSE — lo que la Consola 3D dibuja en su modo «Red v3») +
+  3 herramientas (el descubrimiento al arrancar en `/api/tools`: el
+  modelo que MeshLLM ofrece y el llmfit del host, con su versión —
+  lo que la página de Estado muestra en «Herramientas del nodo») +
   4 demos que pasan. 10 tests `slow` se excluyen del default
   (`-m 'not slow'`): handshake QUIC multi-host, adaptador Harness, llmfit real,
   el smoke ACP por stdio y los 3+2 de la malla contra un endpoint real

@@ -64,6 +64,7 @@ from smcp.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
 from smcp.core.run_store import RunStore, StoredRun
 from smcp.core.task_queue import Task, TaskState
 from smcp.core.taint import TaintLevel
+from smcp.core.tools import discover_tools
 from smcp.core.transport import InMemoryTransport, MeshTransport, _Bus
 from smcp.core.unfolding import Unfolding, Unfolded
 from smcp.core.verifier import RuleVerifier
@@ -1272,6 +1273,34 @@ async def get_meshllm() -> dict[str, Any]:
     """Probe the local MeshLLM OpenAI-compatible endpoint (:9337)."""
     result = await _probe_endpoint("http://127.0.0.1:9337/v1", "", False)
     return {"endpoint": "http://127.0.0.1:9337/v1", **result}
+
+
+@router.get("/tools")
+async def get_tools(
+    mesh_llm_url: str = Query(default=DEFAULT_MESH_ENDPOINT,
+                                max_length=200),
+    llmfit_bin: str | None = Query(default=None, max_length=400),
+) -> dict[str, Any]:
+    """Las herramientas del nodo, descubiertas en vivo
+    (:mod:`smcp.core.tools`).
+
+    El MeshLLM se sondea con ``GET {url}/models`` y llmfit
+    se busca en el host (explícito, ``$DELM_LLMFIT_BIN``,
+    ``PATH`` o ``python -m llmfit``) con su versión. Nada
+    está escrito en el código: lo que el host despliega es
+    lo que el nodo usa, y lo que falte se reporta como
+    ``None`` — el nodo arranca igual, con su doble
+    determinista en test.
+    """
+    reporte = discover_tools(
+        mesh_llm_url=mesh_llm_url, llmfit_bin=llmfit_bin,
+        timeout_s=5.0)
+    return {
+        "mesh_llm_url": reporte.mesh_llm_url,
+        "mesh_llm_model": reporte.mesh_llm_model,
+        "llmfit": reporte.llmfit,
+        "llmfit_version": reporte.llmfit_version,
+    }
 
 
 # ------------------------------------------------------------------- llmfit

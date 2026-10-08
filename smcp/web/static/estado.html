@@ -298,6 +298,31 @@
       </section>
 
       <section>
+        <h2>Herramientas del nodo</h2>
+        <p class="sub" style="margin:6px 0 0;font-size:13px">
+          Qué encontró el nodo al arrancar: el modelo que el
+          <b>MeshLLM</b> local ofrece y el <b>llmfit</b> del host,
+          con su versión. Nada está escrito en el código — lo que
+          el host despliega es lo que el nodo usa, y el reporte
+          dice lo que falta.
+        </p>
+        <div class="kv" id="tools-kv">
+          <span class="k">mesh_llm</span><span class="v" id="tools-url">—</span>
+          <span class="k">modelo</span><span class="v" id="tools-model">—</span>
+          <span class="k">llmfit</span><span class="v" id="tools-fit">—</span>
+          <span class="k">versión</span><span class="v" id="tools-ver">—</span>
+        </div>
+        <div class="live-actions">
+          <button class="live-btn primary" id="btn-tools" type="button">Descubrir herramientas</button>
+          <span class="live-status" id="tools-status" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div class="shortcuts">
+          <a href="play.html">→ Lab (nuevo run)</a>
+          <a href="console.html">→ Consola 3D</a>
+        </div>
+      </section>
+
+      <section>
         <h2>Runs recientes</h2>
         <div class="tbl-wrap">
           <table class="runs" id="runs-table">
