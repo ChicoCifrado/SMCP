@@ -31,9 +31,19 @@ from smcp.core.contrib import (
     CapacityReport,
     ContributionLedger,
     default_identity_path,
+    default_payments_identity_path,
     default_state_path,
 )
 from smcp.core.gist import Gist, GistKind, RefTag, Summary
+from smcp.core.handcash import (
+    MAX_NOTE_CHARS,
+    PaymentIdentity,
+    handcash_note,
+    load_identity,
+    parse_handle,
+    save_identity,
+    valid_legacy_address,
+)
 from smcp.core.injection import detect_injection
 from smcp.core.injection_hardened import detect_injection_hardened
 from smcp.core.intercambio import InferenceServer
@@ -55,8 +65,16 @@ from smcp.core.registro import (
     DEFAULT_REGISTRY_PATH,
     InferenceRegistry,
 )
-from smcp.core.inscripcion import extract_inscription, verify_inscription
-from smcp.core.membership import BlockHeader, InclusionProof
+from smcp.core.inscripcion import (
+    NOTAS_COMPLETADO,
+    extract_inscription,
+    verify_inscription,
+)
+from smcp.core.membership import (
+    BlockHeader,
+    InclusionProof,
+    ProtocolError,
+)
 from smcp.core.requirements import MeshRequirements
 from smcp.core.secure_context import SecureSharedContext
 from smcp.core.txbuild import Transaction, TxIn
@@ -1300,6 +1318,100 @@ async def get_tools(
         "mesh_llm_model": reporte.mesh_llm_model,
         "llmfit": reporte.llmfit,
         "llmfit_version": reporte.llmfit_version,
+    }
+
+
+# ------------------------------------------------------- identidad de pago
+# La identidad de pago del nodo: el handle de HandCash
+# (el paymail enruta a la billetera del usuario) y, no
+# recomendado, su dirección legacy. El CLI y la web
+# escriben el mismo fichero — una identidad, no dos.
+def _payments_identity_path() -> Path:
+    return default_payments_identity_path()
+
+
+def _identity_view(ident: PaymentIdentity) -> dict[str, Any]:
+    return {
+        "handle": (ident.handle.display
+                   if ident.handle is not None else None),
+        "paymail": (ident.handle.paymail
+                    if ident.handle is not None else None),
+        "legacy_address": ident.legacy_address,
+        "configured": ident.configured,
+        "recipient": ident.recipient if ident.configured else None,
+        "path": str(_payments_identity_path()),
+    }
+
+
+@router.get("/payments/identity")
+def get_payment_identity() -> dict[str, Any]:
+    """La identidad de pago del nodo (HandCash)."""
+    return _identity_view(load_identity(
+        _payments_identity_path()))
+
+
+class PaymentIdentityIn(BaseModel):
+    """La identidad de pago: handle y/o dirección
+    legacy (no recomendada). Al menos uno."""
+
+    handle: str | None = None
+    legacy_address: str | None = None
+
+
+@router.put("/payments/identity")
+def put_payment_identity(
+        body: PaymentIdentityIn) -> dict[str, Any]:
+    """Guarda la identidad de pago del nodo.
+
+    El handle (``$Chicocifrado``) deriva el paymail
+    que enruta los pagos a la billetera del usuario;
+    la dirección legacy funciona pero es estática y
+    rastreable — se acepta, desaconsejada. Se guarda
+    lo que venga (uno o los dos); vacío borra.
+    """
+    handle = (body.handle or "").strip() or None
+    legacy = (body.legacy_address or "").strip() or None
+    ident_handle = None
+    if handle is not None:
+        # ValueError aquí no debería pasar (el parseo
+        # lanza ProtocolError), pero se dice igual.
+        try:
+            ident_handle = parse_handle(handle)
+        except ProtocolError as exc:
+            raise HTTPException(
+                status_code=400, detail=str(exc)
+            ) from exc
+    if legacy is not None and not valid_legacy_address(
+            legacy):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"dirección {legacy!r}: no es una "
+                    "P2PKH de BSV mainnet válida"),
+        )
+    try:
+        ident = PaymentIdentity(handle=ident_handle,
+                                legacy_address=legacy)
+    except ProtocolError as exc:
+        raise HTTPException(
+            status_code=400, detail=str(exc)
+        ) from exc
+    save_identity(ident, _payments_identity_path())
+    return _identity_view(
+        load_identity(_payments_identity_path()))
+
+
+@router.get("/payments/note-demo")
+def get_payment_note_demo() -> dict[str, Any]:
+    """Las notas de finalización caben en el
+    ``note`` de HandCash (<=25 caracteres): la
+    notificación que la billetera muestra."""
+    return {
+        "max_note_chars": MAX_NOTE_CHARS,
+        "notas": list(NOTAS_COMPLETADO),
+        "caben": all(
+            len(n) <= MAX_NOTE_CHARS
+            for n in NOTAS_COMPLETADO
+        ),
     }
 
 

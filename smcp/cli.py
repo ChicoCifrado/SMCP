@@ -418,6 +418,100 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
     return 2
 
 
+def _pay_show(args: argparse.Namespace) -> int:
+    """La identidad de pago: adónde van los sats."""
+    from smcp.core.contrib import default_payments_identity_path
+    from smcp.core.handcash import load_identity
+
+    ident = load_identity()
+    path = default_payments_identity_path()
+    print("=== smcp pay (identidad de pago) ===")
+    print(f"fichero    : {path}"
+          f"{'' if path.exists() else ' (aún no existe)'}")
+    if not ident.configured:
+        print("identidad  : sin configurar "
+              "(el pago va a la clave local)")
+        print()
+        print("  delm pay set --handle '$Chicocifrado'")
+        print("  # el paymail chicocifrado@handcash.io "
+              "enruta a tu billetera")
+        return 0
+    if ident.handle is not None:
+        print(f"handle     : {ident.handle.display}")
+        print(f"paymail    : {ident.handle.paymail}")
+    if ident.legacy_address:
+        print(f"legacy     : {ident.legacy_address} "
+              "(no recomendado)")
+    print(f"destino    : {ident.recipient}")
+    return 0
+
+
+def _pay_set(args: argparse.Namespace) -> int:
+    """Guarda la identidad de pago (handle y/o dirección)."""
+    from smcp.core.handcash import (
+        PaymentIdentity, parse_handle, save_identity,
+        valid_legacy_address,
+    )
+    from smcp.core.membership import ProtocolError
+
+    handle = (args.handle or "").strip() or None
+    legacy = (args.legacy or "").strip() or None
+    ident_handle = None
+    if handle is not None:
+        try:
+            ident_handle = parse_handle(handle)
+        except ProtocolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    if legacy is not None:
+        if not valid_legacy_address(legacy):
+            print(f"error: dirección {legacy!r}: no es "
+                  "una P2PKH de BSV mainnet válida",
+                  file=sys.stderr)
+            return 2
+        print("aviso: la dirección legacy es estática y "
+              "rastreable — el handle es el camino",
+              file=sys.stderr)
+    try:
+        ident = PaymentIdentity(handle=ident_handle,
+                                 legacy_address=legacy)
+    except ProtocolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    path = save_identity(ident)
+    print(f"identidad guardada: {path}")
+    print(f"  destino: {ident.recipient}")
+    if ident.handle is not None:
+        print(f"  los pagos a {ident.handle.paymail} "
+              "enrutan a tu billetera HandCash")
+    return 0
+
+
+def _pay_clear(args: argparse.Namespace) -> int:
+    """Borra la identidad de pago."""
+    from smcp.core.contrib import default_payments_identity_path
+
+    path = default_payments_identity_path()
+    if path.exists():
+        path.unlink()
+        print(f"identidad borrada: {path}")
+    else:
+        print("no hay identidad que borrar")
+    return 0
+
+
+def _cmd_pay(args: argparse.Namespace) -> int:
+    """La identidad de pago: adónde van los sats."""
+    action = args.pay_command or "show"
+    if action == "show":
+        return _pay_show(args)
+    if action == "set":
+        return _pay_set(args)
+    if action == "clear":
+        return _pay_clear(args)
+    return 2
+
+
 def _mesh_status(args: argparse.Namespace) -> int:
     state, _ = _mesh_paths(args)
     led = _load_exchange(state, args.mesh_id)
@@ -1200,6 +1294,29 @@ def build_parser() -> argparse.ArgumentParser:
     m_mv.add_argument("--json", action="store_true")
 
     p_mesh.set_defaults(func=_cmd_mesh)
+
+    # --- pay: la identidad de pago (HandCash)
+    p_pay = sub.add_parser(
+        "pay",
+        help="identidad de pago: adónde van los sats "
+             "(handle de HandCash o dirección legacy)")
+    psub = p_pay.add_subparsers(dest="pay_command",
+                                 metavar="<acción>")
+    p_sh = psub.add_parser("show", help="la identidad "
+                                        "actual (default)")
+    p_st = psub.add_parser("set", help="guardar handle "
+                                       "y/o dirección")
+    p_st.add_argument("--handle", default=None,
+                      help="handle de HandCash "
+                           "($Chicocifrado) — el paymail "
+                           "enruta a tu billetera")
+    p_st.add_argument("--legacy", default=None,
+                      help="dirección P2PKH de BSV "
+                           "(no recomendado: estática "
+                           "y rastreable)")
+    p_cl = psub.add_parser("clear", help="borrar la "
+                                         "identidad")
+    p_pay.set_defaults(func=_cmd_pay)
 
     # --- version
     p_ver = sub.add_parser("version", help="muestra la version")

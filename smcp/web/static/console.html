@@ -85,6 +85,19 @@
   #runform .go:not(:disabled):hover, #redform .go:not(:disabled):hover { filter: brightness(1.1); }
   #runform .go.ghost { background: transparent; color: var(--accent); border-color: var(--line); }
 
+  /* identidad de pago: en todos los modos */
+  #payid { padding: 10px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 7px; background: rgba(143,191,63,.03); }
+  #payid .payid-ttl { font: 600 10px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  #payid label { display: flex; flex-direction: column; gap: 3px; font: 11px var(--font-mono); color: var(--muted); }
+  #payid input { font: 12.5px var(--font-mono); padding: 6px 9px; border-radius: 7px; border: 1px solid var(--line); background: var(--code-bg); color: var(--text); }
+  #payid input:focus { outline: none; border-color: var(--accent-soft); }
+  #payid .go { font: 600 11px var(--font-mono); letter-spacing: .04em; padding: 7px; border-radius: 8px; cursor: pointer; border: 1px solid var(--accent-soft); background: transparent; color: var(--accent); }
+  #payid .go:not(:disabled):hover { filter: brightness(1.2); }
+  #payid .payid-st { font: 11px var(--font-mono); color: var(--muted); }
+  #payid .payid-st.ok { color: var(--accent); }
+  #payid .payid-st.err { color: #ff6b5b; }
+  #payid .dim { color: var(--muted); font-weight: 400; }
+
   /* salida */
   #out { padding: 12px 14px; overflow: auto; flex: 1; font: 12.5px/1.55 var(--font-mono); color: var(--text); white-space: pre-wrap; }
   #out .ok { color: var(--accent); font-weight: 600; }
@@ -236,6 +249,19 @@
       <button class="cancel" id="btn-cancel">cancelar</button>
     </div>
 
+    <!-- identidad de pago: visible en todos los modos -->
+    <div id="payid">
+      <div class="payid-ttl">Identidad de pago · HandCash</div>
+      <label>Handle
+        <input id="f-handle" type="text" placeholder="$Chicocifrado" autocomplete="off" spellcheck="false" />
+      </label>
+      <label>Dirección legacy <span class="dim">(no recomendado)</span>
+        <input id="f-legacy" type="text" placeholder="1…" autocomplete="off" spellcheck="false" />
+      </label>
+      <button class="go" id="btn-payid">Guardar identidad</button>
+      <div class="payid-st" id="payid-st"><span class="dim">sin identidad: el pago va a la clave local</span></div>
+    </div>
+
     <!-- modo motor: crear run -->
     <div id="runform">
       <label>Tarea
@@ -291,6 +317,7 @@
   </div>
 
   <script src="/js/three.min.js"></script>
+  <script src="/assets/api.js"></script>
   <script src="/assets/runs.js"></script>
   <script src="/console.js"></script>
 </body>

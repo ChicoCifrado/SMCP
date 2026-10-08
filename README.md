@@ -19,6 +19,14 @@ contribuyen con su VRAM y, a cambio, obtienen acceso a la inferencia de la malla
 — y si esa VRAM se reparte bien, entre todos pueden correr modelos que no caben
 en ninguna máquina sola.**
 
+> **Hoy la red tiene un solo usuario: su propietario.** La inferencia la hace
+> él, se la solicita a sí mismo (Alice le pide a Bob, y Bob es el mismo nodo)
+> y el pago de ~250 satoshis le vuelve a **su propia billetera** — a su
+> handle de HandCash, que enruta a las direcciones BSV que controla. La
+> malla crece cuando otros nodos se unan; mientras tanto la red se ejerce
+> de punta a punta — pedir, servir, pagar y cobrar — con un solo nodo, y el
+> protocolo, el precio y los tiers ya están para cuando eso pase.
+
 ## Smart contract BSV (protocolo permissionless)
 
 `smcp/core/contract.py` — el "smart contract" en BSV no es un
@@ -168,6 +176,27 @@ metadata off-chain) via `Connect.pay`. Custodial: las claves
 las gestiona HandCash, útil para pagos rápidos pero no para
 soberanía. AppId/AppSecret en `~/.hermes/.env`; authToken en
 `~/.smcp/handcash.authtoken` (0600).
+
+**Identidad de pago** (`smcp/core/handcash.py`) — **adónde van
+los sats**. El **handle** de HandCash (`$Chicocifrado`) deriva el
+paymail (`chicocifrado@handcash.io`) que enruta los pagos a las
+direcciones BSV que el usuario controla en su billetera: pagar al
+paymail es pagar a la billetera, sin conocer ninguna dirección de
+antemano. La **dirección legacy** (P2PKH, `1…`) también funciona
+pero es estática y rastreable — se acepta, **no recomendada**. La
+identidad vive en `config/payments_identity.json`, el **mismo
+fichero** para la CLI y la web (una identidad, no dos):
+- CLI: `smcp pay show` · `smcp pay set --handle '$Chicocifrado'`
+  (`--legacy 1…`, desaconsejado) · `smcp pay clear`.
+- Consola 3D: la sección **Identidad de pago**, visible en **los
+  tres modos** (Motor, Proyecto, Red v3).
+- API: `GET`/`PUT /api/payments/identity`.
+
+Al completar una inferencia, el pago lleva la **nota de
+finalización** (campo `note` de HandCash, <=25 chars — la
+notificación que la billetera muestra al recibir): una de cuatro
+fijas, siempre las mismas, elegida por `H` ("inferencia completada"
+y variantes).
 
 **BSV-21 (DELM)** — el bridge `bsv21-bridge/bsv21.mjs`
 (SDK `@1sat/actions`) es quien construye las inscripciones
@@ -475,10 +504,13 @@ smcp test                       # la suite; --slow para los tests lentos
 smcp gates                      # los gates de calidad (ver abajo)
 smcp demo                       # demo principal (pipeline, sin API key)
 smcp demo --list                # lista las demos
+smcp pay show                   # identidad de pago (HandCash)
+smcp pay set --handle '$Chicocifrado'   # guardar handle (y/o --legacy 1…)
+smcp pay clear                  # borrar la identidad de pago
 ```
 
-Los siete subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh`,
-`gates` y `version`.
+Los ocho subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh`,
+`pay`, `gates` y `version`.
 
 `config-check` resuelve la config con la **misma** precedencia que
 `run_real_demo --dry-run` (entorno > YAML > default) y muestra la API key
@@ -1008,6 +1040,12 @@ un cero silencioso que la UI leería como "el proyecto tiene cero tests".
   nodo. Es el único camino del ingreso: exige txid, no admite dos veces la misma
   transacción, y rechaza a quien no ofrece VRAM (`not_a_provider`).
 - `/api/mesh/reputation` — el ranking: inferencias servidas por nodo.
+- `/api/payments/identity` — la identidad de pago (handle de HandCash /
+  dirección legacy): `GET` la lee, `PUT` la guarda — el **mismo fichero**
+  que `smcp pay`, así que la identidad del navegador y la de la CLI son
+  una.
+- `/api/payments/note-demo` — las notas de finalización caben en el
+  `note` de HandCash (<=25 chars).
 - `/api/mesh/plan?model=…` — plan de reparto (dimensiona con llmfit salvo que se
   pase `memory_gb`). `llmfit` ausente no es un error HTTP: `available: false` +
   `hint`.
@@ -1024,8 +1062,10 @@ veredicto en rojo/verde/neutro y un botón *usar* por fila que llama a
 `smcp/web/static/malla.html` + `smcp/web/static/assets/malla.js` son la página **Malla**: el intercambio
 y el reparto de modelos (contribuir, observar, planear, auditar). Comparte
 fichero de estado con la CLI, así que lo que se aporta en el navegador se ve en
-`smcp mesh status`. `smcp/web/static/assets/app.js` guarda la última página en `localStorage`
-y la restaura al volver al home.
+`smcp mesh status`. `smcp/web/static/console.html` (la Consola 3D) lleva la
+**Identidad de pago** por encima de sus formularios — visible en los tres
+modos — y guarda en `/api/payments/identity`. `smcp/web/static/assets/app.js` guarda la
+última página en `localStorage` y la restaura al volver al home.
 
 ### Usar un modelo real
 
@@ -1125,7 +1165,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1270 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1288 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1232,6 +1272,9 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   3 herramientas (el descubrimiento al arrancar en `/api/tools`: el
   modelo que MeshLLM ofrece y el llmfit del host, con su versión —
   lo que la página de Estado muestra en «Herramientas del nodo») +
+  18 identidad de pago (el handle de HandCash y la dirección legacy:
+  `/api/payments/identity`, el `note` de la notificación, el fichero
+  compartido CLI-web — `smcp pay` y la Consola 3D guardan lo mismo) +
   4 demos que pasan. 10 tests `slow` se excluyen del default
   (`-m 'not slow'`): handshake QUIC multi-host, adaptador Harness, llmfit real,
   el smoke ACP por stdio y los 3+2 de la malla contra un endpoint real

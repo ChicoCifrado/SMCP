@@ -36,6 +36,8 @@
   var out = el("out"), dot = el("dot"), ttl = el("ttl"), st = el("st");
   var cancelBtn = el("btn-cancel"), runBtn = el("btn-run");
   var redBtn = el("btn-red");
+  var payHandle = el("f-handle"), payLegacy = el("f-legacy"),
+      payBtn = el("btn-payid"), paySt = el("payid-st");
   var cx = el("cx"), cxRid = el("cx-rid"), cxAns = el("cx-ans"), cxFtr = el("cx-ftr");
 
   // ---------- escenario ----------
@@ -920,6 +922,59 @@
   }
 
   // ============================================================
+  //  identidad de pago (en todos los modos)
+  // ============================================================
+  function renderPayId(j) {
+    if (payHandle) payHandle.value = j.handle || "";
+    if (payLegacy) payLegacy.value = j.legacy_address || "";
+    if (!paySt) return;
+    if (j.configured) {
+      paySt.textContent = (j.paymail || j.legacy_address) +
+        " — el pago enruta a tu billetera";
+      paySt.className = "payid-st ok";
+    } else {
+      paySt.textContent = "sin identidad: el pago va a la clave local";
+      paySt.className = "payid-st";
+    }
+  }
+
+  function loadPayId() {
+    SMCP.get("/api/payments/identity").then(renderPayId)
+      .catch(function () {
+        if (!paySt) return;
+        paySt.textContent = "la API no responde";
+        paySt.className = "payid-st err";
+      });
+  }
+
+  function savePayId() {
+    var body = {
+      handle: payHandle ? payHandle.value.trim() : "",
+      legacy_address: payLegacy ? payLegacy.value.trim() : ""
+    };
+    if (!body.handle && !body.legacy_address) {
+      if (paySt) {
+        paySt.textContent = "handle o dirección, al menos uno";
+        paySt.className = "payid-st err";
+      }
+      return;
+    }
+    if (payBtn) payBtn.disabled = true;
+    SMCP.put("/api/payments/identity", body)
+      .then(function (j) {
+        renderPayId(j);
+        printLine('<span class="ok">identidad de pago guardada</span> — ' +
+          (j.paymail || j.legacy_address));
+      })
+      .catch(function (e) {
+        if (!paySt) return;
+        paySt.textContent = (e.body && e.body.detail) || e.message;
+        paySt.className = "payid-st err";
+      })
+      .then(function () { if (payBtn) payBtn.disabled = false; });
+  }
+
+  // ============================================================
   //  cambio de modo
   // ============================================================
   function setMode(m) {
@@ -1089,6 +1144,14 @@
       el("m-red").addEventListener("click", function () { setMode("red"); });
       runBtn.addEventListener("click", launchRun);
       redBtn.addEventListener("click", launchRed);
+      if (payBtn) payBtn.addEventListener("click", savePayId);
+      if (payHandle) payHandle.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") savePayId();
+      });
+      if (payLegacy) payLegacy.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") savePayId();
+      });
+      loadPayId();
       el("f-prompt").addEventListener("keydown", function (e) {
         if (e.key === "Enter") launchRed();
       });

@@ -92,6 +92,10 @@ MIN_USABLE_VRAM_GB = 0.5
 #: resolution lives here and both surfaces call it.
 STATE_RELATIVE = Path("config") / "mesh_exchange.json"
 IDENTITY_RELATIVE = Path("config") / "mesh_identity.json"
+#: Where the payment identity (the HandCash handle) lives. Same rule: the CLI
+#: and the web API write the same file, so the identity set in the console is
+#: the one the CLI reads.
+PAYMENTS_IDENTITY_RELATIVE = Path("config") / "payments_identity.json"
 
 
 def _default_path(relative: Path) -> Path:
@@ -171,6 +175,11 @@ def default_state_path() -> Path:
 def default_identity_path() -> Path:
     """Where this node's signing key lives (CLI and web API share this)."""
     return _default_path(IDENTITY_RELATIVE)
+
+
+def default_payments_identity_path() -> Path:
+    """Where the payment identity lives (CLI and web API share this)."""
+    return _default_path(PAYMENTS_IDENTITY_RELATIVE)
 
 
 # ----------------------------------------------------------------- challenge
