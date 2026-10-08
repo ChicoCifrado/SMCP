@@ -27,7 +27,7 @@ import base64
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from smcp.core.gossip import GossipTable, PeerAnnouncement
 from smcp.core.heartbeat import HeartbeatTracker
@@ -35,6 +35,9 @@ from smcp.core.provenance import KeyPair
 from smcp.core.requirements import AdmissionEvaluator, MeshRequirements
 from smcp.core.secure_context import SecureSharedContext
 from smcp.core.transport import MeshTransport
+
+if TYPE_CHECKING:
+    from smcp.core.mensajeria import MeshV3
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +102,15 @@ def _json_to_ann(d: dict) -> PeerAnnouncement:
 # Nodo de malla
 # ---------------------------------------------------------------------------
 class MeshNode:
-    """Un par SMCP: gossip + requirements + heartbeat + contexto seguro."""
+    """Un par SMCP: gossip + requirements + heartbeat + contexto seguro.
+
+    Los flujos v3 (join e intercambio) viven en el
+    despachador :class:`~smcp.core.mensajeria.MeshV3`,
+    inyectado aquí: el bucle (:meth:`run_tick`) drena
+    el transporte **una vez** y enruta cada datagrama
+    a su plano — el de control (0x01-0x07) aquí, el
+    v3 (0x08-0x0D) al despachador.
+    """
 
     def __init__(
         self,
@@ -112,6 +123,7 @@ class MeshNode:
         req: MeshRequirements,
         heartbeat: Optional[HeartbeatTracker] = None,
         ttl_secs: int = 30,
+        v3: Optional["MeshV3"] = None,
     ) -> None:
         self.peer_id = peer_id
         self.version = version
@@ -131,6 +143,9 @@ class MeshNode:
         # one-time handshake, not a periodic beacon; re-sending it forever
         # turns the gossip into a self-feeding loop on redelivering transports.
         self._announced: set[str] = set()
+        # El despachador v3 (join e intercambio), si
+        # el nodo corre esos flujos.
+        self._v3 = v3
         # Registra la propia key en el contexto (el par puede admitir).
         self.ctx.register_key(self.peer_id, key.public_key, key.kind)
 
@@ -207,6 +222,10 @@ class MeshNode:
             self.handle_peer_down(from_id, json.loads(body))
         elif kind == MSG_PEER_LEAVE:
             self.handle_peer_leave(from_id, json.loads(body))
+        elif self._v3 is not None and kind in self._v3.kinds:
+            # El bloque v3 (0x08-0x0D): join e
+            # intercambio, por su despachador.
+            self._v3.handle(from_id, payload)
         else:
             raise ValueError(f"tipo de datagrama desconocido: {kind:#x}")
 

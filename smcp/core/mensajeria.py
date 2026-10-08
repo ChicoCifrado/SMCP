@@ -14,17 +14,20 @@ delega a la capa de transporte.
 
 Los mensajes
 --------------
-Extienden el espacio de tipos de :mod:`mesh_node`:
+El espacio de tipos del datagrama es **compartido**
+con el plano de control de la malla (:mod:`mesh_node`,
+``0x01``-``0x07``), así que el bloque v3 empieza en
+``0x08``:
 
 ===== =================== ====================================
 tipo  mensaje            dirección
 ===== =================== ====================================
-0x03  HANDSHAKE          cualquiera (identidad BRC-103)
-0x04  INFERENCE_REQUEST  Alice -> Bob
-0x05  PAYMENT_TERMS      Bob -> Alice (la tx sin firmar)
-0x06  SIGNED_PAYMENT     Alice -> Bob (la tx firmada)
-0x07  INFERENCE_RESPONSE Bob -> Alice (off-chain)
-0x08  ROSTER             cualquiera (el join: roster +
+0x08  HANDSHAKE          cualquiera (identidad BRC-103)
+0x09  INFERENCE_REQUEST  Alice -> Bob
+0x0A  PAYMENT_TERMS      Bob -> Alice (la tx sin firmar)
+0x0B  SIGNED_PAYMENT     Alice -> Bob (la tx firmada)
+0x0C  INFERENCE_RESPONSE Bob -> Alice (off-chain)
+0x0D  ROSTER             cualquiera (el join: roster +
                         keyring)
 ===== =================== ====================================
 
@@ -39,9 +42,9 @@ La secuencia de inferencia
 ----------------------------
 ::
 
-    Alice pide (0x04)  ->  Bob sirve y devuelve la
-    respuesta (0x07) y los términos (0x05)  ->
-    Alice verifica y firma (0x06)  ->  Bob
+    Alice pide (0x09)  ->  Bob sirve y devuelve la
+    respuesta (0x0C) y los términos (0x0A)  ->
+    Alice verifica y firma (0x0B)  ->  Bob
     verifica, emite por ARC y cuenta.
 
 El join (:class:`JoinWire`)
@@ -156,17 +159,17 @@ __all__ = [
 #: fases (en el cuerpo): ``init`` — la clave
 #: y el nonce de un lado — y ``proof`` — su
 #: nonce, el del par y la firma de ambos.
-KIND_HANDSHAKE = 0x03
+KIND_HANDSHAKE = 0x08
 #: Alice -> Bob: el prompt, la malla, su clave y su UTXO.
-KIND_INFERENCE_REQUEST = 0x04
+KIND_INFERENCE_REQUEST = 0x09
 #: Bob -> Alice: los términos (la tx sin firmar, DPP).
-KIND_PAYMENT_TERMS = 0x05
+KIND_PAYMENT_TERMS = 0x0A
 #: Alice -> Bob: la tx con su input firmado (la Payment).
-KIND_SIGNED_PAYMENT = 0x06
+KIND_SIGNED_PAYMENT = 0x0B
 #: Bob -> Alice: la respuesta, fuera de cadena.
-KIND_INFERENCE_RESPONSE = 0x07
+KIND_INFERENCE_RESPONSE = 0x0C
 #: El roster y el keyring de un nodo (el join).
-KIND_ROSTER = 0x08
+KIND_ROSTER = 0x0D
 
 
 def new_request_id() -> str:
@@ -480,32 +483,49 @@ class InferenceResponder:
         # el fondeo de Alice).
         self._pendientes: dict[str, InferenceRequest] = {}
 
-    def serve_next(self) -> str | None:
-        """Atiende **un** mensaje del transporte; devuelve su ``request_id``.
+    def handle(self, frm: str, payload: bytes) -> str | None:
+        """Atiende **un** datagrama de inferencia; devuelve su ``request_id``.
 
-        Una petición (0x04) se sirve: la respuesta (0x07) y los
-        términos (0x05) viajan al solicitante. Un pago firmado
-        (0x06) se re-verifica, se emite por ARC y se cuenta: es
-        el cobro. Devuelve ``None`` si no había nada. Un pago
-        para un ``request_id`` desconocido es una violación del
-        protocolo y se dice (:class:`ProtocolError`), no se
-        ignora.
+        Es la unidad de atención sin sondeo: el bucle
+        del nodo (:meth:`smcp.core.mesh_node.MeshNode.run_tick`)
+        drena el transporte **una vez** y enruta aquí
+        cada datagrama del bloque v3. Una petición
+        (0x09) se sirve: la respuesta (0x0C) y los
+        términos (0x0A) viajan al solicitante. Un pago
+        firmado (0x0B) se re-verifica, se emite por ARC
+        y se cuenta: es el cobro. Devuelve ``None`` si
+        el mensaje no era de inferencia. Un pago para
+        un ``request_id`` desconocido es una violación
+        del protocolo y se dice (:class:`ProtocolError`),
+        no se ignora.
+        """
+        kind, body = decode_msg(payload)
+        if kind == KIND_INFERENCE_REQUEST:
+            rid, req = decode_inference_request(body)
+            self._pendientes[rid] = req
+            response, tx = asyncio.run(self._server.serve(req))
+            self._transport.send(frm, encode_inference_response(rid, response))
+            self._transport.send(frm, encode_payment_terms(rid, tx))
+            return rid
+        if kind == KIND_SIGNED_PAYMENT:
+            rid, tx = decode_signed_payment(body)
+            req = self._pendientes.pop(rid, None)
+            if req is None:
+                raise ProtocolError(f"pago sin petición: {rid}")
+            asyncio.run(self._server.settle(tx, req))
+            return rid
+        return None
+
+    def serve_next(self) -> str | None:
+        """Atiende el primer mensaje de inferencia del transporte.
+
+        Drena lo que haya y enruta cada datagrama por
+        :meth:`handle`; devuelve el ``request_id`` del
+        primero que fue de inferencia (o ``None``).
         """
         for frm, payload in self._transport.poll():
-            kind, body = decode_msg(payload)
-            if kind == KIND_INFERENCE_REQUEST:
-                rid, req = decode_inference_request(body)
-                self._pendientes[rid] = req
-                response, tx = asyncio.run(self._server.serve(req))
-                self._transport.send(frm, encode_inference_response(rid, response))
-                self._transport.send(frm, encode_payment_terms(rid, tx))
-                return rid
-            if kind == KIND_SIGNED_PAYMENT:
-                rid, tx = decode_signed_payment(body)
-                req = self._pendientes.pop(rid, None)
-                if req is None:
-                    raise ProtocolError(f"pago sin petición: {rid}")
-                asyncio.run(self._server.settle(tx, req))
+            rid = self.handle(frm, payload)
+            if rid is not None:
                 return rid
         return None
 
@@ -718,3 +738,114 @@ class JoinWire:
             self._peer, encode_roster(self._roster, self._keyring),
         )
         return None
+
+
+# ---------------------------------------------------------------------------
+# El despachador v3
+# ---------------------------------------------------------------------------
+
+
+class MeshV3:
+    """Los flujos v3 (join e intercambio) en el bucle del nodo.
+
+    El transporte solo lo puede drenar **un** consumidor,
+    así que el nodo (:meth:`smcp.core.mesh_node.MeshNode.run_tick`)
+    drena **una vez** y enruta aquí cada datagrama del
+    bloque v3 (0x08-0x0D; :attr:`kinds`). Este despachador
+    mantiene vivo el estado de cada flujo:
+
+    * **join** — un :class:`JoinWire` **por par** (el
+      intercambio es uno-a-uno). Un ``init`` de un par
+      nuevo abre el exchange; el que completa se retira
+      y su resultado queda en :attr:`results`.
+    * **intercambio** — el :class:`InferenceResponder`
+      del nodo (si lo hay), que atiende peticiones y
+      pagos por :meth:`InferenceResponder.handle`.
+
+    El nodo no sabe nada de la v3: es este despachador
+    (inyectado en el :class:`~smcp.core.mesh_node.MeshNode`)
+    el que la mantiene viva.
+    """
+
+    def __init__(
+        self,
+        *,
+        transport: MeshTransport,
+        roster: Roster,
+        key: KeyPair,
+        keyring: dict[str, bytes],
+        responder: InferenceResponder | None = None,
+    ) -> None:
+        self._transport = transport
+        self._roster = roster
+        self._key = key
+        self._keyring = keyring
+        self._responder = responder
+        self._joins: dict[str, JoinWire] = {}
+        self._results: list[JoinResult] = []
+
+    @property
+    def kinds(self) -> frozenset[int]:
+        """Los tipos de mensaje que este despachador atiende."""
+        return frozenset(
+            {
+                KIND_HANDSHAKE,
+                KIND_INFERENCE_REQUEST,
+                KIND_PAYMENT_TERMS,
+                KIND_SIGNED_PAYMENT,
+                KIND_INFERENCE_RESPONSE,
+                KIND_ROSTER,
+            }
+        )
+
+    @property
+    def results(self) -> tuple[JoinResult, ...]:
+        """Los joins completados, en orden de llegada."""
+        return tuple(self._results)
+
+    def start_join(self, to: str) -> None:
+        """Inicia el join con un par (si no hay uno en curso)."""
+        if to in self._joins:
+            return
+        wire = self._new_wire()
+        self._joins[to] = wire
+        wire.start(to)
+
+    def handle(self, frm: str, payload: bytes) -> JoinResult | str | None:
+        """Despacha **un** datagrama v3 (del bucle del nodo).
+
+        El nodo ya separó el prefijo; aquí se decodifica
+        el tipo y se enruta al flujo dueño. Devuelve un
+        :class:`JoinResult` cuando un join completa (y
+        el exchange se retira), o lo que devuelva el
+        respondedor de inferencia.
+        """
+        kind, body = decode_msg(payload)
+        if kind in (KIND_HANDSHAKE, KIND_ROSTER):
+            wire = self._joins.get(frm)
+            if wire is None:
+                if kind == KIND_ROSTER:
+                    return None       # roster sin exchange: se descarta
+                if _phase(body) != "init":
+                    return None       # prueba sin init: se descarta
+                # Un init de un par nuevo abre el exchange.
+                wire = self._new_wire()
+                self._joins[frm] = wire
+            result = wire.handle(frm, payload)
+            if result is not None:
+                self._joins.pop(frm, None)
+                self._results.append(result)
+            return result
+        if self._responder is not None:
+            return self._responder.handle(frm, payload)
+        return None
+
+    def _new_wire(self) -> JoinWire:
+        """Un exchange de join (el par se conoce
+        con el primer mensaje)."""
+        return JoinWire(
+            transport=self._transport,
+            roster=self._roster,
+            key=self._key,
+            keyring=self._keyring,
+        )
