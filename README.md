@@ -1125,7 +1125,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1266 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1270 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1279,11 +1279,15 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   transacción. Alice paga 250 sats; el ordinal de 1 sat es el comprobante
   (envelope BRC-160 en el locking script: `H = SHA-256(len‖mesh_id‖
   solicitante)` + la firma del servidor sobre `H`, BRC-220) y viaja a
-  Alice; Bob cobra el resto menos la fee de la tx. El **txid** es la clave
+  Alice; Bob cobra el resto menos la fee de la tx. El pago lleva la
+  **nota de finalización** (campo 6): al completar la inferencia, el
+  receptor recibe el pago con una de cuatro notas fijas — "inferencia
+  completada" y variantes, siempre las mismas — elegida por `H`, en
+  1 byte (el vocabulario, no el texto, viaja en la tx). El **txid** es la clave
   que cuenta el historial: una inferencia = una inscripción = un txid.
-  42 tests (incluida la medición de la fee de relay: la plantilla
-  serializa 452–453 bytes y, con el precio de 250 sats (presupuesto
-  de fee de 249), cierra hasta ~0.55 sat/vB — cubre la banda objetivo
+  46 tests (incluida la medición de la fee de relay: la plantilla
+  serializa 385–386 bytes y, con el precio de 250 sats (presupuesto
+  de fee de 249), cierra hasta ~0.65 sat/vB — cubre la banda objetivo
   de 0.1–0.5 entera; `relay_budget()`, ver doc).
 - **Emisión por ARC y la secuencia completa** — `arc.py` +
   `intercambio.py`: DPP (BRC-27) sobre ARC (el servicio de emisión de BSV,
@@ -1311,11 +1315,11 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   sobre este handshake: necesita una política de certificadores. 8 tests.
 - **Fee por defecto del intercambio, medida** — `intercambio.py`: una tx
   sin fee no la reenvía ningún nodo con relay normal, así que el default
-  dejó de ser 0: `DEFAULT_FEE_SATOSHIS = 50` es la **fee media de BSV
+  dejó de ser 0: `DEFAULT_FEE_SATOSHIS = 43` es la **fee media de BSV
   medida el 2026-10-08** (WhatsOnChain: tasa media en bloque ~0.11
   sat/vB, tx mediana ~180 sats, pools mayoritarios desde ~0.07, el más
-  estricto 0.5) aplicada al tamaño fijo de la plantilla (453 B). Fija en
-  sats porque el template fija el tamaño; Bob cobra 199 de 249. El knob
+  estricto 0.5) aplicada al tamaño fijo de la plantilla (386 B). Fija en
+  sats porque el template fija el tamaño; Bob cobra 206 de 249. El knob
   sigue siendo `fee_sats`.
 - **x402, ahora BRC-120** — `x402.py`: el verificador del role de
   verifier de la x402 v1.0 congelada (challenge/proof en
@@ -1327,12 +1331,12 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
 **En construcción / pendiente:**
 
 - **La inscripción v3: lo abierto, decidido y escrito** —
-  `docs/inscripcion-v3.md` §Abierto: `hash(resultado)` (SMCP4) y batching
-  (BRC-220 modo *batch*, BRC-122 — rompe "una inferencia = una tx") son
-  decisiones pendientes, y BRC-77 queda como opción de interoperabilidad.
-  Cerrados por trabajo real: la fee de relay (medida: 452–453 bytes;
+  `docs/inscripcion-v3.md` §Abierto: batching
+  (BRC-220 modo *batch*, BRC-122 — rompe "una inferencia = una tx") es
+  una decisión pendiente, y BRC-77 queda como opción de interoperabilidad.
+  Cerrados por trabajo real: la fee de relay (medida: 385–386 bytes;
   el precio subió de 100 a 250 sats para que el presupuesto de 249
-  cierre la banda de 0.1–0.5 sat/vB — hasta ~0.55; el default del
+  cierre la banda de 0.1–0.5 sat/vB — hasta ~0.65; el default del
   software, 1 sat/vB, sigue sin cerrar y el knob es
   `PER_INFERENCE_SATOSHIS`) y la identidad en el join (BRC-103,
   handshake simétrico en `identidad.py`; BRC-52 como opción sobre él).

@@ -10,7 +10,8 @@ El contrato que se fija aquí:
   roster, petición, respuesta, términos, pago) viaja por el
   SSE, en orden, con su dirección.
 * **El estado dice la verdad.** ``joined`` trae la confianza
-  mutua; ``settled`` el cobro; el estado terminal es ``done``.
+  mutua; ``served`` la nota de finalización del pago;
+  ``settled`` el cobro; el estado terminal es ``done``.
 * **404 con motivo** para una sesión que no existe.
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from smcp.core.inscripcion import NOTAS_COMPLETADO
 from smcp.web.app import app
 from smcp.web.api import _MESH_V3
 
@@ -72,6 +74,12 @@ def test_la_red_v3_completa(client: TestClient):
     settled = next(e for e in eventos if e["type"] == "settled")
     assert settled["inferences"] >= 1
     assert settled["earned"] > 0
+
+    # Al completar la inferencia, el pago dice al
+    # receptor una de las notas fijas — siempre del
+    # vocabulario, nunca texto libre.
+    served = next(e for e in eventos if e["type"] == "served")
+    assert served["nota"] in NOTAS_COMPLETADO
 
     # La secuencia de la inferencia por el cable, en orden.
     wires = [e for e in eventos if e["type"] == "wire"]

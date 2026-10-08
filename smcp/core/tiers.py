@@ -162,9 +162,9 @@ DEDICATED_SATOSHIS = 100_000
 #:
 #: 250, no 100: el presupuesto de fee de la tx de
 #: inscripcion es el precio menos el ordinal (249 sats), y
-#: la tx serializa ~453 bytes — 249 sats cierran el relay
-#: hasta ~0.55 sat/vB, que cubre el rango de 0.1 a 0.5
-#: sat/vB con margen (a 0.5 la fee son ~227 sats). El knob
+#: la tx serializa ~386 bytes — 249 sats cierran el relay
+#: hasta ~0.65 sat/vB, que cubre el rango de 0.1 a 0.5
+#: sat/vB con margen (a 0.5 la fee son ~193 sats). El knob
 #: es este: si la tarifa objetivo sube, el precio sube con
 #: ella (:func:`smcp.core.inscripcion.relay_budget` es la
 #: medicion).

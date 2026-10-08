@@ -801,7 +801,9 @@
         break;
       case "served":
         printLine('<span class="gist">respuesta servida</span> — «' +
-          (ev.response || "") + "» · tx " + String(ev.txid || "").slice(0, 12) + "…");
+          (ev.response || "") + "» · tx " +
+          String(ev.txid || "").slice(0, 12) + "… · pago con nota: «" +
+          (ev.nota || "") + "»");
         break;
       case "settled":
         st.textContent = "cobrado · " + ev.earned + " sats"; st.className = "st ok";

@@ -12,7 +12,7 @@ y se mide. El tamaño varía un byte por la firma DER (71 u
 relación, en lugar de pinchar un número mágico.
 
 Con el precio de 250 sats el presupuesto de fee son 249, y
-la tx (~453 bytes) cierra hasta ~0.55 sat/vB — la banda
+la tx (~386 bytes) cierra hasta ~0.65 sat/vB — la banda
 objetivo de 0.1 a 0.5 sat/vB entera.
 """
 from __future__ import annotations
@@ -48,8 +48,8 @@ def test_el_presupuesto_mide_la_tx_real() -> None:
     b = relay_budget(tx, fee_sats=10)
     assert b.size_bytes == len(tx.serialize())
     # la firma DER mide 71 u 72 bytes: el tamaño de la
-    # plantilla es ~453, nunca una estimación fija
-    assert 450 <= b.size_bytes <= 455
+    # plantilla es ~386, nunca una estimación fija
+    assert 383 <= b.size_bytes <= 388
 
 
 def test_el_techo_es_fee_entre_tamano() -> None:
@@ -63,7 +63,7 @@ def test_el_techo_es_fee_entre_tamano() -> None:
 def test_el_default_del_software_no_cierra() -> None:
     # minrelaytxfee de BSV = 1 sat/vB: ni con la fee
     # máxima construible (248, dejan 1 sat al servidor)
-    # la plantilla paga su relay (~453 B > 248).
+    # la plantilla paga su relay (~386 B > 248).
     b = relay_budget(_tx(fee_sats=248), fee_sats=248)
     assert b.cierra_a(BSV_RELAY_SOFTWARE_SAT_PER_BYTE) is False
 

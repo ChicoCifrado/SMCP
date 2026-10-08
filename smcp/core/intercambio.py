@@ -80,7 +80,7 @@ __all__ = [
 #: Fee por defecto que paga el servidor, en sats.
 #:
 #: **Fija en sats, no en tasa**: el tamaño de la
-#: plantilla lo fija el template (~453 bytes; solo
+#: plantilla lo fija el template (~386 bytes; solo
 #: la firma DER varía uno), así que una fee fija es
 #: una tasa fija. El número sale de la **fee media
 #: de BSV, medida el 2026-10-08** (WhatsOnChain,
@@ -96,19 +96,19 @@ __all__ = [
 #:   sat/KB (**~0.07 sat/vB**); el más estricto
 #:   (Bitofsin) pide 0.5.
 #:
-#: 0.11 sat/vB x 453 B = 49.96 -> 50 sats: la fee media de
+#: 0.11 sat/vB x 386 B = 42.46 -> 43 sats: la fee media de
 #: la red aplicada a esta plantilla, con margen
 #: sobre el mínimo de los pools mayoritarios. Con
-#: ella, Bob cobra ``249 - 50 = 199`` de los 250
+#: ella, Bob cobra ``249 - 43 = 206`` de los 250
 #: que paga Alice. ¿Por qué no 0 (el default
 #: anterior)? Una tx sin fee no la reenvía ningún
 #: nodo con relay normal — solo la minan los pools
-#: que aceptan txs sin fee. ¿Por qué no 227 (0.5,
+#: que aceptan txs sin fee. ¿Por qué no 193 (0.5,
 #: el techo del pool más estricto)? Porque la fee
 #: media es 0.11, no 0.5: pagar el techo por
 #: defecto es regalar 4.5 veces la relay que la
 #: red pide. El knob sigue siendo ``fee_sats``.
-DEFAULT_FEE_SATOSHIS = 50
+DEFAULT_FEE_SATOSHIS = 43
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +226,13 @@ class InferenceServer:
         v2, que v3 hereda: publicar el hash de un prompt es
         tan identificador como el prompt). Quien llama
         entrega el texto al solicitante por el transporte.
+
+        La tx lleva también la **nota de finalización**
+        (campo 6 del envelope): al terminar la inferencia,
+        el pago dice al receptor una de las notas fijas
+        (:data:`smcp.core.inscripcion.NOTAS_COMPLETADO`) —
+        la notificación de que la inferencia completó,
+        elegida por ``H``, siempre del vocabulario fijo.
         """
         response = await self._llm.complete(req.prompt)
         request = InscriptionRequest(

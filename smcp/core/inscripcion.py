@@ -32,24 +32,36 @@ BRC-160: el envelope ``OP_FALSE OP_IF "ord" … OP_ENDIF`` va **en
 el script de bloqueo del output de 1 sat**, no en un OP_RETURN.
 El envelope es un no-op, así que el output se gasta normal con la
 clave de Alice: quien posee el comprobante posee el registro. Los
-campos de aplicación (2 servidor, 3 parent, 4 versión, 5 firma)
+campos de aplicación (2 servidor, 4 versión, 5 firma, 6 nota)
 van antes del body (campo 0), que es el **último** campo — y el
 orden de campos es parte del formato, como en BRC-220:
 codificación fija, nunca "el que lea que interprete".
 
+El tamaño
+---------
+La plantilla serializa **~386 bytes**, y cada byte es relay
+que alguien paga. Dos decisiones lo consiguen: el *parent*
+**no viaja** — es el outpoint del input que paga, que la tx
+ya lleva en su input 0 (la plantilla es exactamente 1 input),
+así que el envelope lo deriva y la cadena no lo repite (38
+bytes menos); y el body (``H``) viaja **crudo** (32 bytes),
+no en hex ASCII, que lo duplica (32 bytes menos). La nota de
+finalización (campo 6) cabe en 1 byte: es un código del
+vocabulario fijo :data:`NOTAS_COMPLETADO`, no texto.
+
 Orden de bytes
 --------------
-El *parent* (campo 3) es el outpoint del input que paga: el txid
-en **orden interno** (como viaja en el cable) más el vout en
-little-endian. Todo lo demás (txid de presentación, ``H``) es lo
-de siempre: hex big-endian para mostrar.
+El body va crudo; todo lo de presentación (txid, ``H`` en el
+comprobante) es lo de siempre: hex big-endian para mostrar.
 
 Lo que este módulo NO hace
 --------------------------
 * No emite a la red (el ``PaymentACK`` de DPP es de la capa de
   transporte, no de aquí).
 * No ejecuta ni verifica la inferencia — el modelo es de
-  :mod:`smcp.core.llm`, y el hash del resultado es SMCP4.
+  :mod:`smcp.core.llm`. El hash del resultado **no** se ancla:
+  publicar el hash de un prompt es tan identificador como el
+  prompt (decisión de v3, cerrada).
 * No cuenta la inferencia:
   :func:`smcp.core.contrib.record_inference` es el único camino
   del historial, y su clave es el **txid** de esta transacción.
@@ -77,9 +89,9 @@ from smcp.core.txbuild import (
     OP_0,
     OP_1,
     OP_2,
-    OP_3,
     OP_4,
     OP_5,
+    OP_6,
     OP_ENDIF,
     OP_FALSE,
     OP_IF,
@@ -96,11 +108,43 @@ INSCRIPTION_VERSION = 3
 #: El ordinal es de 1 satoshi: el comprobante viaja dentro de él.
 ORDINAL_SATOSHIS = 1
 
-#: Longitud del body en caracteres hex (32 bytes de hash).
+#: Longitud del body en bytes (32 de hash, crudos en la tx).
+_HASH_LEN = 32
+
+#: Longitud del body en caracteres hex (su forma de mostrar).
 _HASH_HEX_LEN = 64
 
-#: Longitud del parent en bytes (32 de txid + 4 de vout).
-_PARENT_LEN = 36
+#: Las notas de finalización: lo que el pago dice al receptor
+#: cuando la inferencia termina. El vocabulario es **fijo** —
+#: siempre las mismas — y la tx lo nombra con un código de
+#: 1 byte (campo 6 del envelope), no con el texto: la nota
+#: completa en la tx serían ~20 bytes de relay por inferencia.
+NOTAS_COMPLETADO: tuple[str, ...] = (
+    "inferencia completada",
+    "inferencia terminada",
+    "inferencia resuelta",
+    "inferencia lista",
+)
+
+
+def nota_completado(codigo: int) -> str:
+    """La nota que nombra el código (campo 6 del envelope)."""
+    if not 0 <= codigo < len(NOTAS_COMPLETADO):
+        raise ProtocolError(
+            f"nota {codigo}; las notas son "
+            f"[0, {len(NOTAS_COMPLETADO) - 1}]"
+        )
+    return NOTAS_COMPLETADO[codigo]
+
+
+def nota_para(hash_hex: str) -> int:
+    """La nota de una inferencia, elegida por ``H``.
+
+    Determinista y sin estado: la misma petición lleva siempre
+    la misma nota, y el vocabulario fijo rota por el hash — el
+    receptor ve las notas turnándose, nunca texto libre.
+    """
+    return int(hash_hex[:2], 16) % len(NOTAS_COMPLETADO)
 
 
 # ---------------------------------------------------------------------------
@@ -183,15 +227,17 @@ def server_signature(*, mesh_id: str, requester_pubkey: bytes,
 # ---------------------------------------------------------------------------
 # El envelope BRC-160
 # ---------------------------------------------------------------------------
-def envelope_script(*, server_pubkey: bytes, parent_txid: str,
-                    parent_vout: int, signature: bytes,
-                    hash_hex: str) -> bytes:
-    """El envelope SMCP3: los campos 1, 2, 3, 4, 5 y el body (0).
+def envelope_script(*, server_pubkey: bytes, signature: bytes,
+                    hash_hex: str, nota: int = 0) -> bytes:
+    """El envelope SMCP3: los campos 1, 2, 4, 5, 6 y el body (0).
 
-    El body es el último campo, como manda BRC-160. El *parent*
-    (campo 3) es el outpoint del input que paga: txid en orden
-    interno más vout little-endian — la forma en que el outpoint
-    viaja en el cable.
+    El body es el último campo, como manda BRC-160 — y
+    viaja **crudo** (32 bytes de ``H``), no en hex ASCII,
+    que lo duplica. La *nota* (campo 6) es el código de
+    1 byte de :data:`NOTAS_COMPLETADO`: lo que el pago
+    dice al receptor al completar la inferencia. El
+    *parent* no viaja — es el outpoint del input que paga,
+    que la tx ya lleva en su input 0.
     """
     if len(server_pubkey) != PUBKEY_LEN:
         raise ProtocolError(
@@ -202,6 +248,11 @@ def envelope_script(*, server_pubkey: bytes, parent_txid: str,
         raise ProtocolError(
             f"firma de {len(signature)} bytes; se esperan {SIG_LEN} (r‖s)"
         )
+    if not 0 <= nota < len(NOTAS_COMPLETADO):
+        raise ProtocolError(
+            f"nota {nota}; las notas son "
+            f"[0, {len(NOTAS_COMPLETADO) - 1}]"
+        )
     if len(hash_hex) != _HASH_HEX_LEN:
         raise ProtocolError(
             f"body de {len(hash_hex)} caracteres; se esperan "
@@ -210,29 +261,18 @@ def envelope_script(*, server_pubkey: bytes, parent_txid: str,
     if hash_hex != hash_hex.lower():
         raise ProtocolError("el body va en hex minúsculas (canónico)")
     try:
-        bytes.fromhex(hash_hex)
-        parent = bytes.fromhex(parent_txid)[::-1]
+        body = bytes.fromhex(hash_hex)
     except ValueError as exc:
-        raise ProtocolError(
-            f"parent o body no son hex válido: {exc}"
-        ) from exc
-    if len(parent) != 32:
-        raise ProtocolError(
-            f"txid de parent de {len(parent)} bytes; se esperan 32"
-        )
-    try:
-        parent += struct.pack("<I", parent_vout)
-    except struct.error as exc:
-        raise ProtocolError(f"vout {parent_vout} fuera de u32") from exc
+        raise ProtocolError(f"body no es hex válido: {exc}") from exc
     return b"".join([
         bytes([OP_FALSE, OP_IF]),
         push_data(b"ord"),
         bytes([OP_1]) + push_data(b"text/plain"),
         bytes([OP_2]) + push_data(server_pubkey),
-        bytes([OP_3]) + push_data(parent),
         bytes([OP_4]) + push_data(bytes([INSCRIPTION_VERSION])),
         bytes([OP_5]) + push_data(signature),
-        bytes([OP_0]) + push_data(hash_hex.encode("ascii")),
+        bytes([OP_6]) + push_data(bytes([nota])),
+        bytes([OP_0]) + push_data(body),
         bytes([OP_ENDIF]),
     ])
 
@@ -265,7 +305,9 @@ def _read_push(script: bytes, pos: int) -> tuple[bytes, int]:
 
 #: Los tags de campo que SMCP3 define. Un tag desconocido es otro
 #: formato (una versión futura), no un error de parseo silencioso.
-_ENVELOPE_TAGS = frozenset({OP_0, OP_1, OP_2, OP_3, OP_4, OP_5})
+#: El 3 (parent) dejó de existir: el parent se deriva del input
+#: que paga, y un envelope que lo lleve es otra versión.
+_ENVELOPE_TAGS = frozenset({OP_0, OP_1, OP_2, OP_4, OP_5, OP_6})
 
 
 def parse_envelope(script: bytes) -> dict[int, bytes]:
@@ -309,7 +351,7 @@ def build_payment_terms(*, request: InscriptionRequest,
     plantilla v3.0 no lleva cambio (Alice consolida un UTXO exacto,
     operación normal de wallet). La fee sale de los 249 sats del
     servidor, así que una fee de 249 o más no cierra — y la tx
-    (~453 bytes) solo pasa relay por debajo de ~0.55 sat/vB, ver
+    (~386 bytes) solo pasa relay por debajo de ~0.65 sat/vB, ver
     :func:`relay_budget`. El knob es
     :data:`PER_INFERENCE_SATOSHIS`.
     """
@@ -337,10 +379,9 @@ def build_payment_terms(*, request: InscriptionRequest,
         ORDINAL_SATOSHIS,
         envelope_script(
             server_pubkey=request.server_pubkey,
-            parent_txid=funding.prev_txid,
-            parent_vout=funding.vout,
             signature=signature,
             hash_hex=h,
+            nota=nota_para(h),
         )
         + p2pkh_lock(hash160(request.requester_pubkey)),
     )
@@ -445,21 +486,21 @@ def relay_budget(tx: Transaction, fee_sats: int) -> RelayBudget:
 
     La medición que cierra el abierto 3 de la spec
     (``docs/inscripcion-v3.md``): la plantilla v3.0
-    serializa **~453 bytes**, no los ~250 que la spec
-    estimó — el envelope de BRC-160 viaja en el script de
-    bloqueo del ordinal (campo 5 = firma de 64 B en hex,
-    campo 0 = ``H`` de 64 B en hex). Con el precio de
-    250 sats el presupuesto de fee son 249, y la tx
-    cierra por debajo de ``249 / 453 ≈ 0.55 sat/vB``
-    (techo; la fee máxima construible son 248, que dejan
-    1 sat al servidor):
+    serializa **~386 bytes** — el envelope de BRC-160
+    viaja en el script de bloqueo del ordinal (firma de
+    64 B, ``H`` de 32 B crudos, nota de 1 B; el parent
+    no viaja, se deriva del input que paga). Con el
+    precio de 250 sats el presupuesto de fee son 249, y
+    la tx cierra por debajo de ``249 / 386 ≈ 0.65
+    sat/vB`` (techo; la fee máxima construible son 248,
+    que dejan 1 sat al servidor):
 
     * el default del software (1 sat/vB) **no cierra** —
-      harían falta ~453 sats;
+      harían falta ~386 sats;
     * la banda objetivo de la v3 (0.1-0.5 sat/vB) **cierra
-      entera**: a 0.1 bastan ~46 sats, a 0.5 ~227;
+      entera**: a 0.1 bastan ~39 sats, a 0.5 ~193;
     * el rango común de los pools (0.05-0.25) cierra con
-      margen: a 0.25 la fee son ~113 sats;
+      margen: a 0.25 la fee son ~97 sats;
     * con la fee por defecto del intercambio
       (:data:`smcp.core.intercambio.DEFAULT_FEE_SATOSHIS`,
       la fee media medida) la tx paga relay a la
@@ -500,6 +541,7 @@ class InscriptionReceipt:
     version: int
     signature: bytes
     hash_hex: str
+    nota: int
 
     @property
     def ordinal_outpoint(self) -> str:
@@ -512,6 +554,11 @@ class InscriptionReceipt:
         txid = self.parent[:32][::-1].hex()
         vout = int.from_bytes(self.parent[32:], "little")
         return f"{txid}:{vout}"
+
+    @property
+    def nota_texto(self) -> str:
+        """La nota de finalización que lleva el pago."""
+        return nota_completado(self.nota)
 
 
 def _field(fields: dict[int, bytes], tag: int, length: int,
@@ -568,17 +615,20 @@ def extract_inscription(tx: Transaction) -> InscriptionReceipt:
     server_pubkey = _field(
         envelope_fields, OP_2, PUBKEY_LEN, "pubkey del servidor"
     )
-    parent = _field(envelope_fields, OP_3, _PARENT_LEN, "parent")
     version = _field(envelope_fields, OP_4, 1, "versión")[0]
     signature = _field(envelope_fields, OP_5, SIG_LEN, "firma")
-    body = _field(envelope_fields, OP_0, _HASH_HEX_LEN, "body")
-    try:
-        hash_hex = body.decode("ascii")
-        bytes.fromhex(hash_hex)
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise ProtocolError(f"body no es hex ASCII: {exc}") from exc
-    if hash_hex != hash_hex.lower():
-        raise ProtocolError("el body no es hex canónico (minúsculas)")
+    nota = _field(envelope_fields, OP_6, 1, "nota")[0]
+    body = _field(envelope_fields, OP_0, _HASH_LEN, "body")
+    hash_hex = body.hex()
+    # Una nota fuera del vocabulario es otra versión del
+    # formato (más notas), no una nota silenciosa.
+    nota_completado(nota)
+    # El parent ya no viaja en el envelope: es el outpoint
+    # del input que paga, y la plantilla es exactamente 1
+    # input — se deriva de la tx, no se cree del envelope.
+    paying = tx.inputs[0]
+    parent = (bytes.fromhex(paying.prev_txid)[::-1]
+              + struct.pack("<I", paying.vout))
     return InscriptionReceipt(
         txid=tx.txid(),
         ordinal_vout=ordinal_vout,
@@ -590,6 +640,7 @@ def extract_inscription(tx: Transaction) -> InscriptionReceipt:
         version=version,
         signature=signature,
         hash_hex=hash_hex,
+        nota=nota,
     )
 
 
@@ -618,10 +669,9 @@ def verify_payment_terms(tx: Transaction, *, mesh_id: str,
         # reconstrucción no casa y la inscripción no es SMCP3.
         canonical = envelope_script(
             server_pubkey=receipt.server_pubkey,
-            parent_txid=tx.inputs[0].prev_txid,
-            parent_vout=tx.inputs[0].vout,
             signature=receipt.signature,
             hash_hex=receipt.hash_hex,
+            nota=receipt.nota,
         )
     except ProtocolError as exc:
         return False, f"inscripción malformada: {exc}"
@@ -635,12 +685,6 @@ def verify_payment_terms(tx: Transaction, *, mesh_id: str,
         return False, "el hash inscrito no compromete (mesh_id, solicitante)"
     if not verify_public(receipt.server_pubkey, h, receipt.signature):
         return False, "la firma del servidor no verifica sobre H"
-    paying = tx.inputs[0]
-    parent = bytes.fromhex(paying.prev_txid)[::-1] + struct.pack(
-        "<I", paying.vout
-    )
-    if receipt.parent != parent:
-        return False, "el parent no es el outpoint del input que paga"
     ordinal_script = tx.outputs[receipt.ordinal_vout].script
     if ordinal_script != canonical + p2pkh_lock(
         hash160(requester_pubkey)
@@ -682,10 +726,12 @@ def verify_inscription(tx: Transaction, *, mesh_id: str,
 
 
 __all__ = [
-    "InscriptionReceipt", "InscriptionRequest",
-    "INSCRIPTION_VERSION", "ORDINAL_SATOSHIS",
-    "inference_hash", "server_signature",
-    "envelope_script", "parse_envelope",
-    "build_payment_terms", "sign_requester_input", "build_inscription",
-    "extract_inscription", "verify_payment_terms", "verify_inscription",
+    "NOTAS_COMPLETADO", "InscriptionReceipt",
+    "InscriptionRequest", "INSCRIPTION_VERSION",
+    "ORDINAL_SATOSHIS", "inference_hash",
+    "server_signature", "envelope_script",
+    "parse_envelope", "nota_completado", "nota_para",
+    "build_payment_terms", "sign_requester_input",
+    "build_inscription", "extract_inscription",
+    "verify_payment_terms", "verify_inscription",
 ]

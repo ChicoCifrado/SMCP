@@ -65,7 +65,7 @@ Del registro (bsv.brc.dev), con lo que cada uno aporta:
 | BRC | Qué aporta a v3 |
 |---|---|
 | **BRC-159** (1Sat Ordinals) | El ordinal de 1 sat como comprobante: el token es la cadena de outputs de 1 sat, su *origin* es el outpoint, y la transferencia la da el orden de satoshis. El ordinal viaja a Alice y es el receipt. |
-| **BRC-160** (Inscription Envelopes) | El formato del envelope: `OP_FALSE OP_IF "ord" … OP_ENDIF` **en el script de bloqueo del output de 1 sat**, con content-type (campo 1), body (campo 0), parent (campo 3) y campos de aplicación adicionales antes del body. **Corrige la idea de "datos en OP_RETURN"**: el sitio estándar de una inscripción de 1 sat es el envelope en el locking script, no un output OP_RETURN. OP_RETURN queda como sitio opcional para metadatos MAP. |
+| **BRC-160** (Inscription Envelopes) | El formato del envelope: `OP_FALSE OP_IF "ord" … OP_ENDIF` **en el script de bloqueo del output de 1 sat**, con content-type (campo 1), body (campo 0) y campos de aplicación (2 servidor, 4 versión, 5 firma, 6 nota) antes del body. El *parent* no viaja: es el outpoint del input que paga, que la tx ya lleva en su input 0. **Corrige la idea de "datos en OP_RETURN"**: el sitio estándar de una inscripción de 1 sat es el envelope en el locking script, no un output OP_RETURN. OP_RETURN queda como sitio opcional para metadatos MAP. |
 | **BRC-220** (NotaryHash) | El modelo de notarización de hash firmado — **y el repo ya lo implementa**: `bsv_keys.py` (ECDSA-secp256k1, firmas de 64 bytes `r‖s`), `ledger_canon.py` (prefijos de longitud `u32be`) y `timechain.py` (certificados) citan BRC-220, y el registro lo confirma: define `ECDSA-secp256k1`, permite firmas de 64 bytes `r‖s` **o DER**, y canonicaliza con prefijos de longitud. v3 lo usa tal cual: el servidor hashea `H` localmente, lo firma localmente, y la cadena lleva el hash y la firma — nunca el contenido. Su modo *batch* (merkle root de muchas pruebas en una tx) queda como optimización futura. |
 | **BRC-27** (DPP) | El flujo de pago: el comerciante construye la tx (`PaymentTerms`), el cliente firma su input (`Payment`), el comerciante emite y confirma (`PaymentACK`). Es exactamente el flujo de la tx única: Bob construye, Alice firma su UTXO, Bob emite. |
 | **BRC-77** (Message Signature) | Opción de interoperabilidad futura, no necesaria para v3.0: firma con claves derivadas por contraparte sobre BRC-42/43 (que el repo ya implementa en `spv.py`). Para v3.0 basta la firma BRC-220 con la pubkey del servidor incrustada en la inscripción — la inscripción ya es pública, así que el secreto por contraparte de BRC-77 no aporta aquí. |
@@ -93,10 +93,10 @@ Una tx, construida por Bob (DPP), firmada por Alice, emitida por Bob:
     "ord"
     OP_1  0x0a "text/plain"     # content-type del body
     OP_2  <33B pubkey servidor> # quién sirvió (BRC-220: comprimida)
-    OP_3  <36B outpoint>        # parent: el outpoint del input que paga
     OP_4  0x03                  # versión de formato: SMCP3
     OP_5  <64B r‖s>             # firma secp256k1 sobre H (BRC-220)
-    OP_0  <64B ASCII hex>       # body: H, el hash, en texto plano
+    OP_6  <1B nota>             # código de NOTAS_COMPLETADO
+    OP_0  <32B crudos>          # body: H, el hash, en crudo
   OP_ENDIF
   <P2PKH(Alice)>
   ```
@@ -110,8 +110,28 @@ Una tx, construida por Bob (DPP), firmada por Alice, emitida por Bob:
 * **Output 2 — 99 − fee sats → Bob** (P2PKH del servidor). De aquí
   sale la fee del minero.
 
-El *parent* (campo 3) ata la inscripción al outpoint que la pagó: la
-proveniencia del receipt es el pago mismo.
+El *parent* **no viaja**: es el outpoint del input que paga, que la tx
+ya lleva en su input 0 (la plantilla es exactamente 1 input) — el
+comprobante lo deriva, y la cadena no repite 36 bytes que ya están en
+la tx. La proveniencia del receipt sigue siendo el pago mismo.
+
+### La nota
+
+Al finalizar la inferencia, el pago dice al receptor que la inferencia
+completó. La nota (campo 6) es un **código de 1 byte** sobre un
+vocabulario fijo — siempre las mismas, nunca texto libre:
+
+```
+NOTAS_COMPLETADO = ("inferencia completada", "inferencia terminada",
+                    "inferencia resuelta", "inferencia lista")
+```
+
+El código lo elige `H` (`nota_para`: el primer byte de `H` módulo el
+vocabulario): determinista y sin estado — la misma petición lleva
+siempre la misma nota, y el vocabulario rota por el hash. Una nota
+fuera del vocabulario es otra versión del formato, no una nota
+silenciosa. El texto completo en la tx serían ~20 bytes de relay por
+inferencia; el código, 1.
 
 ### El hash
 
@@ -163,8 +183,9 @@ Alice + 99−fee a Bob) — el grafo de la tx dice quién pagó y quién
 cobró; que Alice posee el ordinal; y, con el certificado, en qué altura
 salió.
 
-No prueba: qué se respondió (ver arriba; añadir `hash(resultado)` es
-SMCP4, un campo nuevo y una decisión futura); que la respuesta fue
+No prueba: qué se respondió (ver arriba; `hash(resultado)` quedó
+**descartado** — publicar el hash de un prompt es tan identificador
+como el prompt); que la respuesta fue
 correcta (la cadena no ejecuta el modelo); ni que la fee fue "justa"
 — la paga Bob de los 249, y si la fee de relay superara 249 sats el
 tier no cierra (supuesto económico, ver Abierto).
@@ -205,8 +226,8 @@ frenado por coste de entrada.
   OP_CODESEPARATOR) validado contra los vectores de
   `sighash.json` de Bitcoin Core.
 * **`delm/core/inscripcion.py`** — el template SMCP3: `H` con prefijo
-  de longitud, el envelope BRC-160 (campos 1, 2, 3, 4, 5 y el body 0
-  de último), la construcción DPP (`build_payment_terms` →
+  de longitud, el envelope BRC-160 (campos 1, 2, 4, 5, 6 y el body 0
+  de último, crudo), la construcción DPP (`build_payment_terms` →
   `sign_requester_input`) y la verificación del comprobante
   (`verify_payment_terms` antes de emitir, `verify_inscription` con
   la prueba de inclusión después).
@@ -258,32 +279,34 @@ frenado por coste de entrada.
 
 ## Abierto
 
-1. **`hash(resultado)`** — SMCP4. CPU en el servidor y privacidad en
-   la cadena; la decisión puede cambiar, y el formato ya está
-   versionado para eso (`OP_4`).
+1. **`hash(resultado)`** — SMCP4, *cerrado por decisión:
+   no*. CPU en el servidor y privacidad en la cadena; y
+   publicar el hash de un prompt es tan identificador
+   como el prompt. El formato sigue versionado (`OP_4`)
+   si la decisión cambia.
 2. **Batching** — BRC-220 modo *batch* (merkle root de muchas pruebas
    en una tx) y BRC-122 (épocas con pre-commitment) como optimización
    de coste. Rompe "una inferencia = una tx", así que requiere
    rediseñar el conteo antes de adoptarlo.
 3. **Fee de relay** — *cerrado por medición, y el
    precio se movió con ella*. La plantilla serializa
-   **452–453 bytes** (varía 1 byte por la firma
+   **385–386 bytes** (varía 1 byte por la firma
    DER), no los ~250 estimados: el envelope de
    BRC-160 viaja en el script de bloqueo del
-   ordinal (campo 5 = firma de 64 B en hex, campo
-   0 = `H` de 64 B en hex). La medición dictó el
-   precio: para cerrar la banda objetivo de
-   **0.1–0.5 sat/vB** hacían falta 46–227 sats de
-   fee, y el presupuesto es el precio menos el
-   ordinal — así que `PER_INFERENCE_SATOSHIS`
+   ordinal (firma de 64 B, `H` de 32 B crudos,
+   nota de 1 B; el parent no viaja). La medición
+   dictó el precio: para cerrar la banda objetivo
+   de **0.1–0.5 sat/vB** hacían falta 39–193
+   sats de fee, y el presupuesto es el precio
+   menos el ordinal — así que `PER_INFERENCE_SATOSHIS`
    subió de 100 a **250 sats** (presupuesto de
-   249, techo de ~0.55 sat/vB):
+   249, techo de ~0.65 sat/vB):
    * el default del software (`minrelaytxfee` =
      1 sat/vB) **sigue sin cerrar** — harían
-     falta ~453 sats;
+     falta ~386 sats;
     * la banda objetivo (0.1-0.5 sat/vB) **cierra
-      entera**: a 0.1 bastan ~46 sats, a 5
-      ~227, y a Bob le quedan 203-22 sats;
+      entera**: a 0.1 bastan ~39 sats, a 0.5
+      ~193, y a Bob le quedan 210-56 sats;
     * **comprobado contra la red el 2026-10-08**
       (WhatsOnChain, mainnet): la tasa media en
       bloque de los últimos bloques (970088-
@@ -295,15 +318,15 @@ frenado por coste de entrada.
       (Bitofsin) pide 0.5 — la banda queda
       validada por medición, no por suposición;
     * **la fee por defecto del intercambio es
-      `DEFAULT_FEE_SATOSHIS = 50`**
+      `DEFAULT_FEE_SATOSHIS = 43`**
       (`smcp/core/intercambio.py`): la fee media
       de la red (0.11 sat/vB) aplicada al tamaño
-      de la plantilla (453 B). Es **fija en sats**
+      de la plantilla (386 B). Es **fija en sats**
       porque el template fija el tamaño (solo la
       firma DER varía 1 byte) — una fee fija es
       una tasa fija. Con ella la tx paga relay a
       la tasa media con margen sobre el mínimo de
-      los pools mayoritarios, y Bob cobra 199 de
+      los pools mayoritarios, y Bob cobra 206 de
       los 249. El default anterior (0) dejaba la
       tx sin relay alguno — solo la minan pools
       que aceptan txs sin fee. El knob sigue

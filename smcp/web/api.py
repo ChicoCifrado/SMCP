@@ -2017,7 +2017,8 @@ async def _run_mesh_v3(session: MeshV3Session) -> None:
         response, tx = requester.request(
             to="B", prompt=session.prompt, mesh_id=MESH_V3_ID,
             funding=TxIn("ab" * 32, 0))
-        push("served", response=response[:200], txid=tx.txid())
+        push("served", response=response[:200], txid=tx.txid(),
+             nota=extract_inscription(tx).nota_texto)
 
         # El cobro llega en el bucle de B.
         while not ledger.peers["B"].inferences_served:

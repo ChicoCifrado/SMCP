@@ -15,7 +15,9 @@ Lo que sujetan estos tests, en orden de importancia:
    body es el último campo;
 3. el flujo DPP completo construye una tx que verifica;
 4. cada manipulación (hash, firma, fondeo, cerradura,
-   inclusión) se rechaza con su motivo.
+   inclusión) se rechaza con su motivo;
+5. la nota de finalización viaja en el pago (campo 6):
+   una de las fijas, elegida por ``H``.
 """
 from __future__ import annotations
 
@@ -31,6 +33,7 @@ from smcp.core.bsv_keys import (
 )
 from smcp.core.inscripcion import (
     INSCRIPTION_VERSION,
+    NOTAS_COMPLETADO,
     ORDINAL_SATOSHIS,
     InscriptionRequest,
     build_inscription,
@@ -38,6 +41,8 @@ from smcp.core.inscripcion import (
     envelope_script,
     extract_inscription,
     inference_hash,
+    nota_completado,
+    nota_para,
     parse_envelope,
     server_signature,
     sign_requester_input,
@@ -59,11 +64,15 @@ from smcp.core.txbuild import (
     OP_3,
     OP_4,
     OP_5,
+    OP_6,
     OP_ENDIF,
+    OP_FALSE,
+    OP_IF,
     Transaction,
     TxIn,
     TxOut,
     p2pkh_lock,
+    push_data,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -135,40 +144,45 @@ def test_envelope_round_trip() -> None:
     sig = bytes(range(64))
     script = envelope_script(
         server_pubkey=bytes(range(33)),
-        parent_txid="ab" * 32,
-        parent_vout=7,
         signature=sig,
         hash_hex="cd" * 32,
+        nota=2,
     )
     fields = parse_envelope(script)
     assert fields[OP_1] == b"text/plain"
     assert fields[OP_2] == bytes(range(33))
-    # El parent viaja como en el cable: txid interno + vout LE.
-    assert fields[OP_3] == (
-        bytes.fromhex("ab" * 32)[::-1] + struct.pack("<I", 7)
-    )
     assert fields[OP_4] == b"\x03"
     assert fields[OP_5] == sig
-    # El body es el último campo, antes de OP_ENDIF.
-    assert fields[OP_0] == b"cd" * 32
+    # La nota viaja como código de 1 byte.
+    assert fields[OP_6] == b"\x02"
+    # El parent no viaja: se deriva del input que paga.
+    assert OP_3 not in fields
+    # El body es el último campo, crudo (32 B), antes
+    # de OP_ENDIF.
+    assert fields[OP_0] == bytes.fromhex("cd" * 32)
     assert script[-1] == OP_ENDIF
 
 
 def test_envelope_rejects_bad_values() -> None:
     with pytest.raises(ProtocolError):
         envelope_script(
-            server_pubkey=b"corto", parent_txid="ab" * 32,
-            parent_vout=0, signature=bytes(64), hash_hex="cd" * 32,
+            server_pubkey=b"corto", signature=bytes(64),
+            hash_hex="cd" * 32,
         )
     with pytest.raises(ProtocolError):
         envelope_script(
-            server_pubkey=bytes(33), parent_txid="ab" * 32,
-            parent_vout=0, signature=bytes(63), hash_hex="cd" * 32,
+            server_pubkey=bytes(33), signature=bytes(63),
+            hash_hex="cd" * 32,
         )
     with pytest.raises(ProtocolError):
         envelope_script(
-            server_pubkey=bytes(33), parent_txid="ab" * 32,
-            parent_vout=0, signature=bytes(64), hash_hex="CD" * 32,
+            server_pubkey=bytes(33), signature=bytes(64),
+            hash_hex="CD" * 32,
+        )
+    with pytest.raises(ProtocolError):
+        envelope_script(
+            server_pubkey=bytes(33), signature=bytes(64),
+            hash_hex="cd" * 32, nota=len(NOTAS_COMPLETADO),
         )
     with pytest.raises(ProtocolError):
         parse_envelope(b"\x00\x63\x03ord")  # sin OP_ENDIF
@@ -236,6 +250,8 @@ def test_ordinal_output_is_locked_to_the_requester() -> None:
 
 
 def test_parent_ties_to_the_paying_input() -> None:
+    """El parent ya no viaja en el envelope: se deriva
+    del input que paga (la plantilla es exactamente 1)."""
     alice, bob = Secp256k1KeyPair.new("alice"), Secp256k1KeyPair.new(
         "bob"
     )
@@ -276,8 +292,6 @@ def test_tampered_hash_rejected() -> None:
         ORDINAL_SATOSHIS,
         envelope_script(
             server_pubkey=receipt.server_pubkey,
-            parent_txid=funding.prev_txid,
-            parent_vout=funding.vout,
             signature=receipt.signature,
             hash_hex=bad_hex,
         )
@@ -313,8 +327,6 @@ def test_wrong_signature_rejected() -> None:
         ORDINAL_SATOSHIS,
         envelope_script(
             server_pubkey=bob.public_key,
-            parent_txid=funding.prev_txid,
-            parent_vout=funding.vout,
             signature=sig,
             hash_hex=h,
         )
@@ -463,6 +475,74 @@ def test_sign_requester_input_rejects_wrong_key_kind() -> None:
     # Una clave que no sea secp256k1 no puede firmar el input.
     with pytest.raises(ProtocolError):
         sign_requester_input(tx, 0, _FakeKey())
+
+
+def test_la_nota_viaja_en_el_pago() -> None:
+    """Al finalizar la inferencia, el pago dice al receptor
+    una de las notas fijas — elegida por ``H``, siempre del
+    vocabulario, nunca texto libre."""
+    alice, bob = Secp256k1KeyPair.new("alice"), Secp256k1KeyPair.new(
+        "bob"
+    )
+    tx = _build(alice, bob)
+    receipt = extract_inscription(tx)
+    h = inference_hash(MESH_ID, alice.public_key)
+    assert receipt.nota == nota_para(h)
+    assert receipt.nota_texto == nota_completado(receipt.nota)
+    assert receipt.nota_texto in NOTAS_COMPLETADO
+
+
+def test_el_vocabulario_de_notas_es_fijo() -> None:
+    assert len(NOTAS_COMPLETADO) == 4
+    assert NOTAS_COMPLETADO[0] == "inferencia completada"
+    assert len(set(NOTAS_COMPLETADO)) == len(NOTAS_COMPLETADO)
+    for nota in NOTAS_COMPLETADO:
+        assert isinstance(nota, str) and nota
+
+
+def test_nota_para_es_determinista() -> None:
+    h = inference_hash(MESH_ID, bytes(range(33)))
+    assert nota_para(h) == nota_para(h)
+    assert 0 <= nota_para(h) < len(NOTAS_COMPLETADO)
+    # El vocabulario rota: sobre bastantes hashes se ven
+    # todas las notas (el primer byte da 256 valores).
+    vistos = {
+        nota_para(inference_hash(MESH_ID, bytes([i]) * 33))
+        for i in range(256)
+    }
+    assert vistos == set(range(len(NOTAS_COMPLETADO)))
+
+
+def test_nota_fuera_de_rango_es_otro_formato() -> None:
+    """Una nota que el vocabulario no nombra es otra versión
+    del formato: no se extrae, no se interpreta silenciosa."""
+    alice, bob = Secp256k1KeyPair.new("alice"), Secp256k1KeyPair.new(
+        "bob"
+    )
+    tx = _build(alice, bob)
+    receipt = extract_inscription(tx)
+    # A mano: el envelope con una nota que no existe.
+    script = (
+        bytes([OP_FALSE, OP_IF]) + push_data(b"ord")
+        + bytes([OP_1]) + push_data(b"text/plain")
+        + bytes([OP_2]) + push_data(receipt.server_pubkey)
+        + bytes([OP_4]) + push_data(bytes([INSCRIPTION_VERSION]))
+        + bytes([OP_5]) + push_data(receipt.signature)
+        + bytes([OP_6]) + push_data(bytes([9]))
+        + bytes([OP_0]) + push_data(bytes.fromhex(receipt.hash_hex))
+        + bytes([OP_ENDIF])
+        + p2pkh_lock(hash160(alice.public_key))
+    )
+    ordinal = TxOut(ORDINAL_SATOSHIS, script)
+    server = TxOut(
+        receipt.server_satoshis,
+        p2pkh_lock(hash160(receipt.server_pubkey)),
+    )
+    con_nota_rara = Transaction(
+        inputs=[tx.inputs[0]], outputs=[ordinal, server]
+    )
+    with pytest.raises(ProtocolError):
+        extract_inscription(con_nota_rara)
 
 
 class _FakeKey:
