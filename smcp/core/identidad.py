@@ -57,18 +57,34 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
+from typing import Protocol
 
 from smcp.core.provenance import KeyPair, verify_public
 
 __all__ = [
     "NONCE_BYTES",
     "HandshakeProof",
+    "PublicKeyed",
     "Session",
     "handshake",
     "new_nonce",
     "sign_handshake",
     "verify_handshake",
 ]
+
+
+class PublicKeyed(Protocol):
+    """Lo que la verificación de sesión necesita de
+    una clave: su parte pública.
+
+    :class:`~smcp.core.provenance.KeyPair` lo cumple
+    (la clave completa, en proceso) y
+    :class:`~smcp.core.join.PeerIdentity` también
+    (la identidad de un par que llegó por el cable —
+    su clave privada nunca viaja).
+    """
+
+    public_key: bytes
 
 
 #: Longitud de un nonce de sesión (BRC-103 §6.2: 256
@@ -159,7 +175,8 @@ class Session:
     a_proof: HandshakeProof
     b_proof: HandshakeProof
 
-    def verified(self, *, a_key: KeyPair, b_key: KeyPair) -> bool:
+    def verified(self, *, a_key: PublicKeyed,
+                 b_key: PublicKeyed) -> bool:
         """¿Ambas pruebas casan con las claves que se intercambian?"""
         return (
             self.a_proof.identity_key == a_key.public_key

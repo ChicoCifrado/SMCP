@@ -1125,7 +1125,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1252 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1257 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1205,10 +1205,13 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
     5 join (el join v3: gratis y off-chain — dos nodos se avalan
     en el roster, confianza mutua verificada sin gastar nada;
     y el join con el intercambio componen el flujo) +
-    4 mensajería (la secuencia v3 **por el transporte**: los
-    mensajes 0x04-0x07 en JSON con `request_id`, y los actores —
-    Alice pide, verifica y firma; Bob sirve y cobra— sobre el
-    bus in-memory, cada par en su hilo) +
+    9 mensajería (la secuencia v3 **por el transporte**: los
+    mensajes 0x03-0x08 en JSON con `request_id`, y los actores —
+    Alice pide, verifica y firma; Bob sirve y cobra; y el join
+    por el wire: handshake BRC-103 en los dos sentidos y
+    rosters cruzados dos veces (crudo y con avales), con el
+    MITM que no pinnea nada y el replay que no verifica— sobre
+    el bus in-memory, cada par en su hilo) +
   21 ACP (`smcp-serve`: handshake, ciclo de vida, el contrato de firmas de los
   overrides contra `acp.Agent`, prompt con el pipeline real, cancelación, smoke
   JSON-RPC por stdio) +

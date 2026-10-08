@@ -19,21 +19,24 @@ Extienden el espacio de tipos de :mod:`mesh_node`:
 ===== =================== ====================================
 tipo  mensaje            dirección
 ===== =================== ====================================
-0x03  HANDSHAKE          reservado (identidad BRC-103)
+0x03  HANDSHAKE          cualquiera (identidad BRC-103)
 0x04  INFERENCE_REQUEST  Alice -> Bob
 0x05  PAYMENT_TERMS      Bob -> Alice (la tx sin firmar)
 0x06  SIGNED_PAYMENT     Alice -> Bob (la tx firmada)
 0x07  INFERENCE_RESPONSE Bob -> Alice (off-chain)
+0x08  ROSTER             cualquiera (el join: roster +
+                        keyring)
 ===== =================== ====================================
 
-Todos llevan ``request_id`` (hex aleatorio) para
-correlacionar la petición con sus respuestas en un
-transporte de datagramas sin estado, y se codifican
-en JSON — el mismo formato que el anuncio de gossip
+Todos llevan ``request_id`` (hex aleatorio) —
+los de inferencia— para correlacionar la petición
+con sus respuestas en un transporte de datagramas
+sin estado, y se codifican en JSON — el mismo
+formato que el anuncio de gossip
 (:mod:`mesh_node`).
 
-La secuencia
---------------
+La secuencia de inferencia
+----------------------------
 ::
 
     Alice pide (0x04)  ->  Bob sirve y devuelve la
@@ -41,11 +44,39 @@ La secuencia
     Alice verifica y firma (0x06)  ->  Bob
     verifica, emite por ARC y cuenta.
 
+El join (:class:`JoinWire`)
+-----------------------------
+El handshake BRC-103 (:mod:`smcp.core.identidad`)
+es simétrico — ningún nodo es el iniciador —, pero
+el cable necesita un primer mensaje, y cualquiera
+puede darlo (:meth:`JoinWire.start`):
+
+::
+
+    A: INIT ----------------------> B
+    B:      <---- PROOF (B) -------
+    A:      ---- PROOF (A) ------->
+    A:      ---- ROSTER (crudo) -->
+    B:      ---- ROSTER (crudo) -->
+    A:      ---- ROSTER (avalado) >
+    B:      ---- ROSTER (avalado) >
+
+Los rosters se cruzan dos veces: el *epoch*
+que se avala es el que el roster del par
+declara, así que el primer cruce es sin
+avales — cada lado avala al par en **su**
+roster (:func:`smcp.core.join.pair_local`:
+la clave privada del par nunca viaja) y el
+segundo cruce los lleva. El join completa
+cuando el roster del par trae mi admisión:
+su aval a mí.
+
 Los actores
 --------------
-:class:`InferenceRequester` (Alice) y
-:class:`InferenceResponder` (Bob) corren sobre
-cualquier :class:`~smcp.core.transport.MeshTransport`:
+:class:`InferenceRequester` (Alice),
+:class:`InferenceResponder` (Bob) y
+:class:`JoinWire` corren sobre cualquier
+:class:`~smcp.core.transport.MeshTransport`:
 in-memory para pruebas, QUIC para despliegue. Son
 **síncronos** — ``serve`` y ``settle`` son asíncronos,
 y cada mensaje corre su propio ``asyncio.run`` (el
@@ -69,13 +100,27 @@ import time
 from typing import Callable
 
 from smcp.core.bsv_keys import Secp256k1KeyPair
+from smcp.core.identidad import (
+    HandshakeProof,
+    Session,
+    new_nonce,
+    sign_handshake,
+    verify_handshake,
+)
 from smcp.core.intercambio import (
     InferenceRequest,
     InferenceServer,
     sign_payment,
 )
+from smcp.core.join import (
+    JoinResult,
+    PeerIdentity,
+    pair_local,
+)
 from smcp.core.membership import ProtocolError
 from smcp.core.mesh_node import decode_msg, encode_msg
+from smcp.core.provenance import KeyPair
+from smcp.core.roster import Roster
 from smcp.core.tiers import PER_INFERENCE_SATOSHIS
 from smcp.core.transport import MeshTransport
 from smcp.core.txbuild import Transaction, TxIn
@@ -85,23 +130,32 @@ __all__ = [
     "KIND_INFERENCE_REQUEST",
     "KIND_INFERENCE_RESPONSE",
     "KIND_PAYMENT_TERMS",
+    "KIND_ROSTER",
     "KIND_SIGNED_PAYMENT",
     "InferenceRequester",
     "InferenceResponder",
+    "JoinWire",
+    "decode_handshake_init",
+    "decode_handshake_proof",
     "decode_inference_request",
     "decode_inference_response",
     "decode_payment_terms",
+    "decode_roster",
     "decode_signed_payment",
+    "encode_handshake_init",
+    "encode_handshake_proof",
     "encode_inference_request",
     "encode_inference_response",
     "encode_payment_terms",
+    "encode_roster",
     "encode_signed_payment",
     "new_request_id",
 ]
 
-#: Handshake de identidad BRC-103 — **reservado**: es el
-#: siguiente paso de esta capa. :mod:`smcp.core.identidad`
-#: es hoy una llamada; su mensaje viaja por aquí.
+#: Handshake de identidad BRC-103, en dos
+#: fases (en el cuerpo): ``init`` — la clave
+#: y el nonce de un lado — y ``proof`` — su
+#: nonce, el del par y la firma de ambos.
 KIND_HANDSHAKE = 0x03
 #: Alice -> Bob: el prompt, la malla, su clave y su UTXO.
 KIND_INFERENCE_REQUEST = 0x04
@@ -111,6 +165,8 @@ KIND_PAYMENT_TERMS = 0x05
 KIND_SIGNED_PAYMENT = 0x06
 #: Bob -> Alice: la respuesta, fuera de cadena.
 KIND_INFERENCE_RESPONSE = 0x07
+#: El roster y el keyring de un nodo (el join).
+KIND_ROSTER = 0x08
 
 
 def new_request_id() -> str:
@@ -215,6 +271,123 @@ def encode_signed_payment(request_id: str, tx: Transaction) -> bytes:
 def decode_signed_payment(payload: bytes) -> tuple[str, Transaction]:
     """Decodifica el pago (0x06): ``(request_id, tx)``."""
     return _decode_tx("pago", payload)
+
+
+# ---------------------------------------------------------------------------
+# Codificación del handshake (BRC-103) y del roster
+# ---------------------------------------------------------------------------
+def encode_handshake_init(identity_key: bytes,
+                          nonce: bytes) -> bytes:
+    """Codifica el INIT: la clave de identidad y
+    el nonce de un lado."""
+    body = {
+        "phase": "init",
+        "identity_key": identity_key.hex(),
+        "nonce": nonce.hex(),
+    }
+    return encode_msg(
+        KIND_HANDSHAKE, json.dumps(body).encode("utf-8"),
+    )
+
+
+def decode_handshake_init(payload: bytes) -> tuple[bytes, bytes]:
+    """Decodifica el INIT: ``(identity_key, nonce)``.
+
+    Lanza :class:`ProtocolError` si el cuerpo no
+    vale (o no es un INIT).
+    """
+    try:
+        d = json.loads(payload.decode("utf-8"))
+        if d["phase"] != "init":
+            raise KeyError("phase")
+        return (
+            bytes.fromhex(d["identity_key"]),
+            bytes.fromhex(d["nonce"]),
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        raise ProtocolError(f"init malformado: {e}") from e
+
+
+def encode_handshake_proof(proof: HandshakeProof) -> bytes:
+    """Codifica la PROOF: el nonce, el del par y
+    la firma, con la clave que firma."""
+    body = {
+        "phase": "proof",
+        "identity_key": proof.identity_key.hex(),
+        "sig_kind": proof.sig_kind,
+        "nonce": proof.nonce.hex(),
+        "peer_nonce": proof.peer_nonce.hex(),
+        "signature": proof.signature.hex(),
+    }
+    return encode_msg(
+        KIND_HANDSHAKE, json.dumps(body).encode("utf-8"),
+    )
+
+
+def decode_handshake_proof(payload: bytes) -> HandshakeProof:
+    """Decodifica la PROOF.
+
+    Lanza :class:`ProtocolError` si el cuerpo no
+    vale (o no es una PROOF).
+    """
+    try:
+        d = json.loads(payload.decode("utf-8"))
+        if d["phase"] != "proof":
+            raise KeyError("phase")
+        return HandshakeProof(
+            identity_key=bytes.fromhex(d["identity_key"]),
+            sig_kind=str(d["sig_kind"]),
+            nonce=bytes.fromhex(d["nonce"]),
+            peer_nonce=bytes.fromhex(d["peer_nonce"]),
+            signature=bytes.fromhex(d["signature"]),
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        raise ProtocolError(f"prueba malformada: {e}") from e
+
+
+def encode_roster(roster: Roster,
+                  keyring: dict[str, bytes]) -> bytes:
+    """Codifica el roster (0x08): la forma canónica
+    del roster (:meth:`smcp.core.roster.Roster.to_dict`)
+    y el keyring (clave por nodo, en hex)."""
+    body = {
+        "roster": roster.to_dict(),
+        "keyring": {
+            node_id: key.hex()
+            for node_id, key in keyring.items()
+        },
+    }
+    return encode_msg(
+        KIND_ROSTER, json.dumps(body).encode("utf-8"),
+    )
+
+
+def decode_roster(payload: bytes) -> tuple[Roster, dict[str, bytes]]:
+    """Decodifica el roster (0x08):
+    ``(roster, keyring)``.
+
+    Lanza :class:`ProtocolError` si el cuerpo no
+    vale.
+    """
+    try:
+        d = json.loads(payload.decode("utf-8"))
+        keyring = {
+            str(node_id): bytes.fromhex(key)
+            for node_id, key in d["keyring"].items()
+        }
+        return Roster.from_dict(d["roster"]), keyring
+    except (AttributeError, KeyError, TypeError,
+            ValueError) as e:
+        raise ProtocolError(f"roster malformado: {e}") from e
+
+
+def _phase(payload: bytes) -> str:
+    """La fase de un mensaje de handshake (sin
+    validar el resto)."""
+    try:
+        return str(json.loads(payload.decode("utf-8"))["phase"])
+    except (KeyError, TypeError, ValueError) as e:
+        raise ProtocolError(f"handshake malformado: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +520,201 @@ class InferenceResponder:
         while not stop():
             self.serve_next()
             time.sleep(poll_secs)
+
+
+class JoinWire:
+    """El join v3 por el transporte: identidad (BRC-103)
+    y rosters entre dos nodos.
+
+    ``transport`` es el :class:`~smcp.core.transport.MeshTransport`
+    del nodo; ``roster``, ``key`` y ``keyring`` su estado
+    de join (:func:`smcp.core.join.found`). Un
+    emparejamiento por instancia: un nodo con varios
+    pares corre una por par.
+
+    La secuencia es simétrica (ningún nodo es el
+    iniciador), pero el cable necesita un primer
+    mensaje — cualquiera puede darlo (:meth:`start`).
+    Cada lado verifica la prueba del par **antes** de
+    intercambiar nada: una prueba que no cuadra es
+    un MITM (o un bug) y el join **falla cerrado** —
+    no se degrada al intercambio simple.
+
+    Los rosters se cruzan **dos veces**: sin
+    avales (cada lado conoce el roster del par,
+    y con él el *epoch* que avalar) y con ellos
+    (cada lado ya avaló al par en el suyo). El
+    join completa cuando el roster del par trae
+    mi admisión — su aval a mí.
+    """
+
+    def __init__(self, *, transport: MeshTransport,
+                 roster: Roster, key: KeyPair,
+                 keyring: dict[str, bytes]) -> None:
+        self._transport = transport
+        self._roster = roster
+        self._key = key
+        self._keyring = keyring
+        self._peer: str | None = None
+        self._own_nonce: bytes | None = None
+        self._own_proof: HandshakeProof | None = None
+        self._peer_key: bytes | None = None
+        self._peer_proof: HandshakeProof | None = None
+        self._result: JoinResult | None = None
+
+    def start(self, to: str) -> None:
+        """Da el primer paso: genera su nonce y
+        envía el INIT a ``to``."""
+        if self._own_nonce is not None:
+            raise ProtocolError("el join ya empezó")
+        self._peer = to
+        self._own_nonce = new_nonce()
+        self._transport.send(
+            to, encode_handshake_init(self._key.public_key, self._own_nonce),
+        )
+
+    def handle(self, frm: str,
+               payload: bytes) -> JoinResult | None:
+        """Procesa **un** mensaje del transporte.
+
+        Los mensajes que no son del join (gossip,
+        gists, inferencias) se ignoran: el transporte
+        es multiplexado por tipo. Devuelve el
+        :class:`~smcp.core.join.JoinResult` cuando el
+        emparejamiento completa — y el mismo resultado
+        si llega una retransmisión del roster —;
+        ``None`` mientras la secuencia sigue.
+        """
+        kind, body = decode_msg(payload)
+        if kind == KIND_HANDSHAKE:
+            if _phase(body) == "init":
+                self._on_init(frm, body)
+            else:
+                self._on_proof(frm, body)
+            return None
+        if kind == KIND_ROSTER:
+            return self._on_roster(body)
+        return None
+
+    def pump(self) -> JoinResult | None:
+        """Drena el transporte: atiende lo que
+        llega y devuelve el resultado si el join
+        completó."""
+        result = None
+        for frm, payload in self._transport.poll():
+            result = self.handle(frm, payload) or result
+        return result
+
+    def serve_while(self, stop: Callable[[], bool],
+                    poll_secs: float = 0.01) -> JoinResult | None:
+        """Espera un emparejamiento hasta que
+        ``stop()`` sea verdadero.
+
+        El bucle de un nodo que empareja: drena el
+        transporte, atiende lo que llega y duerme
+        ``poll_secs`` entre drains. Devuelve el
+        resultado, o ``None`` si pararon antes.
+        """
+        while not stop():
+            result = self.pump()
+            if result is not None:
+                return result
+            time.sleep(poll_secs)
+        return None
+
+    # -- la máquina de estados ---------------------------
+    def _on_init(self, frm: str, payload: bytes) -> None:
+        """El par inicia: registro su clave y su
+        nonce, genero el mío y firmo
+        (nonce_del_par ‖ nonce_propio)."""
+        if self._own_nonce is not None:
+            raise ProtocolError("el join ya empezó")
+        identity_key, peer_nonce = decode_handshake_init(payload)
+        self._peer = frm
+        self._peer_key = identity_key
+        self._own_nonce = new_nonce()
+        self._own_proof = sign_handshake(
+            self._key, peer_nonce=peer_nonce,
+            own_nonce=self._own_nonce,
+        )
+        self._transport.send(frm, encode_handshake_proof(self._own_proof))
+
+    def _on_proof(self, frm: str, payload: bytes) -> None:
+        """La prueba del par: la verifico contra **mi**
+        nonce (liga la prueba a esta sesión — un
+        replay de otra no cuadra — y la firma a la
+        clave que trae — una sustituida no verifica).
+        Una prueba que no cuadra es un MITM: el join
+        falla cerrado, no se degrada."""
+        if self._own_nonce is None:
+            raise ProtocolError("prueba sin handshake empezado")
+        proof = decode_handshake_proof(payload)
+        if not verify_handshake(proof, my_nonce=self._own_nonce):
+            raise ProtocolError("la prueba del par no verifica")
+        self._peer_key = proof.identity_key
+        self._peer_proof = proof
+        if self._own_proof is None:
+            # Yo inicié: completo mi prueba y la envío.
+            self._own_proof = sign_handshake(
+                self._key, peer_nonce=proof.nonce,
+                own_nonce=self._own_nonce,
+            )
+            self._transport.send(frm, encode_handshake_proof(self._own_proof))
+        # El handshake está verificado en los dos
+        # sentidos: envío mi roster (y el par, el suyo).
+        self._transport.send(frm, encode_roster(self._roster, self._keyring))
+
+    def _on_roster(self, payload: bytes) -> JoinResult | None:
+        """El roster del par.
+
+        Con su roster en la mano se avala al par
+        en **mi** roster (el *epoch* que se avala
+        es el que su roster declara — por eso el
+        roster viaja antes que el aval) y se
+        reconcilia: mi mitad del emparejamiento
+        cerró, y mi roster, que ya trae mi aval,
+        vuelve al par. Cuando el roster del par
+        trae **mi** admisión (su aval a mí), la
+        otra mitad también cerró: se reconcilia
+        de nuevo y el join completa.
+
+        Que mi mitad no cierre (cluster distinto,
+        sesión o certificado que no cuadra) es un
+        fallo cerrado: se dice en el resultado y
+        no se sigue intercambiando.
+        """
+        if self._result is not None:
+            # Un roster que llega tras completar es
+            # una retransmisión: el resultado ya está.
+            return self._result
+        peer_key = self._peer_key
+        own_nonce = self._own_nonce
+        own_proof = self._own_proof
+        peer_proof = self._peer_proof
+        if (peer_key is None or own_nonce is None
+                or own_proof is None or peer_proof is None):
+            raise ProtocolError("roster sin handshake verificado")
+        peer_roster, peer_keyring = decode_roster(payload)
+        result = pair_local(
+            roster=self._roster, key=self._key,
+            keyring=self._keyring,
+            peer_roster=peer_roster,
+            peer_key=PeerIdentity(peer_key),
+            peer_keyring=peer_keyring,
+            session=Session(
+                a_nonce=own_nonce, b_nonce=peer_proof.nonce,
+                a_proof=own_proof, b_proof=peer_proof,
+            ),
+        )
+        if not result.a_trusts_b or result.mutual:
+            # O mi mitad no cerró (fallo), o las
+            # dos cerraron: en los dos casos, el
+            # resultado es final.
+            self._result = result
+            return result
+        # Mi mitad cerró y la del par no: envío
+        # mi roster, que ya trae mi aval al par.
+        self._transport.send(
+            self._peer, encode_roster(self._roster, self._keyring),
+        )
+        return None

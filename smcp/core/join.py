@@ -71,8 +71,10 @@ from smcp.core.roster import (
 
 __all__ = [
     "JoinResult",
+    "PeerIdentity",
     "found",
     "pair",
+    "pair_local",
 ]
 
 
@@ -142,6 +144,23 @@ def found(cluster_id: str, node_id: str, key: KeyPair,
 # ---------------------------------------------------------------------------
 # El emparejamiento
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class PeerIdentity:
+    """La identidad de un par **que llegó por el
+    cable**: su clave pública, y nada más.
+
+    :func:`pair_local` solo usa la parte pública de
+    la clave del par — la sesión que verifica, el
+    keyring que aprende y la huella del certificado
+    que avala—, y la clave privada de un par **nunca
+    viaja**: un par por el transporte se representa
+    con esto, no con su
+    :class:`~smcp.core.provenance.KeyPair` completa.
+    """
+
+    public_key: bytes
+
+
 def pair(*, a_roster: Roster, a_key: KeyPair,
          a_keyring: dict[str, bytes],
          b_roster: Roster, b_key: KeyPair,
@@ -243,6 +262,134 @@ def pair(*, a_roster: Roster, a_key: KeyPair,
     return JoinResult(
         roster_a=a_roster, roster_b=b_roster,
         keyring_a=a_keyring, keyring_b=b_keyring,
+        a_trusts_b=a_trusts_b, b_trusts_a=b_trusts_a,
+        pinned_a=pinned_a, rejected_a=rejected_a,
+        pinned_b=pinned_b, rejected_b=rejected_b,
+        authenticated=None if session is None else True,
+    )
+
+
+def pair_local(*, roster: Roster, key: KeyPair,
+               keyring: dict[str, bytes],
+               peer_roster: Roster,
+               peer_key: KeyPair | PeerIdentity,
+               peer_keyring: dict[str, bytes],
+               now: Optional[float] = None,
+               session: Session | None = None) -> JoinResult:
+    """La mitad de :func:`pair` que corre en **un** nodo.
+
+    :func:`pair` simula los dos lados en un proceso
+    (el test offline): firma los dos avales con las
+    dos claves privadas. Por el transporte eso no
+    existe — la clave privada del par nunca viaja—,
+    así que cada nodo corre su mitad con lo que le
+    llegó por el cable:
+
+    0. **Identidad** (BRC-103, cuando hay ``session``).
+       La misma comprobación, y el mismo fallo cerrado.
+       Además, el roster del par debe declarar el
+       certificado de la clave que probó: una
+       sustitución (un MITM que firma con su propia
+       clave) no cuadra aquí, antes de avalar nada.
+    1. **Intercambio de claves.** Mi keyring aprende
+       la del par (la suya ya aprendió la mía — su
+       mitad corre en su nodo).
+    2. **Mi aval al par.** El *epoch* que avalo es la
+       admisión corriente del par (la que su roster
+       declara). El aval del par a mí lo pone **su**
+       mitad: corre en su nodo, sobre su roster,
+       cuando recibe el mío.
+    3. **Reconciliación.** El roster del par entra en
+       el mío (y el mío, con mi aval, en el suyo —
+       la otra mitad corre en su nodo).
+    4. **Verificación.** La confianza desde los dos
+       lados: ``a_trusts_b`` es **mi** mitad (cerró
+       aquí); ``b_trusts_a`` es la del par, sobre el
+       roster que me envió — si su roster aún no
+       trae su aval a mí (mi roster acaba de llegar),
+       es ``False`` y el intercambio sigue: mi
+       roster, con mi aval, vuelve al par.
+
+    Por el transporte, :class:`~smcp.core.mensajeria.JoinWire`
+    la llama dos veces por lado (una por cada cruce
+    de rosters): el aval es idempotente — el roster
+    lo dedup por firmante y *epoch*—, y la
+    reconciliación, por admisión ya mergeada.
+
+    Un resultado que no cierra (cluster distinto,
+    sesión que no verifica, certificado que no cuadra)
+    se dice en el resultado — sin nada pinneado, sin
+    confianza — en vez de dejar que quien llama
+    descubra un emparejamiento a medio hacer.
+    """
+    a_id, b_id = roster.self_id, peer_roster.self_id
+
+    # El roster es de un cluster: el join es dentro de él.
+    if roster.cluster_id != peer_roster.cluster_id:
+        return JoinResult(
+            roster_a=roster, roster_b=peer_roster,
+            keyring_a=keyring, keyring_b=peer_keyring,
+            a_trusts_b=False, b_trusts_a=False,
+            pinned_a=0, rejected_a=len(peer_roster.members),
+            pinned_b=0, rejected_b=len(roster.members),
+            authenticated=None,
+        )
+
+    # 0. La identidad (BRC-103): la sesión debe
+    #    verificar contra mi clave y la del par —
+    #    y el roster del par debe declarar el
+    #    certificado de la clave que probó. Una
+    #    prueba que no cuadra es un MITM o un bug:
+    #    el join falla cerrado, no se degrada al
+    #    intercambio simple (degradarse sería aceptar
+    #    la sustitución).
+    if session is not None and not session.verified(
+            a_key=key, b_key=peer_key):
+        return JoinResult(
+            roster_a=roster, roster_b=peer_roster,
+            keyring_a=keyring, keyring_b=peer_keyring,
+            a_trusts_b=False, b_trusts_a=False,
+            pinned_a=0, rejected_a=0,
+            pinned_b=0, rejected_b=0,
+            authenticated=False,
+        )
+    if peer_roster.known_cert(b_id) != cert_fingerprint(
+            peer_key.public_key):
+        # El par dice ser un nodo cuyo certificado
+        # no es el de la clave que probó: sustitución.
+        return JoinResult(
+            roster_a=roster, roster_b=peer_roster,
+            keyring_a=keyring, keyring_b=peer_keyring,
+            a_trusts_b=False, b_trusts_a=False,
+            pinned_a=0, rejected_a=0,
+            pinned_b=0, rejected_b=0,
+            authenticated=False,
+        )
+
+    # 1. El intercambio de claves: mi keyring
+    #    aprende la del par.
+    keyring[b_id] = peer_key.public_key
+    peer_keyring[a_id] = key.public_key
+
+    # 2. Mi aval al par: el *epoch* que avalo es la
+    #    admisión corriente del par (la que su roster
+    #    declara). El aval del par a mí ya está en su
+    #    roster — lo firmó en su nodo.
+    roster.endorse(
+        key, b_id, cert_fingerprint(peer_key.public_key),
+        epoch=peer_roster.self_epoch, now=now,
+    )
+
+    # 3. Reconciliación de los dos lados.
+    pinned_a, rejected_a = roster.reconcile(peer_roster, keyring)
+    pinned_b, rejected_b = peer_roster.reconcile(roster, peer_keyring)
+
+    # 4. La propiedad: confianza mutua verificada.
+    a_trusts_b = roster.is_verified_trusted(b_id, keyring)
+    b_trusts_a = peer_roster.is_verified_trusted(a_id, peer_keyring)
+    return JoinResult(
+        roster_a=roster, roster_b=peer_roster,
+        keyring_a=keyring, keyring_b=peer_keyring,
         a_trusts_b=a_trusts_b, b_trusts_a=b_trusts_a,
         pinned_a=pinned_a, rejected_a=rejected_a,
         pinned_b=pinned_b, rejected_b=rejected_b,
