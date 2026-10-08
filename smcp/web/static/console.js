@@ -35,6 +35,7 @@
   var el = function (id) { return document.getElementById(id); };
   var out = el("out"), dot = el("dot"), ttl = el("ttl"), st = el("st");
   var cancelBtn = el("btn-cancel"), runBtn = el("btn-run");
+  var redBtn = el("btn-red");
   var cx = el("cx"), cxRid = el("cx-rid"), cxAns = el("cx-ans"), cxFtr = el("cx-ftr");
 
   // ---------- escenario ----------
@@ -46,6 +47,11 @@
   var particles, particleMat;
   var funcNodes = []; // modo PROYECTO
   var hitMeshes = [];
+  var redNodes = [];   // modo RED: los dos nodos de la demo
+  var redWire = null;  // el cable entre ellos
+  var trustLabel = null;
+  var pulses = [];     // mensajes viajando por el cable
+  var redRun = null;   // { id, es }
 
   var raycaster = new THREE.Raycaster();
   var cam = { theta: 0.6, phi: 1.15, radius: 26, target: new THREE.Vector3(0, 1.5, 0), dragging: false, px: 0, py: 0 };
@@ -343,6 +349,113 @@
   function makeLine(a, b, color, opacity) {
     var geo = new THREE.BufferGeometry().setFromPoints([a, b]);
     return new THREE.Line(geo, new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: opacity }));
+  }
+
+  // ============================================================
+  //  MODO RED — la red v3 en vivo (dos nodos, el cable)
+  // ============================================================
+  var WIRE_COLORS = {
+    handshake: COL.run, roster: COL.gist, request: COL.text,
+    response: COL.gist, terms: COL.taint, payment: COL.taint,
+  };
+
+  function buildRedScene() {
+    clearRed();
+    var pos = {
+      A: new THREE.Vector3(-5.5, 1.5, 0),
+      B: new THREE.Vector3(5.5, 1.5, 0),
+    };
+    ["A", "B"].forEach(function (id, i) {
+      var g = new THREE.OctahedronGeometry(0.85, 0);
+      var m = new THREE.MeshStandardMaterial({
+        color: COL.node, emissive: COL.node, emissiveIntensity: 0.5,
+        metalness: 0.2, roughness: 0.6, flatShading: true,
+      });
+      var mesh = new THREE.Mesh(g, m);
+      mesh.position.copy(pos[id]);
+      scene.add(mesh);
+
+      var halo = new THREE.Mesh(
+        new THREE.SphereGeometry(1.25, 16, 16),
+        new THREE.MeshBasicMaterial({ color: COL.node, transparent: true, opacity: 0.12, wireframe: true })
+      );
+      halo.position.copy(mesh.position); scene.add(halo);
+
+      var lb = makeLabel("nodo " + id, "#dce6cf");
+      lb.position.set(pos[id].x, 3.2, pos[id].z); scene.add(lb);
+
+      redNodes.push({
+        mesh: mesh, halo: halo, label: lb, mat: m, id: id,
+        baseY: 1.5, phase: i * Math.PI,
+      });
+    });
+
+    // El cable entre los dos nodos.
+    redWire = makeLine(pos.A, pos.B, COL.ring, 0.55);
+    scene.add(redWire);
+
+    // El estado de la confianza, sobre el cable.
+    setTrust("sin confianza", "#9aa68c");
+  }
+
+  function clearRed() {
+    redNodes.forEach(function (n) {
+      scene.remove(n.mesh); scene.remove(n.halo); scene.remove(n.label);
+    });
+    redNodes = [];
+    if (redWire) { scene.remove(redWire); redWire = null; }
+    if (trustLabel) { scene.remove(trustLabel); trustLabel = null; }
+    clearPulses();
+  }
+
+  function clearPulses() {
+    pulses.forEach(function (p) { scene.remove(p.mesh); });
+    pulses = [];
+  }
+
+  function setTrust(text, color) {
+    if (trustLabel) scene.remove(trustLabel);
+    trustLabel = makeLabel(text, color);
+    trustLabel.position.set(0, 2.7, 0);
+    scene.add(trustLabel);
+  }
+
+  function redNodePos(id) {
+    for (var i = 0; i < redNodes.length; i++) {
+      if (redNodes[i].id === id) return redNodes[i].mesh.position;
+    }
+    return new THREE.Vector3();
+  }
+
+  function markRed(id, color) {
+    redNodes.forEach(function (n) {
+      if (n.id !== id) return;
+      n.mat.color.setHex(color);
+      n.mat.emissive.setHex(color);
+      n.mat.emissiveIntensity = 0.85;
+    });
+  }
+
+  function flashWire(color) {
+    if (!redWire) return;
+    redWire.material.color.setHex(color);
+    redWire.material.opacity = 0.95;
+    setTimeout(function () {
+      if (redWire) {
+        redWire.material.color.setHex(COL.ring);
+        redWire.material.opacity = 0.55;
+      }
+    }, 350);
+  }
+
+  function pulse(fromId, toId, color) {
+    var from = redNodePos(fromId), to = redNodePos(toId);
+    var g = new THREE.SphereGeometry(0.17, 10, 10);
+    var m = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 1 });
+    var mesh = new THREE.Mesh(g, m);
+    mesh.position.copy(from);
+    scene.add(mesh);
+    pulses.push({ mesh: mesh, mat: m, born: T, from: from.clone(), to: to.clone() });
   }
 
   // ============================================================
@@ -655,6 +768,156 @@
   }
 
   // ============================================================
+  //  MODO RED — la demo de la red v3 (SSE)
+  // ============================================================
+  function handleMeshEvent(ev) {
+    switch (ev.type) {
+      case "gossip":
+        printLine('<span class="k">gossip</span> A ↔ B — los anuncios se cruzaron');
+        break;
+      case "wire":
+        var col = WIRE_COLORS[ev.kind] != null ? WIRE_COLORS[ev.kind] : COL.text;
+        pulse(ev.frm, ev.to, col);
+        flashWire(col);
+        markRed(ev.frm, col);
+        var det = "";
+        if (ev.phase) det = " · " + ev.phase;
+        else if (ev.prompt) det = " · «" + ev.prompt + "»";
+        else if (ev.response) det = " · «" + ev.response + "»";
+        printLine('<span class="ev">' + ev.frm + " → " + ev.to +
+          " · <span class=\"k\">" + ev.kind + "</span>" + det + "</span>");
+        break;
+      case "joined":
+        setTrust("confianza mutua", "#8fbf3f");
+        redNodes.forEach(function (n) {
+          n.mat.color.setHex(COL.core);
+          n.mat.emissive.setHex(COL.core);
+          n.mat.emissiveIntensity = 0.9;
+        });
+        st.textContent = "confianza mutua"; st.className = "st ok";
+        printLine('<span class="ok">join completo</span> — confianza mutua' +
+          (ev.mutual ? " (rosters avalados)" : "") +
+          ", handshake verificado: " + (ev.authenticated ? "sí" : "no"));
+        break;
+      case "served":
+        printLine('<span class="gist">respuesta servida</span> — «' +
+          (ev.response || "") + "» · tx " + String(ev.txid || "").slice(0, 12) + "…");
+        break;
+      case "settled":
+        st.textContent = "cobrado · " + ev.earned + " sats"; st.className = "st ok";
+        printLine('<span class="ok">cobrado</span> — ' + ev.inferences +
+          " inferencia(s) contada(s) · " + ev.earned + " sats ganados");
+        break;
+      case "done":
+        dot.classList.remove("on");
+        redBtn.disabled = false;
+        st.textContent = "completado"; st.className = "st ok";
+        printLine('<span class="ok">red v3 completada</span>');
+        break;
+      case "error":
+        dot.classList.remove("on");
+        redBtn.disabled = false;
+        st.textContent = "error"; st.className = "st err";
+        printLine('<span class="err">error: ' + fmt(ev.message || "") + "</span>");
+        break;
+      default:
+        printLine('<span class="k">' + fmt(ev.type) + "</span>");
+    }
+  }
+
+  function launchRed() {
+    if (redRun) return; // ya hay una sesión en curso
+    var prompt = el("f-prompt").value.trim() || "resolver la tarea";
+
+    redNodes.forEach(function (n) {
+      n.mat.color.setHex(COL.node);
+      n.mat.emissive.setHex(COL.node);
+      n.mat.emissiveIntensity = 0.5;
+    });
+    setTrust("sin confianza", "#9aa68c");
+    clearPulses();
+    dot.classList.add("on");
+    ttl.textContent = "Red v3 · " + prompt.slice(0, 22);
+    st.textContent = "creando…"; st.className = "st";
+    redBtn.disabled = true;
+    out.innerHTML = '<span class="dim">POST /api/mesh/v3 — dos nodos sobre un bus in-memory: gossip, join (handshake BRC-103 + rosters cruzados dos veces) y una inferencia completa. Cada datagrama viaja por el cable y se dibuja.</span>\n';
+
+    fetch("/api/mesh/v3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: prompt }),
+    })
+      .then(function (r) {
+        return r.json().then(function (j) { return { ok: r.ok, j: j }; });
+      })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.j.detail || "error al crear la sesión");
+        followRed(res.j.id);
+      })
+      .catch(function (e) {
+        redRun = null;
+        redBtn.disabled = false;
+        dot.classList.remove("on");
+        st.textContent = "error"; st.className = "st err";
+        printLine('<span class="err">error: ' + fmt(e.message || String(e)) + "</span>");
+      });
+  }
+
+  function followRed(id) {
+    redRun = { id: id, es: null };
+    printLine('sesión <span class="ok">' + id + "</span> creada — siguiendo el cable…");
+    if (!window.EventSource) { pollRed(id); return; }
+    var es = new EventSource("/api/mesh/v3/" + id + "/events");
+    redRun.es = es;
+    es.onmessage = function (msg) {
+      var ev;
+      try { ev = JSON.parse(msg.data); } catch (e) { return; }
+      if (ev.type === "end") {
+        es.close();
+        redRun = null;
+        redBtn.disabled = false;
+        if (ev.status !== "done") {
+          dot.classList.remove("on");
+          st.textContent = ev.status; st.className = "st err";
+        }
+        return;
+      }
+      handleMeshEvent(ev);
+    };
+    es.onerror = function () {
+      if (!redRun) return;
+      es.close();
+      redRun.es = null;
+      pollRed(id);
+    };
+  }
+
+  function pollRed(id) {
+    var tick = function () {
+      if (!redRun) return;
+      fetch("/api/mesh/v3/" + id)
+        .then(function (r) { return r.json(); })
+        .then(function (s) {
+          if (s.status === "done") {
+            handleMeshEvent({ type: "done" });
+            redRun = null;
+            redBtn.disabled = false;
+            return;
+          }
+          if (s.status === "error") {
+            handleMeshEvent({ type: "error", message: s.error || "" });
+            redRun = null;
+            redBtn.disabled = false;
+            return;
+          }
+          setTimeout(tick, 800);
+        })
+        .catch(function () { setTimeout(tick, 1500); });
+    };
+    tick();
+  }
+
+  // ============================================================
   //  cambio de modo
   // ============================================================
   function setMode(m) {
@@ -662,18 +925,35 @@
     MODE = m;
     el("m-motor").classList.toggle("on", m === "motor");
     el("m-proy").classList.toggle("on", m === "proy");
+    el("m-red").classList.toggle("on", m === "red");
     el("metrics").style.display = m === "motor" ? "flex" : "none";
     el("runform").style.display = m === "motor" ? "grid" : "none";
+    el("redform").style.display = m === "red" ? "grid" : "none";
     el("hint").textContent = m === "motor"
       ? "arrastra para orbitar · rueda para zoom · el run se dibuja en vivo"
-      : "arrastra para orbitar · rueda para zoom · clic en un nodo para ejecutar";
+      : m === "red"
+        ? "arrastra para orbitar · rueda para zoom · cada datagrama por el cable se dibuja"
+        : "arrastra para orbitar · rueda para zoom · clic en un nodo para ejecutar";
     if (m === "motor") {
+      clearRed();
       clearFuncNodes();
       spawnWorkers(2);
       ttl.textContent = "Motor DeLM";
       st.textContent = "en reposo"; st.className = "st";
       out.innerHTML = '<span class="dim">Pulsa «Ejecutar run» para lanzar el motor DeLM. El streaming llega en vivo por SSE; cada worker, gist y ronda se dibuja en la escena.</span>';
+    } else if (m === "red") {
+      clearWorkers();
+      clearGists();
+      clearTaint();
+      clearFuncNodes();
+      hitMeshes = [];
+      buildRedScene();
+      cam.radius = 17; placeCamera();
+      ttl.textContent = "Red v3";
+      st.textContent = "en reposo"; st.className = "st";
+      out.innerHTML = '<span class="dim">«Emparejar y servir» lanza dos nodos sobre un bus in-memory: gossip, join (handshake BRC-103 + rosters cruzados dos veces) y una inferencia completa — cada datagrama por el cable se dibuja entre los nodos.</span>';
     } else {
+      clearRed();
       clearWorkers();
       clearGists();
       clearTaint();
@@ -727,6 +1007,23 @@
       n.mesh.rotation.y += dt * 0.8;
       n.label.position.y = n.mesh.position.y + 1.5;
       n.halo.position.copy(n.mesh.position);
+    }
+
+    // modo red: los nodos flotan y los mensajes viajan por el cable
+    for (var rn = 0; rn < redNodes.length; rn++) {
+      var rnode = redNodes[rn];
+      rnode.mesh.position.y = rnode.baseY + Math.sin(T * 1.4 + rnode.phase) * 0.12;
+      rnode.mesh.rotation.y += dt * 0.7;
+      rnode.halo.position.copy(rnode.mesh.position);
+      rnode.label.position.y = rnode.mesh.position.y + 1.5;
+    }
+    for (var pi = pulses.length - 1; pi >= 0; pi--) {
+      var pu = pulses[pi];
+      var pAge = T - pu.born;
+      var pk = Math.min(1, pAge / 0.55);
+      pu.mesh.position.lerpVectors(pu.from, pu.to, pk);
+      pu.mat.opacity = Math.max(0, 1 - pAge / 1.4);
+      if (pAge > 1.4) { scene.remove(pu.mesh); pulses.splice(pi, 1); }
     }
 
     // gists: flotan hacia arriba y se apagan
@@ -787,7 +1084,12 @@
 
       el("m-motor").addEventListener("click", function () { setMode("motor"); });
       el("m-proy").addEventListener("click", function () { setMode("proy"); });
+      el("m-red").addEventListener("click", function () { setMode("red"); });
       runBtn.addEventListener("click", launchRun);
+      redBtn.addEventListener("click", launchRed);
+      el("f-prompt").addEventListener("keydown", function (e) {
+        if (e.key === "Enter") launchRed();
+      });
       cancelBtn.addEventListener("click", function () {
         if (run && run.ctrl) {
           SMCPRuns.cancel(run.ctrl).then(function () {

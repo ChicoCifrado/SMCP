@@ -10,6 +10,8 @@ import contextlib
 import dataclasses
 import hashlib
 import json
+import secrets
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -21,29 +23,48 @@ from pydantic import BaseModel, Field
 
 from smcp.config import DEFAULT_CONFIG_PATH, build_client, load_config
 from smcp.web import REPO_ROOT
+from smcp.core.arc import ACCEPTED_BY_NETWORK, ArcTxStatus
 from smcp.core.benchmark import scale_sweep, summarize
+from smcp.core.bsv_keys import Secp256k1KeyPair
 from smcp.core.contract import InferenceBounty, build_claim_tx
 from smcp.core.contrib import (
+    CapacityReport,
+    ContributionLedger,
     default_identity_path,
     default_state_path,
 )
 from smcp.core.gist import Gist, GistKind, RefTag, Summary
 from smcp.core.injection import detect_injection
 from smcp.core.injection_hardened import detect_injection_hardened
+from smcp.core.intercambio import InferenceServer
+from smcp.core.join import found
 from smcp.core.llm import FakeLLMClient, LLMClient
+from smcp.core.mensajeria import (
+    KIND_HANDSHAKE,
+    KIND_INFERENCE_REQUEST,
+    KIND_INFERENCE_RESPONSE,
+    InferenceRequester,
+    InferenceResponder,
+    MeshV3,
+)
+from smcp.core.mesh_node import MeshNode, decode_msg
 from smcp.core.metrics import TaskMetrics
 from smcp.core.placement import DEFAULT_MESH_ENDPOINT
+from smcp.core.provenance import KeyPair
 from smcp.core.registro import (
     DEFAULT_REGISTRY_PATH,
     InferenceRegistry,
 )
 from smcp.core.inscripcion import extract_inscription, verify_inscription
 from smcp.core.membership import BlockHeader, InclusionProof
-from smcp.core.txbuild import Transaction
+from smcp.core.requirements import MeshRequirements
+from smcp.core.secure_context import SecureSharedContext
+from smcp.core.txbuild import Transaction, TxIn
 from smcp.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
 from smcp.core.run_store import RunStore, StoredRun
 from smcp.core.task_queue import Task, TaskState
 from smcp.core.taint import TaintLevel
+from smcp.core.transport import InMemoryTransport, MeshTransport, _Bus
 from smcp.core.unfolding import Unfolding, Unfolded
 from smcp.core.verifier import RuleVerifier
 
@@ -1717,6 +1738,299 @@ def post_mesh_infer(body: MeshInfer,
             "inferences_served": peer.inferences_served,
             "satoshis_earned": peer.satoshis_earned,
             **_mesh_view(led, mesh_id, DEFAULT_MESH_ENDPOINT)}
+
+
+# ------------------------------------------------------------------- red v3
+# La red v3 en vivo: dos nodos sobre un bus in-memory — gossip,
+# join (handshake BRC-103 + rosters cruzados dos veces) y una
+# inferencia completa (petición, respuesta, términos, pago
+# firmado y cobro) — con cada datagrama por el cable en el
+# stream de eventos. Es la misma coreografía que
+# tests/test_mesh_v3.py, movida por el bucle del nodo.
+
+MESH_V3_ID = "malla-consola"
+MESH_V3_KINDS: dict[int, str] = {
+    0x08: "handshake", 0x09: "request", 0x0A: "terms",
+    0x0B: "payment", 0x0C: "response", 0x0D: "roster",
+}
+
+
+class _DemoArc:
+    """Un ARC de demostración: acepta y deriva el txid de verdad
+    (lo que un ARC hace — el chequeo de identidad es real)."""
+
+    async def broadcast(self, tx_hex: str, **kwargs: Any) -> ArcTxStatus:
+        return ArcTxStatus(
+            txid=Transaction.parse(bytes.fromhex(tx_hex)).txid(),
+            tx_status=ACCEPTED_BY_NETWORK,
+        )
+
+
+class _SpyTransport(MeshTransport):
+    """Envuelve un transporte y cuenta lo que viaja por el cable."""
+
+    def __init__(self, inner: MeshTransport, node: str,
+                 push: Callable[..., None]) -> None:
+        self._inner = inner
+        self._node = node
+        self._push = push
+
+    def send(self, to: str, payload: bytes) -> None:
+        kind, body = decode_msg(payload)
+        if kind in MESH_V3_KINDS:
+            detalle: dict[str, Any] = {
+                "kind": MESH_V3_KINDS[kind]}
+            if kind == KIND_HANDSHAKE:
+                with contextlib.suppress(Exception):
+                    detalle["phase"] = str(json.loads(body)["phase"])
+            elif kind == KIND_INFERENCE_REQUEST:
+                with contextlib.suppress(Exception):
+                    detalle["prompt"] = str(json.loads(body)["prompt"])[:80]
+            elif kind == KIND_INFERENCE_RESPONSE:
+                with contextlib.suppress(Exception):
+                    detalle["response"] = str(json.loads(body)["response"])[:200]
+            self._push("wire", frm=self._node, to=to, **detalle)
+        self._inner.send(to, payload)
+
+    def poll(self) -> list[tuple[str, bytes]]:
+        return self._inner.poll()
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+class MeshV3Session:
+    """Una demostración de la red v3 (su estado vivo)."""
+
+    def __init__(self, *, prompt: str) -> None:
+        self.id = "mesh-" + secrets.token_hex(6)
+        self.prompt = prompt
+        self.status = "queued"
+        self.error: str | None = None
+        self.created_at = time.time()
+        self.events: list[dict[str, Any]] = []
+        self._task: asyncio.Task | None = None
+
+    def header(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "status": self.status, "prompt": self.prompt,
+            "error": self.error, "created_at": self.created_at,
+            "events": len(self.events),
+        }
+
+
+_MESH_V3: dict[str, MeshV3Session] = {}
+
+
+class MeshV3In(BaseModel):
+    """El prompt que la red v3 sirve de punta a punta."""
+
+    prompt: str = Field(default="resolver el error de sincronización",
+                        max_length=200)
+
+
+@router.post("/mesh/v3")
+async def start_mesh_v3(body: MeshV3In) -> dict[str, Any]:
+    """Lanza la demo de la red v3: dos nodos se emparejan y
+    sirven una inferencia — con cada mensaje por el cable."""
+    session = MeshV3Session(prompt=body.prompt)
+    _MESH_V3[session.id] = session
+    session._task = asyncio.get_running_loop().create_task(
+        _run_mesh_v3(session))
+    return session.header()
+
+
+@router.get("/mesh/v3/{session_id}")
+def get_mesh_v3(session_id: str) -> dict[str, Any]:
+    session = _MESH_V3.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404,
+                            detail="no such mesh session")
+    return session.header()
+
+
+@router.get("/mesh/v3/{session_id}/events")
+async def stream_mesh_v3_events(session_id: str) -> StreamingResponse:
+    """SSE: el cable en vivo (replay incluido hasta el fin)."""
+    session = _MESH_V3.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404,
+                            detail="no such mesh session")
+    cursor = 0
+
+    async def gen():
+        nonlocal cursor
+        # Replay primero, luego sigue hasta el estado terminal.
+        while True:
+            if cursor < len(session.events):
+                ev = session.events[cursor]
+                cursor += 1
+                yield f"data: {json.dumps(ev, default=str)}\n\n"
+                continue
+            if session.status in ("done", "error"):
+                final = {"type": "end", "ts": time.time(),
+                         "status": session.status, "cursor": cursor}
+                yield f"data: {json.dumps(final)}\n\n"
+                break
+            await asyncio.sleep(0.12)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _admit_v3(led: ContributionLedger, peer: str, vram: float,
+              identity: KeyPair, now: float) -> None:
+    """Publica VRAM firmado (la admisión que el servidor exige)."""
+    ch = led.issue_challenge(peer, now=now)
+    rep = CapacityReport(
+        mesh_id=MESH_V3_ID, peer_id=peer, vram_gb=vram,
+        vram_advertised_gb=vram, ram_gb=32.0, cpu_cores=8,
+        nonce=ch.nonce, issued_at=now, expires_at=now + 3600,
+    ).sign(identity)
+    ok, why = led.admit(rep, now=now)
+    if not ok:
+        raise RuntimeError(f"admisión rechazada: {why}")
+    led.observe(peer, now, dt_s=60)
+
+
+async def _run_mesh_v3(session: MeshV3Session) -> None:
+    """La coreografía: gossip, join e inferencia entre dos nodos.
+
+    El nodo B corre en el bucle de asyncio (su tick); el nodo A
+    lo mueve la coreografía — el solicitante drena su propio
+    transporte, y el transporte solo lo drena **un** consumidor.
+    """
+    def push(type_: str, **payload: Any) -> None:
+        _push(session, type_, **payload)
+
+    session.status = "running"
+    push("started", prompt=session.prompt[:80])
+
+    now = time.time()
+    bus = _Bus()
+    a_t = _SpyTransport(InMemoryTransport(bus, "A"), "A", push)
+    b_t = _SpyTransport(InMemoryTransport(bus, "B"), "B", push)
+
+    # B sirve inferencias. El modelo real lo descubre el
+    # despliegue (:func:`smcp.core.tools.discover_tools`) —
+    # aquí, el doble determinista de la demo.
+    b_skey = Secp256k1KeyPair.new("B")
+    b_id_key = KeyPair.new("B")
+    a_id_key = KeyPair.new("A")
+    ledger = ContributionLedger(MESH_V3_ID)
+    _admit_v3(ledger, "B", 8.0, KeyPair.new("B-cap"), now)
+    responder = InferenceResponder(
+        transport=b_t,
+        server=InferenceServer(
+            server_key=b_skey, llm=FakeLLMClient(),
+            arc=_DemoArc(), ledger=ledger, peer_id="B",
+        ),
+    )
+
+    # El estado del join de cada nodo: su roster fundado.
+    a_roster, a_keyring = found(MESH_V3_ID, "A", a_id_key, now=now)
+    b_roster, b_keyring = found(MESH_V3_ID, "B", b_id_key, now=now)
+    a_v3 = MeshV3(
+        transport=a_t, roster=a_roster, key=a_id_key, keyring=a_keyring)
+    b_v3 = MeshV3(
+        transport=b_t, roster=b_roster, key=b_id_key,
+        keyring=b_keyring, responder=responder)
+
+    # Los nodos de malla (gossip) con el v3 inyectado.
+    req = MeshRequirements(mesh_id=MESH_V3_ID, version_floor=(1, 0))
+    a_node = MeshNode(
+        "A", (1, 0), (), transport=a_t, ctx=SecureSharedContext(),
+        key=a_id_key, req=req, v3=a_v3)
+    b_node = MeshNode(
+        "B", (1, 0), (), transport=b_t, ctx=SecureSharedContext(),
+        key=b_id_key, req=req, v3=b_v3)
+
+    # El solicitante (la clave de pago de A).
+    requester = InferenceRequester(
+        transport=a_t, key=Secp256k1KeyPair.new("A-pay"))
+
+    def choreography() -> None:
+        """Gossip, join e inferencia — el hilo del nodo A."""
+        deadline = time.monotonic() + 25.0
+
+        def tick_a_until(cond: Callable[[], bool],
+                         que: str) -> None:
+            while not cond():
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"el {que} no completó")
+                a_node.run_tick()
+                time.sleep(0.01)
+
+        # Gossip: los anuncios se cruzan (el primero es
+        # conocimiento de fuera de banda, como el portmap).
+        a_node.send_announce("B")
+        b_node.send_announce("A")
+        tick_a_until(
+            lambda: "B" in a_node._neighbors and "A" in b_node._neighbors,
+            "gossip")
+        push("gossip", peers=["A", "B"])
+
+        # El join: A lo inicia y los dos bucles lo mueven.
+        a_v3.start_join("B")
+        tick_a_until(lambda: bool(a_v3.results), "join")
+        resultado = a_v3.results[0]
+        push("joined", mutual=bool(resultado.mutual),
+             authenticated=bool(resultado.authenticated))
+
+        # La inferencia: A pide (drena su transporte), B sirve.
+        response, tx = requester.request(
+            to="B", prompt=session.prompt, mesh_id=MESH_V3_ID,
+            funding=TxIn("ab" * 32, 0))
+        push("served", response=response[:200], txid=tx.txid())
+
+        # El cobro llega en el bucle de B.
+        while not ledger.peers["B"].inferences_served:
+            if time.monotonic() > deadline:
+                raise TimeoutError("el cobro no llegó")
+            time.sleep(0.01)
+        push("settled", inferences=ledger.peers["B"].inferences_served,
+             earned=ledger.peers["B"].satoshis_earned)
+
+    stop = threading.Event()
+
+    def ticker() -> None:
+        """El bucle del nodo B (el servidor) — en su hilo propio:
+        el respondedor sirve con ``asyncio.run``, que necesita un
+        hilo sin un bucle corriendo."""
+        while not stop.is_set():
+            try:
+                b_node.run_tick()
+            except Exception as exc:
+                push("error", message=f"el bucle de B: {exc}")
+                return
+            time.sleep(0.01)
+
+    loop = asyncio.get_running_loop()
+    # run_in_executor es eager: el hilo arranca al instante.
+    # (to_thread no arranca hasta el await — y el ticker tiene
+    # que vivir MIENTRAS la coreografía corre, no después.)
+    choreo = loop.run_in_executor(None, choreography)
+    tick = loop.run_in_executor(None, ticker)
+    try:
+        await choreo
+        session.status = "done"
+        push("done", prompt=session.prompt[:80])
+    except Exception as exc:
+        session.status = "error"
+        session.error = str(exc)
+        push("error", message=str(exc))
+    finally:
+        stop.set()
+        await tick
+        a_t.close()
+        b_t.close()
 
 
 @router.get("/mesh/reputation")

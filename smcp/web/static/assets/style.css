@@ -43,6 +43,7 @@ body.light {
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
+::selection { background: var(--accent-soft); color: var(--glyph-ink); }
 body {
   margin: 0;
   background: var(--canvas-background);
@@ -55,12 +56,19 @@ body {
 }
 a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color .15s, color .15s; }
 a:hover { border-bottom-color: var(--accent); }
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 code {
   font-family: var(--font-mono);
   background: var(--code-bg);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: .92em;
+  overflow-wrap: anywhere;
 }
 .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
 
@@ -73,7 +81,7 @@ header.top {
 }
 .topbar {
   display: flex; align-items: center; gap: 18px;
-  height: 58px; max-width: 1080px; margin: 0 auto; padding: 0 28px;
+  min-height: 58px; max-width: 1080px; margin: 0 auto; padding: 0 28px;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: .02em; color: var(--text); }
 /* SMCP wordmark via mask — hereda currentColor/ var(--glyph-ink) */
@@ -218,9 +226,29 @@ footer.foot .txt b { color: var(--text); }
 /* ---------- Nav: allow wrap on wide navs ---------- */
 nav.topnav { flex-wrap: wrap; row-gap: 4px; }
 
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; gap: 8px 18px; padding-top: 10px; }
+  nav.topnav {
+    order: 3;
+    flex-wrap: nowrap;
+    width: 100%;
+    margin: 0;
+    gap: 20px;
+    overflow-x: auto;
+    padding-bottom: 10px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  nav.topnav::-webkit-scrollbar { display: none; }
+  nav.topnav a { white-space: nowrap; }
+  .theme-btn { margin-left: auto; }
+}
+
 @media (max-width: 640px) {
-  nav.topnav { display: none; }
   .hero .wordmark { font-size: clamp(36px, 12vw, 72px); }
   .hero { padding: 52px 0 30px; }
   .brand .mark { width: 72px; height: 18px; }
+  .wrap { padding: 0 18px; }
+  section { padding: 40px 0; }
+  .card, .linkcard, .stat { padding: 15px; }
 }
