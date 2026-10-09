@@ -500,6 +500,93 @@ def _pay_clear(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pay_balance(args: argparse.Namespace) -> int:
+    """Los saldos gastables de la billetera."""
+    from smcp.core.handcash_connect import (
+        HandCashConnect, HandCashError,
+    )
+
+    try:
+        connect = HandCashConnect.from_defaults()
+        saldos = connect.spendable_balances()
+    except HandCashError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not saldos:
+        print("sin saldos que mostrar")
+        return 0
+    print("=== smcp pay balance (saldos gastables) ===")
+    for saldo in saldos:
+        print(f"  {saldo.get('currencyCode', '?'):>4}"
+              f" : {saldo.get('spendableBalance', 0)}")
+    return 0
+
+
+def _pay_send(args: argparse.Namespace) -> int:
+    """Envía el pago a la identidad de pago."""
+    from smcp.core.handcash import (
+        PaymentIntent, load_identity,
+    )
+    from smcp.core.handcash_connect import (
+        HandCashConnect, HandCashError,
+        denomination_amount,
+    )
+    from smcp.core.inscripcion import (
+        NOTAS_COMPLETADO,
+    )
+    from smcp.core.membership import ProtocolError
+
+    ident = load_identity()
+    if not ident.configured:
+        print(
+            "error: identidad de pago sin "
+            "configurar — primero:\n"
+            "  delm pay set --handle '$Chicocifrado'",
+            file=sys.stderr)
+        return 2
+    nota = (args.nota
+            or NOTAS_COMPLETADO[0]).strip()
+    try:
+        intent = PaymentIntent(
+            sats=args.sats, identity=ident,
+            note=nota)
+        connect = HandCashConnect.from_defaults()
+    except (ProtocolError, HandCashError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    try:
+        if args.dry_run:
+            tasa = connect.exchange_rate(
+                args.currency)
+            monto = denomination_amount(
+                intent.sats, float(tasa["rate"]))
+            print("=== smcp pay send --dry-run ===")
+            print(f"destino : {intent.recipient}")
+            print(f"nota    : {nota}")
+            print(f"monto   : {intent.sats} sats "
+                  f"→ {monto} {args.currency} "
+                  f"(tasa {tasa['rate']})")
+            print("no se envió nada (dry-run)")
+            return 0
+        res = connect.pay(intent,
+                            currency=args.currency)
+    except HandCashError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print("=== smcp pay send ===")
+    print(f"txid    : {res.transaction_id}")
+    print(f"destino : {intent.recipient}")
+    print(f"nota    : {res.note}")
+    if res.units is not None:
+        print(f"monto   : {res.units} BSV")
+    if res.satoshi_fees is not None:
+        print(f"fee     : {res.satoshi_fees} sats")
+    if res.fiat_units is not None:
+        print(f"equivalente: {res.fiat_units} "
+              f"{res.fiat_currency}")
+    return 0
+
+
 def _cmd_pay(args: argparse.Namespace) -> int:
     """La identidad de pago: adónde van los sats."""
     action = args.pay_command or "show"
@@ -509,6 +596,10 @@ def _cmd_pay(args: argparse.Namespace) -> int:
         return _pay_set(args)
     if action == "clear":
         return _pay_clear(args)
+    if action == "balance":
+        return _pay_balance(args)
+    if action == "send":
+        return _pay_send(args)
     return 2
 
 
@@ -1316,6 +1407,29 @@ def build_parser() -> argparse.ArgumentParser:
                            "y rastreable)")
     p_cl = psub.add_parser("clear", help="borrar la "
                                          "identidad")
+    p_ba = psub.add_parser("balance",
+                           help="saldos gastables "
+                                "de la billetera")
+    p_sd = psub.add_parser("send",
+                           help="enviar el pago a la "
+                                "identidad (la nota "
+                                "de finalización viaja "
+                                "en el pago)")
+    p_sd.add_argument("--sats", type=int,
+                      required=True,
+                      help="satoshis a pagar "
+                           "(el presupuesto de la "
+                           "inferencia son 249)")
+    p_sd.add_argument("--nota", default=None,
+                      help="la nota del pago "
+                           "(default: "
+                           "'inferencia completada')")
+    p_sd.add_argument("--currency", default="USD",
+                      help="moneda de denominación "
+                           "del monto (default: USD)")
+    p_sd.add_argument("--dry-run", action="store_true",
+                      help="muestra el monto sin "
+                           "enviar nada")
     p_pay.set_defaults(func=_cmd_pay)
 
     # --- version

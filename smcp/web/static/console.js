@@ -807,6 +807,17 @@
           String(ev.txid || "").slice(0, 12) + "… · pago con nota: «" +
           (ev.nota || "") + "»");
         break;
+      case "paid":
+        if (ev.skip) {
+          printLine('<span class="k">pago omitido</span> — ' +
+            fmt(ev.reason || ""));
+        } else {
+          printLine('<span class="ok">pagado</span> — ' +
+            (ev.sats || "") + " sats a tu identidad · tx " +
+            String(ev.txid || "").slice(0, 12) + "… · nota «" +
+            (ev.nota || "") + "»");
+        }
+        break;
       case "settled":
         st.textContent = "cobrado · " + ev.earned + " sats"; st.className = "st ok";
         printLine('<span class="ok">cobrado</span> — ' + ev.inferences +

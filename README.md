@@ -174,8 +174,29 @@ claves nunca salen del daemon.
 **HandCash** (ya probado) — pagos con `note` (<=25 chars,
 metadata off-chain) via `Connect.pay`. Custodial: las claves
 las gestiona HandCash, útil para pagos rápidos pero no para
-soberanía. AppId/AppSecret en `~/.hermes/.env`; authToken en
-`~/.smcp/handcash.authtoken` (0600).
+soberanía. Dos credenciales, ambas en `~/.smcp/` (0600) o en
+el entorno:
+- **App** (AppId/AppSecret): las crea el dashboard
+  (`dashboard.handcash.io`); `HANDCASH_APP_ID`/
+  `HANDCASH_APP_SECRET` o `~/.smcp/handcash.app`.
+- **Usuario** (authToken): `HANDCASH_AUTH_TOKEN` o
+  `~/.smcp/handcash.authtoken` (0600).
+
+**Adaptador Connect** (`smcp/core/handcash_connect.py`) —
+**cómo se envía el pago**. Habla la API de HandCash
+(`cloud.handcash.io`, v3) con la firma del SDK oficial
+(`@handcash/sdk`): ECDSA-DER sobre
+`MÉTODO\nendpoint\nmarca\ncuerpo\nnonce`, clave pública
+comprimida en `oauth-publickey` — reproducida en Python con
+`cryptography` (la misma `Secp256k1KeyPair` del repo). La
+API no recibe satoshis: `sendAmount` viaja en la moneda de
+denominación, así que el adaptador pide la tasa a la propia
+API (`/v3/connect/exchangeRate/USD`) y convierte con ella
+(mandando la versión de la tasa para que el servidor convierta
+a la misma). CLI: `smcp pay send --sats 249 [--nota …]
+[--currency USD] [--dry-run]` · `smcp pay balance`.
+Sin credenciales de app la API rechaza todo (`401 Invalid
+app-id`) — verificado contra la API real.
 
 **Identidad de pago** (`smcp/core/handcash.py`) — **adónde van
 los sats**. El **handle** de HandCash (`$Chicocifrado`) deriva el
@@ -187,7 +208,8 @@ pero es estática y rastreable — se acepta, **no recomendada**. La
 identidad vive en `config/payments_identity.json`, el **mismo
 fichero** para la CLI y la web (una identidad, no dos):
 - CLI: `smcp pay show` · `smcp pay set --handle '$Chicocifrado'`
-  (`--legacy 1…`, desaconsejado) · `smcp pay clear`.
+  (`--legacy 1…`, desaconsejado) · `smcp pay clear` ·
+  `smcp pay send` · `smcp pay balance`.
 - Consola 3D: la sección **Identidad de pago**, visible en **los
   tres modos** (Motor, Proyecto, Red v3).
 - API: `GET`/`PUT /api/payments/identity`.
@@ -196,7 +218,12 @@ Al completar una inferencia, el pago lleva la **nota de
 finalización** (campo `note` de HandCash, <=25 chars — la
 notificación que la billetera muestra al recibir): una de cuatro
 fijas, siempre las mismas, elegida por `H` ("inferencia completada"
-y variantes).
+y variantes). La demo de la **Red v3** lo cierra en vivo: tras
+`served`, envía el pago a la identidad de pago (el monto es el
+presupuesto de relay de la inscripción, 249 sats) con esa nota —
+el demo self-loop: el operador se paga a sí mismo. Sin identidad
+ni credenciales, el pago se omite y la consola dice por qué
+(evento `paid` con `skip`).
 
 **BSV-21 (DELM)** — el bridge `bsv21-bridge/bsv21.mjs`
 (SDK `@1sat/actions`) es quien construye las inscripciones
@@ -507,6 +534,8 @@ smcp demo --list                # lista las demos
 smcp pay show                   # identidad de pago (HandCash)
 smcp pay set --handle '$Chicocifrado'   # guardar handle (y/o --legacy 1…)
 smcp pay clear                  # borrar la identidad de pago
+smcp pay balance                # saldos gastables de la billetera
+smcp pay send --sats 249        # enviar el pago (con la nota de finalización)
 ```
 
 Los ocho subcomandos son `demo`, `test`, `config-check`, `fit`, `mesh`,
@@ -1165,7 +1194,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1288 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1310 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1275,6 +1304,10 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   18 identidad de pago (el handle de HandCash y la dirección legacy:
   `/api/payments/identity`, el `note` de la notificación, el fichero
   compartido CLI-web — `smcp pay` y la Consola 3D guardan lo mismo) +
+  22 adaptador Connect (la firma oauth del SDK reproducida en Python —
+  verificada con el verificador del repo, satoshis a la moneda de
+  denominación vía la tasa de la API, credenciales entorno/fichero —
+  `smcp pay send` y `smcp pay balance`) +
   4 demos que pasan. 10 tests `slow` se excluyen del default
   (`-m 'not slow'`): handshake QUIC multi-host, adaptador Harness, llmfit real,
   el smoke ACP por stdio y los 3+2 de la malla contra un endpoint real

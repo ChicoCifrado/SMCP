@@ -9,10 +9,13 @@ El contrato que se fija aquí:
 * **El cable es el stream.** Cada datagrama v3 (handshake,
   roster, petición, respuesta, términos, pago) viaja por el
   SSE, en orden, con su dirección.
-* **El estado dice la verdad.** ``joined`` trae la confianza
+ * **El estado dice la verdad.** ``joined`` trae la confianza
   mutua; ``served`` la nota de finalización del pago;
-  ``settled`` el cobro; el estado terminal es ``done``.
-* **404 con motivo** para una sesión que no existe.
+  ``settled`` el cobro; el estado terminal es ``done``. El
+  pago a la identidad de HandCash (``paid``) siempre se
+  cuenta: sin identidad ni credenciales, se salta y se
+  dice por qué.
+ * **404 con motivo** para una sesión que no existe.
 """
 from __future__ import annotations
 
@@ -80,6 +83,14 @@ def test_la_red_v3_completa(client: TestClient):
     # vocabulario, nunca texto libre.
     served = next(e for e in eventos if e["type"] == "served")
     assert served["nota"] in NOTAS_COMPLETADO
+
+    # El pago a la identidad de HandCash: sin
+    # identidad ni credenciales (el entorno de
+    # pruebas), se salta y se dice por qué — el
+    # demo nunca falla por el pago.
+    paid = next(e for e in eventos if e["type"] == "paid")
+    assert paid["skip"] is True
+    assert paid["reason"]
 
     # La secuencia de la inferencia por el cable, en orden.
     wires = [e for e in eventos if e["type"] == "wire"]

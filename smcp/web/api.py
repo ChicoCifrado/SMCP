@@ -38,11 +38,16 @@ from smcp.core.gist import Gist, GistKind, RefTag, Summary
 from smcp.core.handcash import (
     MAX_NOTE_CHARS,
     PaymentIdentity,
+    PaymentIntent,
     handcash_note,
     load_identity,
     parse_handle,
     save_identity,
     valid_legacy_address,
+)
+from smcp.core.handcash_connect import (
+    HandCashConnect,
+    HandCashError,
 )
 from smcp.core.injection import detect_injection
 from smcp.core.injection_hardened import detect_injection_hardened
@@ -2097,6 +2102,36 @@ async def _run_mesh_v3(session: MeshV3Session) -> None:
     requester = InferenceRequester(
         transport=a_t, key=Secp256k1KeyPair.new("A-pay"))
 
+    def _pagar(push_: Callable[..., None],
+               tx_: Transaction) -> None:
+        """El pago de la inferencia servida.
+
+        El monto es lo que la inscripción paga al
+        servidor (el presupuesto de relay) y la
+        nota es la de finalización: el pago es la
+        notificación. La identidad de pago y las
+        credenciales de HandCash deciden si el
+        demo mueve sats de verdad — sin ellas,
+        el pago se salta (y se dice por qué):
+        el demo nunca falla por el pago.
+        """
+        recibo = extract_inscription(tx_)
+        nota = recibo.nota_texto
+        try:
+            intent = PaymentIntent(
+                sats=recibo.server_satoshis,
+                identity=load_identity(),
+                note=nota)
+            res = HandCashConnect.from_defaults().pay(
+                intent)
+        except (ProtocolError,
+                HandCashError) as exc:
+            push_("paid", skip=True,
+                  reason=str(exc))
+            return
+        push_("paid", txid=res.transaction_id,
+              nota=res.note, sats=intent.sats)
+
     def choreography() -> None:
         """Gossip, join e inferencia — el hilo del nodo A."""
         deadline = time.monotonic() + 25.0
@@ -2131,6 +2166,11 @@ async def _run_mesh_v3(session: MeshV3Session) -> None:
             funding=TxIn("ab" * 32, 0))
         push("served", response=response[:200], txid=tx.txid(),
              nota=extract_inscription(tx).nota_texto)
+
+        # El pago: la nota de finalización viaja en el pago a
+        # la identidad de HandCash (el demo self-loop: el
+        # operador se paga a sí mismo).
+        _pagar(push, tx)
 
         # El cobro llega en el bucle de B.
         while not ledger.peers["B"].inferences_served:

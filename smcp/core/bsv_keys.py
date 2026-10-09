@@ -118,7 +118,7 @@ class Secp256k1KeyPair:
         conformant verifier rejects it.
         """
         msg = _digest_bytes(digest)
-        der = self._priv.sign(msg, _ec.ECDSA(_asym_utils.Prehashed(_hashes.SHA256())))  # type: ignore[possibly-unbound]
+        der = self.sign_der(digest)
         r, s = _asym_utils.decode_dss_signature(der)  # type: ignore[possibly-unbound]
         # `s` in the low-S form so the encoding is canonical (BIP62 / BIP340),
         # otherwise the same key signing the same digest yields two valid
@@ -126,6 +126,19 @@ class Secp256k1KeyPair:
         if s > _HALF_CURVE_ORDER:
             s = _N - s
         return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+    def sign_der(self, digest: str) -> bytes:
+        """Sign the hex ``digest``, returning the DER encoding.
+
+        La forma que la API de HandCash espera en
+        ``oauth-signature``: la DER hex de la firma
+        ECDSA sobre el digest (sin hashear de nuevo,
+        como :meth:`sign`). El servidor verifica la
+        firma contra ``oauth-publickey``; la forma
+        DER y la ``r || s`` son la misma firma.
+        """
+        msg = _digest_bytes(digest)
+        return self._priv.sign(msg, _ec.ECDSA(_asym_utils.Prehashed(_hashes.SHA256())))  # type: ignore[possibly-unbound]
 
     def verify(self, digest: str, signature: bytes) -> bool:
         """Verify ``signature`` (r||s) over the hex ``digest``."""
