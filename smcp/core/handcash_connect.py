@@ -91,6 +91,11 @@ HANDCASH_TIMEOUT = 15.0
 #: La clave de acceso: 64 caracteres hex (32 bytes).
 _AUTH_TOKEN_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
+#: Prefijo de los ficheros de clave de acceso:
+#: la activa es ``handcash.authtoken`` y cada
+#: wallet guardada es ``handcash.authtoken.<nombre>``.
+AUTH_TOKEN_PREFIX = "handcash.authtoken"
+
 
 class HandCashError(RuntimeError):
     """La API de HandCash rechazó (o no supo) una llamada.
@@ -190,6 +195,139 @@ def load_auth_token(
     if not raw.strip():
         return None
     return _auth_token_bytes(raw)
+
+
+# ------------------------------------------------------------- wallets
+@dataclass(frozen=True)
+class WalletToken:
+    """Una wallet de HandCash guardada: su
+    clave de acceso, por nombre.
+
+    ``handle`` es el handle de la cuenta
+    (``None`` sin verificar contra la API) e
+    ``error`` el motivo si la verificación
+    falló.
+    """
+
+    name: str
+    path: Path
+    active: bool = False
+    handle: str | None = None
+    error: str | None = None
+
+
+def _active_token_path(
+        directory: Path | None = None) -> Path:
+    """La ruta de la clave activa: la del
+    directorio (pruebas) o la de casa."""
+    if directory is not None:
+        return directory / AUTH_TOKEN_PREFIX
+    return default_auth_token_path()
+
+
+def wallet_tokens(
+        directory: Path | None = None
+) -> list[WalletToken]:
+    """Las wallets guardadas: cada
+    ``handcash.authtoken.<nombre>`` del
+    directorio (``~/.smcp``).
+
+    La activa es ``handcash.authtoken`` —
+    la que usan la CLI y la demo — y se
+    marca aquí la wallet cuya clave coincide
+    con ella.
+    """
+    d = directory if directory is not None else (
+        default_auth_token_path().parent)
+    activa = _active_token_path(directory)
+    try:
+        contenido = (
+            activa.read_text(encoding="utf-8")
+            .strip() if activa.exists() else "")
+    except OSError:
+        contenido = ""
+    tokens: list[WalletToken] = []
+    for p in sorted(
+            d.glob(AUTH_TOKEN_PREFIX + ".*")):
+        nombre = p.name[len(AUTH_TOKEN_PREFIX) + 1:]
+        if not nombre:
+            continue
+        try:
+            igual = (
+                p.read_text(encoding="utf-8")
+                .strip() == contenido)
+        except OSError:
+            igual = False
+        tokens.append(WalletToken(
+            name=nombre, path=p,
+            active=igual and bool(contenido)))
+    return tokens
+
+
+def wallet_handles(
+        tokens: list[WalletToken],
+        app_id: str, app_secret: str
+) -> list[WalletToken]:
+    """Verifica cada wallet contra la API: el
+    handle real de la cuenta (una llamada de
+    perfil por wallet — el nombre del fichero
+    es solo una sugerencia)."""
+    from dataclasses import replace
+
+    verificadas: list[WalletToken] = []
+    for token in tokens:
+        try:
+            raw = _auth_token_bytes(
+                token.path.read_text(
+                    encoding="utf-8"))
+            con = HandCashConnect(
+                app_id, app_secret, raw)
+            perfil = con.current_user_profile()
+            publico = perfil.get(
+                "publicProfile") or {}
+            handle = str(publico.get("handle")
+                         or "").strip()
+            verificadas.append(replace(
+                token,
+                handle=handle or None))
+        except (HandCashError, ProtocolError,
+                OSError) as exc:
+            verificadas.append(replace(
+                token, error=str(exc)))
+    return verificadas
+
+
+def use_wallet_token(
+        name: str,
+        directory: Path | None = None
+) -> Path:
+    """Activa una wallet guardada: su clave
+    pasa a ``handcash.authtoken`` (0600,
+    escritura atómica).
+
+    La CLI y la demo leen la activa en cada
+    llamada: el switch es inmediato, sin
+    reiniciar nada.
+    """
+    d = directory if directory is not None else (
+        default_auth_token_path().parent)
+    destino = _active_token_path(directory)
+    buscado = (name or "").strip().lower()
+    for token in wallet_tokens(d):
+        if token.name.lower() != buscado:
+            continue
+        raw = token.path.read_bytes()
+        destino.parent.mkdir(
+            parents=True, exist_ok=True)
+        tmp = destino.parent / (
+            destino.name + ".tmp")
+        tmp.write_bytes(raw)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, destino)
+        return destino
+    raise HandCashError(
+        f"wallet {name!r} no existe — "
+        "wallet list muestra las guardadas")
 
 
 def denomination_amount(sats: int, rate: float) -> float:
@@ -514,10 +652,14 @@ def _error_info(response: Any) -> Any:
 
 
 __all__ = [
-    "HANDCASH_API_BASE", "HANDCASH_TIMEOUT",
+    "AUTH_TOKEN_PREFIX", "HANDCASH_API_BASE",
+    "HANDCASH_TIMEOUT",
     "HandCashAppCredentials", "HandCashConnect",
     "HandCashError", "PaymentResult",
+    "WalletToken",
     "default_app_credentials_path",
     "default_auth_token_path", "denomination_amount",
     "load_app_credentials", "load_auth_token",
+    "use_wallet_token", "wallet_handles",
+    "wallet_tokens",
 ]

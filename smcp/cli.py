@@ -606,6 +606,67 @@ def _pay_send(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pay_wallet_list(args: argparse.Namespace) -> int:
+    """Las wallets guardadas y cuál está activa."""
+    from smcp.core.handcash_connect import (
+        HandCashError, load_app_credentials,
+        wallet_handles, wallet_tokens,
+    )
+
+    tokens = wallet_tokens()
+    if not tokens:
+        print("sin wallets guardadas")
+        print("  cada autorización se guarda como")
+        print("  ~/.smcp/handcash.authtoken.<nombre>")
+        return 0
+    print("=== smcp pay wallet ===")
+    creds = load_app_credentials()
+    if creds is None:
+        # Sin credenciales de app: los
+        # nombres y la activa, sin verificar.
+        for token in tokens:
+            print(f"  {token.name}"
+                  f"{' (activa)' if token.active else ''}")
+        return 0
+    for token in wallet_handles(
+            tokens, creds.app_id, creds.app_secret):
+        marca = " (activa)" if token.active else ""
+        if token.handle:
+            print(f"  {token.name}{marca}"
+                  f" : {token.handle}")
+        else:
+            print(f"  {token.name}{marca}"
+                  f" : error: {token.error}")
+    return 0
+
+
+def _pay_wallet_use(args: argparse.Namespace) -> int:
+    """Activa una wallet guardada."""
+    from smcp.core.handcash_connect import (
+        HandCashError, use_wallet_token,
+    )
+
+    try:
+        use_wallet_token(args.nombre)
+    except HandCashError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"wallet activa: {args.nombre}")
+    print("  (la CLI y la demo pagan desde ella "
+          "ya — sin reiniciar nada)")
+    return 0
+
+
+def _pay_wallet(args: argparse.Namespace) -> int:
+    """Las wallets de HandCash."""
+    action = args.wallet_command or "list"
+    if action == "list":
+        return _pay_wallet_list(args)
+    if action == "use":
+        return _pay_wallet_use(args)
+    return 2
+
+
 def _cmd_pay(args: argparse.Namespace) -> int:
     """La identidad de pago: adónde van los sats."""
     action = args.pay_command or "show"
@@ -619,6 +680,8 @@ def _cmd_pay(args: argparse.Namespace) -> int:
         return _pay_balance(args)
     if action == "send":
         return _pay_send(args)
+    if action == "wallet":
+        return _pay_wallet(args)
     return 2
 
 
@@ -1449,6 +1512,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_sd.add_argument("--dry-run", action="store_true",
                       help="muestra el monto sin "
                            "enviar nada")
+    p_wl = psub.add_parser(
+        "wallet",
+        help="las wallets de HandCash "
+             "(cambiar entre cuentas)")
+    psub_wl = p_wl.add_subparsers(
+        dest="wallet_command",
+        metavar="<acción>")
+    psub_wl.add_parser(
+        "list",
+        help="las wallets guardadas "
+             "(y el handle de cada una)")
+    p_wl_u = psub_wl.add_parser(
+        "use",
+        help="activar una wallet "
+             "(la demo paga desde ella)")
+    p_wl_u.add_argument("nombre",
+                        help="el nombre de la "
+                             "wallet (como "
+                             "aparece en list)")
     p_pay.set_defaults(func=_cmd_pay)
 
     # --- version

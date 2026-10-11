@@ -214,6 +214,19 @@ output de 0.00000249 BSV a la dirección de
 `$Chicocifrado`) con la nota **«inferencia completada»**
 en el registro del pago — el demo self-loop cerró.
 
+**Wallets** (`smcp pay wallet`) — las claves de
+acceso se guardan **por nombre**
+(`~/.smcp/handcash.authtoken.<nombre>`; la activa
+es `handcash.authtoken`, sin sufijo). `wallet list`
+verifica cada una contra la API (el handle real de
+la cuenta — una llamada de perfil por wallet) y marca
+la activa; `wallet use <nombre>` activa otra (escritura
+atómica, 0600) — la CLI y la demo leen la activa en
+cada llamada, así que el switch es inmediato, sin
+reiniciar. En esta máquina: `chicocifrada` (ChicoCifrado)
+y `garracifrada` (garracifrada), ambas autorizadas en
+la misma app 6042….
+
 **Identidad de pago** (`smcp/core/handcash.py`) — **adónde van
 los sats**. El **handle** de HandCash (`$Chicocifrado`) deriva el
 paymail (`chicocifrado@handcash.io`) que enruta los pagos a las
@@ -225,7 +238,8 @@ identidad vive en `config/payments_identity.json`, el **mismo
 fichero** para la CLI y la web (una identidad, no dos):
 - CLI: `smcp pay show` · `smcp pay set --handle '$Chicocifrado'`
   (`--legacy 1…`, desaconsejado) · `smcp pay clear` ·
-  `smcp pay send` · `smcp pay balance`.
+  `smcp pay send` · `smcp pay balance` ·
+  `smcp pay wallet list` · `smcp pay wallet use <nombre>`.
 - Consola 3D: la sección **Identidad de pago**, visible en **los
   tres modos** (Motor, Proyecto, Red v3).
 - API: `GET`/`PUT /api/payments/identity`.
@@ -1210,7 +1224,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1311 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1316 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1324,6 +1338,8 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   verificada con el verificador del repo, satoshis a la moneda de
   denominación vía la tasa de la API, credenciales entorno/fichero —
   `smcp pay send` y `smcp pay balance`) +
+  5 wallets de HandCash (claves por nombre, handle verificado contra
+  la API, switch atómico — `smcp pay wallet list/use`) +
   4 demos que pasan. 10 tests `slow` se excluyen del default
   (`-m 'not slow'`): handshake QUIC multi-host, adaptador Harness, llmfit real,
   el smoke ACP por stdio y los 3+2 de la malla contra un endpoint real

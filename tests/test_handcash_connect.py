@@ -57,6 +57,9 @@ from smcp.core.handcash_connect import (
     denomination_amount,
     load_app_credentials,
     load_auth_token,
+    use_wallet_token,
+    wallet_handles,
+    wallet_tokens,
 )
 from smcp.core.membership import ProtocolError
 from smcp.core.spv import pubkey_to_address
@@ -553,6 +556,101 @@ def test_from_defaults_dice_que_falta(
     with pytest.raises(HandCashError) as exc:
         HandCashConnect.from_defaults()
     assert "clave de acceso" in str(exc.value)
+
+
+# ------------------------------------------------------ wallets
+
+def test_wallet_tokens(
+        tmp_path: Path) -> None:
+    """Cada ``handcash.authtoken.<nombre>``
+    es una wallet; la que coincide con la
+    activa es la activa."""
+    (tmp_path / "handcash.authtoken.chicocifrada"
+     ).write_text(TOKEN.hex())
+    otra = bytes(range(32, 64))
+    (tmp_path / "handcash.authtoken.garracifrada"
+     ).write_text(otra.hex())
+    # Sin activa: ninguna lo es.
+    tokens = wallet_tokens(tmp_path)
+    assert [t.name for t in tokens] == [
+        "chicocifrada", "garracifrada"]
+    assert not any(t.active for t in tokens)
+    # La activa marca a chicocifrada.
+    (tmp_path / "handcash.authtoken"
+     ).write_text(TOKEN.hex())
+    tokens = wallet_tokens(tmp_path)
+    activas = [t.name for t in tokens
+               if t.active]
+    assert activas == ["chicocifrada"]
+
+
+def test_wallet_tokens_vacio(
+        tmp_path: Path) -> None:
+    """Sin ficheros, sin wallets."""
+    assert wallet_tokens(tmp_path) == []
+
+
+def test_wallet_handles(
+        script: _Script,
+        tmp_path: Path) -> None:
+    """El handle de cada wallet viene de la
+    API (una llamada de perfil por wallet);
+    una rota se dice, no se traga."""
+    (tmp_path / "handcash.authtoken.chicocifrada"
+     ).write_text(TOKEN.hex())
+    (tmp_path / "handcash.authtoken.garracifrada"
+     ).write_text(bytes(range(32, 64)).hex())
+    tokens = wallet_tokens(tmp_path)
+    script.responses.append(
+        (200, {"publicProfile":
+               {"handle": "ChicoCifrado"}}))
+    script.responses.append(
+        (401, {"message": "Invalid token"}))
+    verificadas = wallet_handles(
+        tokens, "app", "secreto")
+    assert verificadas[0].handle == "ChicoCifrado"
+    assert verificadas[0].error is None
+    assert verificadas[1].handle is None
+    assert "Invalid token" in (
+        verificadas[1].error or "")
+
+
+def test_use_wallet_token(
+        tmp_path: Path) -> None:
+    """Activar una wallet: la clave pasa
+    al fichero activo, con 0600."""
+    (tmp_path / "handcash.authtoken.chicocifrada"
+     ).write_text(TOKEN.hex())
+    otra = bytes(range(32, 64))
+    (tmp_path / "handcash.authtoken.garracifrada"
+     ).write_text(otra.hex())
+    (tmp_path / "handcash.authtoken"
+     ).write_text(otra.hex())
+    destino = use_wallet_token(
+        "chicocifrada", tmp_path)
+    assert destino == (
+        tmp_path / "handcash.authtoken")
+    assert destino.read_text() == TOKEN.hex()
+    assert (destino.stat().st_mode
+            & 0o777) == 0o600
+    # La activa ahora es chicocifrada.
+    tokens = wallet_tokens(tmp_path)
+    assert [t.name for t in tokens
+            if t.active] == ["chicocifrada"]
+    # El nombre no distingue mayúsculas.
+    use_wallet_token("GARRACIFRADA", tmp_path)
+    assert (tmp_path / "handcash.authtoken"
+            ).read_text() == otra.hex()
+
+
+def test_use_wallet_token_ausente(
+        tmp_path: Path) -> None:
+    """Una wallet que no existe es error
+    con el qué hacer."""
+    with pytest.raises(HandCashError) as exc:
+        use_wallet_token("nadie", tmp_path)
+    assert "no existe" in str(exc.value)
+    assert "wallet list" in str(exc.value)
 
 
 # ------------------------------------------------------- recibo
