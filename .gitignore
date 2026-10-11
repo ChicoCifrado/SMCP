@@ -40,6 +40,7 @@ config/model_config.yaml
 # is a secret: ed25519 private material with chmod 600).
 config/mesh_exchange.json
 config/mesh_identity.json
+config/payments_identity.json
 
 # HandCash authorization material (secrets). Viven en ~/.smcp/ (0600),
 # fuera del repo — estas entradas son defensa en profundidad: ni la app
