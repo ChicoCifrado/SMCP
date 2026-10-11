@@ -40,6 +40,16 @@ config/model_config.yaml
 # is a secret: ed25519 private material with chmod 600).
 config/mesh_exchange.json
 config/mesh_identity.json
+
+# HandCash authorization material (secrets). Viven en ~/.smcp/ (0600),
+# fuera del repo — estas entradas son defensa en profundidad: ni la app
+# (appId/appSecret) ni las claves de acceso (una por wallet, la activa
+# sin sufijo) entran al repo por un `git add` descuidado.
+handcash.app
+handcash.authtoken*
+
+# Runtime artifacts (harness logs; not source).
+data/
 node_modules/
 bsv21-bridge/.delm-wallet.db
 bsv21-bridge/.delm-wallet.db-shm
