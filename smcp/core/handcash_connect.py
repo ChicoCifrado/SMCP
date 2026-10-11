@@ -198,20 +198,28 @@ def denomination_amount(sats: int, rate: float) -> float:
     ``rate`` es cuántas unidades de la moneda de
     denominación vale un BSV: los satoshis se
     pasan a BSV (1e8 por unidad) y se multiplican
-    por la tasa. El redondeo a 8 decimales es el
-    del campo ``sendAmount``; el servidor convierte
-    de vuelta a la misma tasa.
+    por la tasa. La API exige **como máximo 5
+    decimales** en ``sendAmount`` (lo verifica
+    en vivo: «Amount must have at most 5 decimal
+    places»), así que el redondeo es a 5. La
+    granularidad depende de la tasa: con tasas
+    bajas (USD a 19.36) son ~52 sats por paso;
+    con tasas altas (JPY a 3064) es de 1 sat —
+    para pagos exactos en satoshis conviene una
+    moneda de tasa alta. El servidor convierte
+    de vuelta a la misma tasa (la versión de la
+    tasa viaja en el pago).
     """
     if rate <= 0:
         raise HandCashError(
             f"tasa de cambio {rate}: no positiva"
         )
-    amount = round(sats * rate / 100_000_000.0, 8)
+    amount = round(sats * rate / 100_000_000.0, 5)
     if amount <= 0:
         raise HandCashError(
             f"{sats} sats a tasa {rate}: el monto "
-            "redondea a 0 en la moneda de "
-            "denominación"
+            "redondea a 0 con 5 decimales (la API "
+            "exige como máximo 5 en sendAmount)"
         )
     return amount
 
@@ -339,13 +347,26 @@ class HandCashConnect:
             params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Una llamada firmada; el cuerpo que se
-        firma es el que viaja, byte por byte."""
+        firma es el que viaja, byte por byte.
+
+        La firma cubre el path **y la query**
+        (verificado en vivo: con solo el path,
+        el servidor rechaza con «Wrong
+        signature» en las GET con parámetros —
+        el SDK oficial firma el pathname, que
+        coincide con path+query mientras no
+        haya query).
+        """
         import httpx  # type: ignore
 
         payload = "" if body is None else json.dumps(
             body, separators=(",", ":"))
-        headers = self._headers(method, endpoint,
-                                payload)
+        query = str(httpx.QueryParams(params or {}))
+        endpoint_firmado = (
+            f"{endpoint}?{query}" if query
+            else endpoint)
+        headers = self._headers(
+            method, endpoint_firmado, payload)
         if body is not None:
             headers["content-type"] = "application/json"
         with httpx.Client(

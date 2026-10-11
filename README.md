@@ -188,15 +188,31 @@ el entorno:
 (`@handcash/sdk`): ECDSA-DER sobre
 `MÉTODO\nendpoint\nmarca\ncuerpo\nnonce`, clave pública
 comprimida en `oauth-publickey` — reproducida en Python con
-`cryptography` (la misma `Secp256k1KeyPair` del repo). La
-API no recibe satoshis: `sendAmount` viaja en la moneda de
-denominación, así que el adaptador pide la tasa a la propia
-API (`/v3/connect/exchangeRate/USD`) y convierte con ella
-(mandando la versión de la tasa para que el servidor convierta
-a la misma). CLI: `smcp pay send --sats 249 [--nota …]
-[--currency USD] [--dry-run]` · `smcp pay balance`.
-Sin credenciales de app la API rechaza todo (`401 Invalid
-app-id`) — verificado contra la API real.
+`cryptography` (la misma `Secp256k1KeyPair` del repo,
+con `sign_der`). Dos hallazgos de la API real: la firma
+de una GET con parámetros cubre **path + query** (con
+solo el path el servidor dice «Wrong signature» — el
+interceptor del SDK firma el pathname, que coincide
+mientras no haya query), y `sendAmount` exige **como
+máximo 5 decimales**: la granularidad depende de la
+tasa (USD a 19.36 → ~52 sats por paso; JPY a ~3064 →
+1 sat), así que para pagar los sats exactos de la
+inscripción (249) conviene una moneda de tasa alta
+(JPY). La API no recibe satoshis: el adaptador pide la
+tasa a la propia API (`/v3/connect/exchangeRate/USD`) y
+convierte con ella (mandando la versión de la tasa para
+que el servidor convierta a la misma). CLI:
+`smcp pay send --sats 249 [--nota …] [--currency JPY]
+[--dry-run]` (el dry-run muestra el equivalente en sats)
+· `smcp pay balance`. Sin credenciales de app la API
+rechaza todo (`401 Invalid app-id`) — verificado contra
+la API real.
+
+**Vivo (2026-10-11)**: pago de **249 sats exactos**
+(tx `9b7e623e…317d31`, verificado en whatsonchain:
+output de 0.00000249 BSV a la dirección de
+`$Chicocifrado`) con la nota **«inferencia completada»**
+en el registro del pago — el demo self-loop cerró.
 
 **Identidad de pago** (`smcp/core/handcash.py`) — **adónde van
 los sats**. El **handle** de HandCash (`$Chicocifrado`) deriva el
@@ -1194,7 +1210,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1310 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1311 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +

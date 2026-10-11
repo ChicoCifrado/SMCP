@@ -25,14 +25,22 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from smcp.core.handcash import PaymentIdentity
 from smcp.core.inscripcion import NOTAS_COMPLETADO
 from smcp.web.app import app
 from smcp.web.api import _MESH_V3
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
     _MESH_V3.clear()
+    # La demo paga de verdad cuando la máquina
+    # tiene identidad y credenciales: en los
+    # tests la identidad va vacía — el pago se
+    # omite (skip) y la suite no mueve dinero.
+    monkeypatch.setattr(
+        "smcp.web.api.load_identity",
+        lambda: PaymentIdentity())
     with TestClient(app) as c:
         yield c
     _MESH_V3.clear()

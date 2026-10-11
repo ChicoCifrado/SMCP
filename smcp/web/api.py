@@ -2122,8 +2122,15 @@ async def _run_mesh_v3(session: MeshV3Session) -> None:
                 sats=recibo.server_satoshis,
                 identity=load_identity(),
                 note=nota)
+            # La moneda de denominación con
+            # granularidad de 1 sat: la API
+            # exige como máximo 5 decimales
+            # en sendAmount, y en USD (tasa
+            # baja) cada paso son ~52 sats —
+            # en JPY (tasa alta) cae en los
+            # sats que la inscripción presupone.
             res = HandCashConnect.from_defaults().pay(
-                intent)
+                intent, currency="JPY")
         except (ProtocolError,
                 HandCashError) as exc:
             push_("paid", skip=True,

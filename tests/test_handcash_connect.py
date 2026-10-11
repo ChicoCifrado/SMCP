@@ -282,7 +282,10 @@ def test_saldos_gastables(script: _Script) -> None:
 
 def test_perfil_y_pago(script: _Script) -> None:
     """Perfil y detalle de pago: las rutas y
-    los parámetros."""
+    los parámetros. La firma de la GET con
+    parámetros cubre **path + query** (la
+    regla del servidor — con solo el path
+    rechaza «Wrong signature»)."""
     script.responses.append((200, {"id": "yo"}))
     script.responses.append((200, {"transactionId": "tx"}))
     con = _connect()
@@ -293,6 +296,14 @@ def test_perfil_y_pago(script: _Script) -> None:
     assert script.calls[1]["endpoint"] == (
         "/v3/connect/wallet/payment")
     assert script.calls[1]["params"] == {"transactionId": "tx"}
+    # La firma cubre el path y la query.
+    head = script.calls[1]["headers"]
+    assert verify_public(
+        bytes.fromhex(head["oauth-publickey"]),
+        _digest("GET",
+                "/v3/connect/wallet/payment"
+                "?transactionId=tx", ""),
+        _sig_rs(head))
 
 
 # ------------------------------------------------------------------ pago
@@ -339,7 +350,7 @@ def test_pago_convierte_con_la_tasa(
     assert body["note"] == "inferencia completada"
     assert body["receivers"] == [{
         "destination": "chicocifrado@handcash.io",
-        "sendAmount": 0.000747}]
+        "sendAmount": 0.00075}]
 
 
 @pytest.mark.skipif(
@@ -382,11 +393,13 @@ def test_pago_sin_version_de_tasa(
 
 def test_denomination_amount() -> None:
     """Satoshis a la moneda: BSV (1e8) por
-    tasa, redondeado a 8 decimales."""
-    assert denomination_amount(249, 300.0) == 0.000747
+    tasa, redondeado a 5 decimales (el
+    límite de la API)."""
+    assert denomination_amount(249, 300.0) == 0.00075
     assert denomination_amount(100_000_000, 300.0) == 300.0
-    assert denomination_amount(
-        100_000_000, 1e-8) == 1e-08
+    # JPY (tasa alta): 249 sats caen casi
+    # exactos — la granularidad es de 1 sat.
+    assert denomination_amount(249, 3064.3984) == 0.00763
 
 
 def test_denomination_amount_rechaza() -> None:
@@ -396,9 +409,10 @@ def test_denomination_amount_rechaza() -> None:
         denomination_amount(249, 0.0)
     with pytest.raises(HandCashError):
         denomination_amount(249, -1.0)
-    # 1 sat a tasa mínima redondea a 0.
+    # 1 sat a tasa USD redondea a 0 con 5
+    # decimales: la granularidad no alcanza.
     with pytest.raises(HandCashError):
-        denomination_amount(1, 1e-9)
+        denomination_amount(1, 19.36)
 
 
 # ------------------------------------------------------------ errores

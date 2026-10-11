@@ -567,13 +567,20 @@ def _pay_send(args: argparse.Namespace) -> int:
                 args.currency)
             monto = denomination_amount(
                 intent.sats, float(tasa["rate"]))
+            # La API redondea a 5 decimales:
+            # el equivalente en sats dice lo
+            # que realmente va a moverse.
+            equiv = round(monto
+                          / float(tasa["rate"])
+                          * 100_000_000)
             print("=== smcp pay send --dry-run ===")
             print(f"destino : {intent.recipient}")
             print(f"nota    : {nota}")
             print(f"monto   : {intent.sats} sats "
                   f"→ {_fmt_monto(monto)} "
                   f"{args.currency} "
-                  f"(tasa {tasa['rate']})")
+                  f"(tasa {tasa['rate']}) "
+                  f"≈ {equiv} sats")
             print("no se envió nada (dry-run)")
             return 0
         res = connect.pay(intent,
@@ -585,11 +592,15 @@ def _pay_send(args: argparse.Namespace) -> int:
     print(f"txid    : {res.transaction_id}")
     print(f"destino : {intent.recipient}")
     print(f"nota    : {res.note}")
-    if res.units is not None:
+    # El registro fresco de la API trae el
+    # monto en 0 (se puebla después): el
+    # txid es la prueba — el monto se
+    # verifica en la cadena.
+    if res.units:
         print(f"monto   : {res.units} BSV")
-    if res.satoshi_fees is not None:
+    if res.satoshi_fees:
         print(f"fee     : {res.satoshi_fees} sats")
-    if res.fiat_units is not None:
+    if res.fiat_units:
         print(f"equivalente: {res.fiat_units} "
               f"{res.fiat_currency}")
     return 0
