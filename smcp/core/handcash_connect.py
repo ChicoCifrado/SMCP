@@ -298,9 +298,15 @@ class HandCashConnect:
             "handcash", auth_token)
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        # La marca: el mismo formato que ``new Date()
+        # .toISOString()`` del SDK (milisegundos,
+        # ``Z``) — la firma cubre la cadena tal
+        # cual, y el servidor la parsea como la
+        # del cliente oficial.
         self._now_iso = now_iso or (
             lambda: datetime.now(timezone.utc)
-            .isoformat())
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"))
         self._nonce = nonce or (
             lambda: secrets.token_hex(8))
 

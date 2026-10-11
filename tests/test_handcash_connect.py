@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -230,6 +231,18 @@ def test_la_clave_publica_es_la_de_la_cuenta() -> None:
         "")
     assert head["oauth-publickey"] == (
         con._key.public_key.hex())
+
+
+def test_la_marca_es_el_formato_del_sdk() -> None:
+    """La marca por defecto es la de
+    ``new Date().toISOString()``: milisegundos
+    y ``Z``, no el ``+00:00`` de Python."""
+    con = HandCashConnect(
+        "app", "secreto", TOKEN)
+    marca = con._now_iso()
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:"
+        r"\d{2}\.\d{3}Z", marca), marca
 
 
 # -------------------------------------------------------------- endpoints

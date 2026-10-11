@@ -500,6 +500,13 @@ def _pay_clear(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fmt_monto(monto: float) -> str:
+    """El monto sin ceros que no dicen nada
+    (0.00004821, no 4.821e-05 ni 0.000048210000)."""
+    txt = f"{monto:.8f}".rstrip("0").rstrip(".")
+    return txt or "0"
+
+
 def _pay_balance(args: argparse.Namespace) -> int:
     """Los saldos gastables de la billetera."""
     from smcp.core.handcash_connect import (
@@ -564,7 +571,8 @@ def _pay_send(args: argparse.Namespace) -> int:
             print(f"destino : {intent.recipient}")
             print(f"nota    : {nota}")
             print(f"monto   : {intent.sats} sats "
-                  f"→ {monto} {args.currency} "
+                  f"→ {_fmt_monto(monto)} "
+                  f"{args.currency} "
                   f"(tasa {tasa['rate']})")
             print("no se envió nada (dry-run)")
             return 0
