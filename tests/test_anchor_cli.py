@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -23,7 +24,7 @@ from smcp.core.bsv_keys import Secp256k1KeyPair
 from smcp.core.membership import InclusionProof, merkle_root
 
 TXID = "aa" * 32
-REPO = "/mnt/d/Hermes/DeLM/delm"
+REPO = str(Path(__file__).resolve().parent.parent)
 
 
 def _key() -> Secp256k1KeyPair:

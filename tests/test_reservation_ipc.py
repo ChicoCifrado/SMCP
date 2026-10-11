@@ -41,7 +41,7 @@ from smcp.core.reservation_ipc import (
     interprocess_available,
 )
 
-ROOT = Path("/mnt/d/Hermes/DeLM/delm")
+ROOT = Path(__file__).resolve().parent.parent
 
 
 # --------------------------------------------------------------------------
