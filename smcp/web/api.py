@@ -413,7 +413,16 @@ for _stored in RUN_STORE.history(MAX_HISTORY):
     MANAGER._history.append(_sess)
 
 
-def _push(session: RunSession, type_: str, **payload: Any) -> None:
+def _push(session: RunSession | MeshV3Session,
+           type_: str, **payload: Any) -> None:
+    """Append al log de eventos de la sesión.
+
+    Las dos sesiones (el pipeline y la demo de la
+    red v3) comparten el contrato: un log de
+    eventos que el SSE sirve. La unión es la
+    verdad — no hay una clase base común, y no
+    la hay porque son demos de dos cosas distintas.
+    """
     session.events.append({"type": type_, "ts": time.time(), **payload})
     if len(session.events) > 200:
         del session.events[: len(session.events) - 200]

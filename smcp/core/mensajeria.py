@@ -734,6 +734,11 @@ class JoinWire:
             return result
         # Mi mitad cerró y la del par no: envío
         # mi roster, que ya trae mi aval al par.
+        # El par no puede ser None aquí: este
+        # datagrama llegó de él (o el handshake
+        # lo inicié hacia él) — `_peer` se asignó
+        # en ambos caminos antes de llegar aquí.
+        assert self._peer is not None
         self._transport.send(
             self._peer, encode_roster(self._roster, self._keyring),
         )

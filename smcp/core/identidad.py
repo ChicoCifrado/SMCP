@@ -82,9 +82,18 @@ class PublicKeyed(Protocol):
     :class:`~smcp.core.join.PeerIdentity` también
     (la identidad de un par que llegó por el cable —
     su clave privada nunca viaja).
+
+    La declaración es **solo lectura** (property):
+    la verificación lee la clave, nunca la escribe.
+    Un miembro escribible no lo cumpliría
+    :class:`~smcp.core.join.PeerIdentity` — un
+    dataclass congelado cuyos atributos son
+    read-only — y un protocolo con miembros
+    mutables exige poder escribir a través de él.
     """
 
-    public_key: bytes
+    @property
+    def public_key(self) -> bytes: ...
 
 
 #: Longitud de un nonce de sesión (BRC-103 §6.2: 256

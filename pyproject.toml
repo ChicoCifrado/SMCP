@@ -91,7 +91,7 @@ Changelog = "https://github.com/ChicoCifrado/SMCP/blob/latest/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["delm*"]
+include = ["smcp*"]
 
 # Los estaticos de la web son datos de paquete, no codigo. Sin esto el wheel
 # instala `smcp-serve-web` pero no los .html/.css/.js que sirve, y la UI cae
@@ -199,7 +199,7 @@ ignore = [
     "E712",    # true-false-comparison: 1 (en un test)
     "E741",    # ambiguous-variable-name: 10 (`l`, `I`). Convencion heredada.
     "F401",    # unused-import: 34. Muchos son re-exports deliberados
-               # (`delm/__init__.py`) o el import que registra un side effect.
+               # (`smcp/__init__.py`) o el import que registra un side effect.
     "F541",    # f-string-missing-placeholders: 3
     "F841",    # unused-variable: 13
     "I001",    # unsorted-imports: 39
@@ -303,7 +303,7 @@ ban-relative-imports = "parents"
 # editor" en "rompe el CI".
 # ---------------------------------------------------------------------------
 [tool.pyright]
-include = ["delm"]
+include = ["smcp"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportMissingTypeStubs = false
@@ -335,13 +335,13 @@ reportPrivateImportUsage = false
 enableTypeIgnoreComments = true
 exclude = [
     "**/__pycache__",
-    "delm/core/harness_client.py",  # SDK externo sin stubs (opt-in)
+    "smcp/core/harness_client.py",  # SDK externo sin stubs (opt-in)
 ]
 
 [tool.coverage.run]
-source = ["delm"]
+source = ["smcp"]
 branch = false
-# `delm/demo/` se omite a proposito: son scripts ejecutables cuyo contrato es
+# `smcp/demo/` se omite a proposito: son scripts ejecutables cuyo contrato es
 # producir un informe en stdout, y el pipeline las ejercita como SUBPROCESO
 # (`smcp demo <n>`), no por import. Incluirlas baja la cifra sin medir nada
 # que no midiese ya el job `demos` del CI.
