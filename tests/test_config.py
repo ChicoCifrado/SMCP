@@ -191,7 +191,7 @@ def test_model_config_as_dict():
 def test_build_client_anthropic_provider():
     """provider="anthropic" devuelve el cliente de /v1/messages."""
     from smcp.core.llm import AnthropicMessagesClient, OpenAICompatibleClient
-    cfg = ModelConfig(model="claude-3-5-sonnet", base_url="http://x",
+    cfg = ModelConfig(model="any-model", base_url="http://x",
                       provider="anthropic")
     cli = build_client(cfg)
     assert isinstance(cli, AnthropicMessagesClient)

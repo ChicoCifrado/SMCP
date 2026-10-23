@@ -14,7 +14,7 @@
 
 - **Tesis:** "hablar con el agente, no reimplementarlo." OpenDesign detecta el CLI, le pasa *skill + prompt + working dir* y hace *stream* de su salida a la web UI.
 - **Un agente = un `RuntimeAgentDef`** (data spec, no clase). Añadir uno es **un archivo** en `apps/daemon/src/runtimes/defs/<cli>.ts` + registro en `registry.ts`. Sin engine edits, sin clase, sin `run()`.
-- **`streamFormat` soportados:** `acp-json-rpc`, `claude-stream-json`, `copilot-stream-json`, `dsh-profile-jsonl`, `json-event-stream`, `pi-rpc`, `plain`, `qoder-stream-json`.
+- **`streamFormat` soportados:** `acp-json-rpc`, `copilot-stream-json`, `dsh-profile-jsonl`, `json-event-stream`, `pi-rpc`, `plain`, `qoder-stream-json`.
 - **Precedente real:** `hermes.ts` ya existe. Conecta vía **ACP** (`hermes acp --accept-hooks` para enumerar modelos). Es el patrón a clonar para SMCP.
 - **BYOK:** OpenDesign acepta *cualquier* endpoint OpenAI-compatible como provider de modelo (BYOK).
 

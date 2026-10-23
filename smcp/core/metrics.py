@@ -60,7 +60,7 @@ DEFAULT_PRICING: dict[str, ModelPricing] = {
     "gemini-3-flash":        ModelPricing(0.10, 0.40),
     "gpt-4o-mini":           ModelPricing(0.15, 0.60),
     "gpt-4o":                ModelPricing(2.50, 10.00),
-    "claude-sonnet-4":       ModelPricing(3.00, 15.00),
+    "gpt-4":               ModelPricing(3.00, 15.00),
     "fake":                  ModelPricing(0.0, 0.0),
 }
 
