@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import dataclasses
 import hashlib
+import hmac
 import json
 import secrets
 import threading
@@ -1672,25 +1673,108 @@ def _reservation_book(led: Any, mesh_id: str) -> Any:
     return book
 
 
-def _superadmin_token() -> str | None:
-    """Token secreto para el panel de superadmin (env SMCP_SUPERADMIN_TOKEN)."""
-    return os.environ.get("SMCP_SUPERADMIN_TOKEN") or None
+def _superadmin_pubkey() -> bytes | None:
+    """Clave publica ed25519 del owner (hex). Env SMCP_SUPERADMIN_PUBKEY."""
+    raw = os.environ.get("SMCP_SUPERADMIN_PUBKEY")
+    if not raw:
+        return None
+    try:
+        return bytes.fromhex(raw.strip())
+    except ValueError:
+        return None
 
 
-def _check_superadmin(token: str | None) -> None:
-    expected = _superadmin_token()
-    if expected is None:
-        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_TOKEN")
-    if token != expected:
-        raise HTTPException(status_code=401, detail="invalid superadmin token")
+def _session_secret() -> bytes | None:
+    pk = _superadmin_pubkey()
+    if pk is None:
+        return None
+    return hashlib.sha256(pk).digest()
+
+
+_SUPERADMIN_CHALLENGES: dict[str, float] = {}
+_CHALLENGE_TTL = 60.0
+_SESSION_TTL = 3600.0
+
+
+def _issue_session_token() -> str:
+    secret = _session_secret()
+    if secret is None:
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+    exp = int(time.time()) + int(_SESSION_TTL)
+    msg = str(exp).encode()
+    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return f"{exp}.{sig}"
+
+
+def _verify_session_token(token: str | None) -> None:
+    secret = _session_secret()
+    if secret is None:
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+    if not token:
+        raise HTTPException(status_code=401, detail="missing session token")
+    try:
+        exp_str, sig = token.split(".", 1)
+        exp = int(exp_str)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=401, detail="malformed session token") from None
+    if exp < time.time():
+        raise HTTPException(status_code=401, detail="session token expired")
+    expected = hmac.new(secret, exp_str.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        raise HTTPException(status_code=401, detail="invalid session token")
+
+
+def _cleanup_challenges() -> None:
+    now = time.time()
+    expired = [c for c, t in _SUPERADMIN_CHALLENGES.items() if now - t > _CHALLENGE_TTL]
+    for c in expired:
+        del _SUPERADMIN_CHALLENGES[c]
+class SuperadminAuthBody(BaseModel):
+    challenge: str = Field(min_length=1, max_length=128)
+    signature: str = Field(min_length=1, max_length=256)
+
+
+@router.get("/superadmin/challenge")
+def get_superadmin_challenge() -> dict[str, Any]:
+    """Genera un challenge (nonce) para autenticacion por firma ed25519."""
+    if _superadmin_pubkey() is None:
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+    _cleanup_challenges()
+    nonce = secrets.token_hex(32)
+    _SUPERADMIN_CHALLENGES[nonce] = time.time()
+    return {"challenge": nonce}
+
+
+@router.post("/superadmin/auth")
+def post_superadmin_auth(body: SuperadminAuthBody) -> dict[str, Any]:
+    """Verifica la firma ed25519 del challenge y emite un token de sesion."""
+    pk = _superadmin_pubkey()
+    if pk is None:
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+    _cleanup_challenges()
+    issued = _SUPERADMIN_CHALLENGES.get(body.challenge)
+    if issued is None or time.time() - issued > _CHALLENGE_TTL:
+        raise HTTPException(status_code=401, detail="challenge expired or unknown")
+    # verificar firma
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        pub = Ed25519PublicKey.from_public_bytes(pk)
+        pub.verify(bytes.fromhex(body.signature), body.challenge.encode())
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=401, detail="invalid signature") from None
+    del _SUPERADMIN_CHALLENGES[body.challenge]
+    token = _issue_session_token()
+    return {"token": token, "expires_in": int(_SESSION_TTL)}
+
+
 @router.get("/superadmin/nodes")
 def get_superadmin_nodes(
     mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
-    token: str | None = Query(default=None),
-    x_superadmin_token: str | None = Header(default=None, alias="X-Superadmin-Token"),
+    session: str | None = Query(default=None),
+    x_superadmin_session: str | None = Header(default=None, alias="X-Superadmin-Session"),
 ) -> dict[str, Any]:
     """Superadmin: lista de nodos activos con info basica de cada nodo SMCP."""
-    _check_superadmin(token or x_superadmin_token)
+    _verify_session_token(session or x_superadmin_session)
     view = _mesh_view(_load_mesh(mesh_id), mesh_id, DEFAULT_MESH_ENDPOINT)
     nodes = []
     for p in view.get("peers", []):

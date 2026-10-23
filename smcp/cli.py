@@ -1599,6 +1599,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_st_top.add_argument("--config", default=None)
     p_st_top.set_defaults(func=_cmd_status)
 
+    # --- superadmin (token de sesion por firma ed25519)
+    p_sa = sub.add_parser("superadmin", help="obtiene token de sesion de superadmin (firma ed25519)")
+    p_sa.add_argument("action", nargs="?", default="token", choices=["token"], help="accion (default: token)")
+    p_sa.add_argument("--url", default="http://127.0.0.1:8000", help="URL del servidor SMCP")
+    p_sa.add_argument("--identity", default=None, help="ruta a la identidad ed25519 del owner")
+    p_sa.set_defaults(func=_superadmin_token_cmd)
+
     # --- onboarding
     p_onb = sub.add_parser("onboarding", help="onboarding interactivo (genera claves)")
     p_onb.set_defaults(func=_cmd_onboarding)
@@ -1651,6 +1658,43 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(f"model   : {cfg.model or '(unset)'}")
     print(f"base_url: {cfg.base_url or '(unset)'}")
     return rc
+
+
+def _superadmin_token_cmd(args: argparse.Namespace) -> int:
+    """Obtiene un token de sesion de superadmin firmando un challenge."""
+    import json as _json
+    import urllib.request
+
+    url = getattr(args, "url", None) or "http://127.0.0.1:8000"
+    url = url.rstrip("/")
+    identity = getattr(args, "identity", None)
+    if identity is None:
+        from smcp.core.contrib import default_identity_path
+        identity = str(default_identity_path())
+    from smcp.core.provenance import KeyPair
+    key = KeyPair.load(identity)
+
+    # 1. challenge
+    with urllib.request.urlopen(f"{url}/api/superadmin/challenge") as resp:
+        ch = _json.loads(resp.read())
+    challenge = ch["challenge"]
+
+    # 2. firmar
+    sig = key.sign(challenge)
+    sig_hex = sig.hex()
+
+    # 3. auth
+    data = _json.dumps({"challenge": challenge, "signature": sig_hex}).encode()
+    req = urllib.request.Request(
+        f"{url}/api/superadmin/auth",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        auth = _json.loads(resp.read())
+    print(auth["token"])
+    return 0
 
 
 def _cmd_tui(args: argparse.Namespace) -> int:
