@@ -1640,7 +1640,8 @@ def _mesh_view(led: Any, mesh_id: str, endpoint: str) -> dict[str, Any]:
              # Historial, no saldo: se cuenta, no se gasta.
              "inferences_served": p.inferences_served,
              "satoshis_earned": p.satoshis_earned,
-             "rejections": p.rejections}
+             "rejections": p.rejections,
+             "endpoint": p.endpoint}
             for p in peers],
     }
 
@@ -1788,6 +1789,7 @@ def get_superadmin_nodes(
             "backend": p.get("backend", ""),
             "seconds_observed": p.get("seconds_observed", 0),
             "rejections": p.get("rejections", 0),
+            "endpoint": p.get("endpoint", ""),
         })
     return {
         "mesh_id": mesh_id,

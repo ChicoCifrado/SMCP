@@ -470,6 +470,8 @@ class PeerContribution:
     ram_gb: float = 0.0
     cpu_cores: int = 0
     backend: str = ""
+    #: endpoint de inferencia OpenAI-compatible del nodo (local)
+    endpoint: str = ""
     public_key: bytes = b""
     sig_kind: str = ""
     admitted_at: float = 0.0
@@ -534,6 +536,7 @@ class PeerContribution:
                 "vram_shared_gb": self.vram_shared_gb,
                 "ram_gb": self.ram_gb, "cpu_cores": self.cpu_cores,
                 "backend": self.backend,
+                "endpoint": self.endpoint,
                 "public_key": self.public_key.hex(), "sig_kind": self.sig_kind,
                 "admitted_at": self.admitted_at, "last_seen": self.last_seen,
                 "seconds_observed": self.seconds_observed,
@@ -561,6 +564,7 @@ class PeerContribution:
                    ram_gb=float(d.get("ram_gb", 0.0) or 0.0),
                    cpu_cores=int(d.get("cpu_cores", 0) or 0),
                    backend=str(d.get("backend", "")),
+                   endpoint=str(d.get("endpoint", "")),
                    public_key=_b("public_key"), sig_kind=str(d.get("sig_kind", "")),
                    admitted_at=float(d.get("admitted_at", 0.0) or 0.0),
                    last_seen=float(d.get("last_seen", 0.0) or 0.0),
