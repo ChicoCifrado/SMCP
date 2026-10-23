@@ -1671,6 +1671,32 @@ def _reservation_book(led: Any, mesh_id: str) -> Any:
     return book
 
 
+@router.get("/superadmin/nodes")
+def get_superadmin_nodes(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80)) -> dict[str, Any]:
+    """Superadmin: lista de nodos activos con info basica de cada nodo SMCP."""
+    view = _mesh_view(_load_mesh(mesh_id), mesh_id, DEFAULT_MESH_ENDPOINT)
+    nodes = []
+    for p in view.get("peers", []):
+        nodes.append({
+            "peer_id": p.get("peer_id"),
+            "vram_gb": p.get("vram_gb", 0),
+            "vram_advertised_gb": p.get("vram_advertised_gb", 0),
+            "alive": p.get("alive", False),
+            "inferences_served": p.get("inferences_served", 0),
+            "satoshis_earned": p.get("satoshis_earned", 0),
+            "backend": p.get("backend", ""),
+            "seconds_observed": p.get("seconds_observed", 0),
+            "rejections": p.get("rejections", 0),
+        })
+    return {
+        "mesh_id": mesh_id,
+        "chain_entries": view.get("chain_entries", 0),
+        "chain_ok": view.get("chain_ok", False),
+        "vram_verified_gb": view.get("vram_verified_gb", 0),
+        "vram_declared_gb": view.get("vram_declared_gb", 0),
+        "nodes": nodes,
+        "node_count": len(nodes),
+    }
 @router.get("/mesh")
 def get_mesh(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
              endpoint: str = Query(default=DEFAULT_MESH_ENDPOINT, max_length=200),

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SMCP — Superadmin: Nodos activos</title>
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="topbar">
+      <div class="brand"><span class="mark" role="img" aria-label="SMCP"></span></div>
+      <nav class="topnav">
+        <a href="index.html">Inicio</a>
+        <a href="malla.html">Malla</a>
+        <a href="superadmin.html" aria-current="page">Superadmin</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="hero">
+        <h1>Superadmin — Nodos activos</h1>
+        <p class="sub">Vista consolidada de todos los nodos SMCP activos en la malla.</p>
+      </section>
+
+      <section class="card">
+        <h2>Resumen de la malla</h2>
+        <div id="summary" class="grid-3">
+          <div class="stat"><span class="label">Nodos</span><span class="value" id="node_count">—</span></div>
+          <div class="stat"><span class="label">VRAM verificada</span><span class="value" id="vram_verified">—</span></div>
+          <div class="stat"><span class="label">Cadena</span><span class="value" id="chain">—</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Nodos</h2>
+        <table id="nodes" class="table">
+          <thead>
+            <tr>
+              <th>Peer ID</th>
+              <th>VRAM (G)</th>
+              <th>Ofrece (G)</th>
+              <th>Vivo</th>
+              <th>Inferencias</th>
+              <th>Sats</th>
+              <th>Backend</th>
+              <th>Observado (s)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    async function refresh() {
+      try {
+        const r = await fetch("/api/superadmin/nodes");
+        const d = await r.json();
+        document.getElementById("node_count").textContent = d.node_count;
+        document.getElementById("vram_verified").textContent = d.vram_verified_gb.toFixed(1) + "G";
+        document.getElementById("chain").textContent = d.chain_entries + " entradas · " + (d.chain_ok ? "íntegra" : "ALTERADA");
+        const tbody = document.querySelector("#nodes tbody");
+        tbody.innerHTML = "";
+        for (const n of d.nodes) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${n.peer_id}</td>
+            <td>${n.vram_gb.toFixed(1)}</td>
+            <td>${n.vram_advertised_gb.toFixed(1)}</td>
+            <td>${n.alive ? "sí" : "NO"}</td>
+            <td>${n.inferences_served}</td>
+            <td>${n.satoshis_earned}</td>
+            <td>${n.backend}</td>
+            <td>${Math.round(n.seconds_observed)}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+      } catch (e) {
+        console.error("refresh error", e);
+      }
+    }
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
