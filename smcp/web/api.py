@@ -14,10 +14,11 @@ import secrets
 import threading
 import time
 import uuid
+import os
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -1671,9 +1672,25 @@ def _reservation_book(led: Any, mesh_id: str) -> Any:
     return book
 
 
+def _superadmin_token() -> str | None:
+    """Token secreto para el panel de superadmin (env SMCP_SUPERADMIN_TOKEN)."""
+    return os.environ.get("SMCP_SUPERADMIN_TOKEN") or None
+
+
+def _check_superadmin(token: str | None) -> None:
+    expected = _superadmin_token()
+    if expected is None:
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_TOKEN")
+    if token != expected:
+        raise HTTPException(status_code=401, detail="invalid superadmin token")
 @router.get("/superadmin/nodes")
-def get_superadmin_nodes(mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80)) -> dict[str, Any]:
+def get_superadmin_nodes(
+    mesh_id: str = Query(default=DEFAULT_MESH_ID, max_length=80),
+    token: str | None = Query(default=None),
+    x_superadmin_token: str | None = Header(default=None, alias="X-Superadmin-Token"),
+) -> dict[str, Any]:
     """Superadmin: lista de nodos activos con info basica de cada nodo SMCP."""
+    _check_superadmin(token or x_superadmin_token)
     view = _mesh_view(_load_mesh(mesh_id), mesh_id, DEFAULT_MESH_ENDPOINT)
     nodes = []
     for p in view.get("peers", []):

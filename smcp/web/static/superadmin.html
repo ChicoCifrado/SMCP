@@ -56,9 +56,24 @@
   </main>
 
   <script>
+    function getToken() {
+      let t = localStorage.getItem("smcp_superadmin_token");
+      if (!t) {
+        t = prompt("Token de superadmin (SMCP_SUPERADMIN_TOKEN):");
+        if (t) localStorage.setItem("smcp_superadmin_token", t);
+      }
+      return t;
+    }
     async function refresh() {
+      const token = getToken();
+      if (!token) return;
       try {
-        const r = await fetch("/api/superadmin/nodes");
+        const r = await fetch("/api/superadmin/nodes?token=" + encodeURIComponent(token));
+        if (r.status === 401 || r.status === 403) {
+          localStorage.removeItem("smcp_superadmin_token");
+          alert("Token inválido o superadmin deshabilitado.");
+          return;
+        }
         const d = await r.json();
         document.getElementById("node_count").textContent = d.node_count;
         document.getElementById("vram_verified").textContent = d.vram_verified_gb.toFixed(1) + "G";
