@@ -1,0 +1,6 @@
+{
+  "author_id": "nodo-ejemplo",
+  "kind": "ed25519",
+  "private_key": "REEMPLAZA_CON_TU_CLAVE_PRIVADA (genera con: smcp mesh contribute)",
+  "public_key": "REEMPLAZA_CON_TU_CLAVE_PUBLICA"
+}

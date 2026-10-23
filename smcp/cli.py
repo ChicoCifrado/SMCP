@@ -393,6 +393,8 @@ def _cmd_mesh(args: argparse.Namespace) -> int:
     action = args.mesh_command or "status"
     if action == "status":
         return _mesh_status(args)
+    if action == "join":
+        return _mesh_join(args)
     if action == "contribute":
         return _mesh_contribute(args)
     if action == "observe":
@@ -683,6 +685,45 @@ def _cmd_pay(args: argparse.Namespace) -> int:
     if action == "wallet":
         return _pay_wallet(args)
     return 2
+
+
+def _mesh_join(args: argparse.Namespace) -> int:
+    """Onboarding interactivo: genera identidad y contribuye capacidad."""
+    from smcp.core.contrib import default_identity_path, default_state_path
+    from smcp.core.provenance import KeyPair
+
+    peer_id = getattr(args, "peer_id", None) or input("Peer ID (default: local): ").strip() or "local"
+    vram_str = getattr(args, "vram_gb", None)
+    if vram_str is None:
+        vram_str = input("VRAM física (GB, default: 0): ").strip() or "0"
+    try:
+        vram_gb = float(vram_str)
+    except ValueError:
+        vram_gb = 0.0
+
+    ident_path = default_identity_path()
+    if not ident_path.exists():
+        key = KeyPair.new(peer_id, "ed25519")
+        ident_path.parent.mkdir(parents=True, exist_ok=True)
+        key.save(str(ident_path))
+        print(f"identidad creada: {ident_path}")
+    else:
+        print(f"identidad existente: {ident_path}")
+
+    # delegar a contribute con args sintéticos
+    args.peer_id = peer_id
+    args.vram_gb = vram_gb
+    args.vram_advertised_gb = getattr(args, "vram_advertised_gb", None)
+    args.ram_gb = getattr(args, "ram_gb", 0.0)
+    args.cpu_cores = getattr(args, "cpu_cores", 0)
+    args.backend = getattr(args, "backend", "cuda")
+    args.ttl = getattr(args, "ttl", 86400.0)
+    args.challenge_ttl = getattr(args, "challenge_ttl", 300.0)
+    args.identity = str(ident_path)
+    args.state = getattr(args, "state", None)
+    args.mesh_id = getattr(args, "mesh_id", "smcp-local")
+    args.endpoint = getattr(args, "endpoint", "http://127.0.0.1:9337/v1")
+    return _mesh_contribute(args)
 
 
 def _mesh_status(args: argparse.Namespace) -> int:
@@ -1326,6 +1367,19 @@ def build_parser() -> argparse.ArgumentParser:
                         help="endpoint OpenAI-compatible de la malla "
                              f"(default: {DEFAULT_MESH_ENDPOINT})")
 
+    m_jn = msub.add_parser("join", help="onboarding interactivo: genera identidad y contribuye")
+    _mesh_common(m_jn)
+    m_jn.add_argument("--peer-id", default=None, help="identidad del nodo")
+    m_jn.add_argument("--vram-gb", type=float, default=None,
+                      help="VRAM física total del nodo")
+    m_jn.add_argument("--vram-advertised-gb", type=float, default=None)
+    m_jn.add_argument("--ram-gb", type=float, default=0.0)
+    m_jn.add_argument("--cpu-cores", type=int, default=0)
+    m_jn.add_argument("--backend", default="cuda")
+    m_jn.add_argument("--ttl", type=float, default=86400.0)
+    m_jn.add_argument("--challenge-ttl", type=float, default=300.0)
+    m_jn.set_defaults(func=_cmd_mesh)
+
     m_st = msub.add_parser("status", help="quién contribuye y cuánto tiene "
                                           "de crédito (default)")
     _mesh_common(m_st)
@@ -1537,6 +1591,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver = sub.add_parser("version", help="muestra la version")
     p_ver.set_defaults(func=_cmd_version)
 
+    # --- status
+    p_st_top = sub.add_parser("status", help="estado resumido del nodo")
+    p_st_top.add_argument("--mesh-id", default="smcp-local")
+    p_st_top.add_argument("--state", default=None)
+    p_st_top.add_argument("--endpoint", default="http://127.0.0.1:9337/v1")
+    p_st_top.add_argument("--config", default=None)
+    p_st_top.set_defaults(func=_cmd_status)
+
+    # --- onboarding
+    p_onb = sub.add_parser("onboarding", help="onboarding interactivo (genera claves)")
+    p_onb.set_defaults(func=_cmd_onboarding)
+
     # --- tui (dashboard interactivo, Textual opcional)
     p_tui = sub.add_parser("tui", help="dashboard TUI interactivo (requiere smcp[tui])")
     p_tui.add_argument("--onboarding", action="store_true",
@@ -1561,6 +1627,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_gates.set_defaults(func=_cmd_gates)
 
     return ap
+
+
+def _cmd_onboarding(args: argparse.Namespace) -> int:
+    """Lanza el onboarding TUI (genera claves, configura el nodo)."""
+    from smcp.tui import run_onboarding
+    return run_onboarding()
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    """Estado resumido del nodo (mesh + config)."""
+    # mesh status
+    from argparse import Namespace
+    margs = Namespace(mesh_command="status", mesh_id=getattr(args, "mesh_id", "smcp-local"),
+                      state=getattr(args, "state", None), endpoint=getattr(args, "endpoint", "http://127.0.0.1:9337/v1"))
+    rc = _mesh_status(margs)
+    # config
+    print()
+    from smcp.config import load_config, DEFAULT_CONFIG_PATH
+    cfg_path = getattr(args, "config", None) or (str(DEFAULT_CONFIG_PATH) if DEFAULT_CONFIG_PATH.exists() else None)
+    cfg = load_config(cfg_path)
+    print("=== config ===")
+    print(f"model   : {cfg.model or '(unset)'}")
+    print(f"base_url: {cfg.base_url or '(unset)'}")
+    return rc
 
 
 def _cmd_tui(args: argparse.Namespace) -> int:
