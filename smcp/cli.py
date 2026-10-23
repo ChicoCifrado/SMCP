@@ -1537,6 +1537,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver = sub.add_parser("version", help="muestra la version")
     p_ver.set_defaults(func=_cmd_version)
 
+    # --- tui (dashboard interactivo, Textual opcional)
+    p_tui = sub.add_parser("tui", help="dashboard TUI interactivo (requiere smcp[tui])")
+    p_tui.add_argument("--onboarding", action="store_true",
+                       help="flujo de onboarding interactivo en vez del dashboard")
+    p_tui.set_defaults(func=_cmd_tui)
+
     # --- gates
     p_gates = sub.add_parser(
         "gates",
@@ -1555,6 +1561,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_gates.set_defaults(func=_cmd_gates)
 
     return ap
+
+
+def _cmd_tui(args: argparse.Namespace) -> int:
+    """Lanza el dashboard TUI (Textual, dependencia opcional)."""
+    from smcp.tui import run_dashboard, run_onboarding
+    if getattr(args, "onboarding", False):
+        return run_onboarding()
+    return run_dashboard()
 
 
 def _cmd_gates(args: argparse.Namespace) -> int:

@@ -36,7 +36,7 @@
   - [ ] reconexion, particiones, revivir nodos caidos
   - [ ] gates de seguridad bajo inyeccion adversaria
 - [ ] **Property-based tests** para admission/verify
-- [ ] **Benchmark multi-nodo** documentado (tok/s por nodo)
+- [x] **Benchmark multi-nodo** documentado (tok/s por nodo) — ver docs/benchmark-multi-node.md
 
 ## 2. HCI
 
@@ -52,12 +52,13 @@
 
 ## 3. Eliminar codigo que no se usa
 
-- [ ] **Auditoria de modulos** (`delm/core/`, 61 modulos)
-  - [ ] todos tienen referencias; revisar los de pocas refs:
-    - `mesh_pipeline.py` (1 ref) — ¿se usa o es alternativa a `pipeline.py`?
-    - `multi_node_bench.py`, `benchmark.py` — consolidar
-    - `hci.py` (2 refs) — ¿es la HCI actual o hay que reescribirla (punto 2)?
-    - `mdns.py`, `mesh_network.py`, `wiring.py`, `run_store.py`, `expansion.py`
+- [x] **Auditoria de modulos** (`smcp/core/`, 61 modulos)
+  - [x] todos tienen referencias; revisar los de pocas refs:
+    - `mesh_pipeline.py` (1 ref) — se mantiene: feature activa (mesh pipeline), cubierto por tests
+    - `multi_node_bench.py`, `benchmark.py` — consolidados en `scripts/run_multi_node_bench.py`
+    - `hci.py` (2 refs) — se mantiene: usado por RSI demo y tests
+    - `mdns.py`, `mesh_network.py`, `wiring.py`, `run_store.py`, `expansion.py` — se mantienen: features activas
+  - [x] Candidatos a dead code documentados en issue #23 (17 funciones sin callers internos; mayoria API publica)
   - [ ] demoscritas (`delm/demo/run_*_demo.py`) — ¿mantener o quitar?
 - [ ] **Dependencias no usadas** en `pyproject.toml` / `package.json`
 - [ ] **Codigo duplicado**: `injection.py` vs `injection_hardened.py`
