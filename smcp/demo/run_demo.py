@@ -1,6 +1,6 @@
 """End-to-end DELM demo.
 
-Drives the *public* :class:`DelmPipeline` — task queue, parallel workers,
+Drives the *public* :class:`SmcpPipeline` — task queue, parallel workers,
 admission verification, shared context, selective unfolding, finalize — using
 a deterministic :class:`FakeLLMClient`, so it needs no API key and is fully
 reproducible. This is the proof that the framework is wired end to end.
@@ -74,7 +74,7 @@ async def run(toy: ToyProblem | None = None, workers: int = 4,
               verbose: bool = True) -> dict:
     from smcp.core.llm import FakeLLMClient
     from smcp.core.task_queue import Task
-    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.pipeline import SmcpPipeline
 
     toy = toy or _toy()
     transcripts = _transcripts(toy)
@@ -95,7 +95,7 @@ async def run(toy: ToyProblem | None = None, workers: int = 4,
     async def reason(task: Task) -> str:
         return transcripts[task.label]
 
-    pipeline = DelmPipeline(llm=llm, n_workers=workers)
+    pipeline = SmcpPipeline(llm=llm, n_workers=workers)
     outcome = await pipeline.run(
         tasks, reason=reason, yield_between=True
     )

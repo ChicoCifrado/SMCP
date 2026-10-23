@@ -17,7 +17,7 @@ from smcp.core.admission import AdmissionPipeline
 from smcp.core.verifier import RuleVerifier, VerifyResult
 from smcp.core.unfolding import Unfolding
 from smcp.core.llm import FakeLLMClient
-from smcp.core.pipeline import DelmPipeline
+from smcp.core.pipeline import SmcpPipeline
 from smcp.demo.run_demo import run as demo_run
 from conftest import toy_units
 
@@ -201,7 +201,7 @@ def test_unfolding_neighbors():
 
 # ------------------------------------------------------------ full pipeline
 def test_end_to_end_pipeline_runs():
-    """The public DelmPipeline drives queue -> workers -> admit -> finalize."""
+    """The public SmcpPipeline drives queue -> workers -> admit -> finalize."""
     from smcp.core.llm import FakeLLMClient
     from smcp.core.task_queue import Task
 
@@ -211,7 +211,7 @@ def test_end_to_end_pipeline_runs():
         return toy[task.label]
 
     async def go():
-        pipe = DelmPipeline(llm=FakeLLMClient(), n_workers=4)
+        pipe = SmcpPipeline(llm=FakeLLMClient(), n_workers=4)
         tasks = [Task(label=lbl, body=f"inspect {lbl}", kind="solve")
                  for lbl in toy]
         return await pipe.run(tasks, reason=reason, yield_between=True)

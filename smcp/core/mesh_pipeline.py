@@ -1,6 +1,6 @@
-"""Pipeline sobre la malla (capa 3) — ``DelmPipeline`` corriendo sobre la malla.
+"""Pipeline sobre la malla (capa 3) — ``SmcpPipeline`` corriendo sobre la malla.
 
-La diferencia con :class:`~smcp.core.pipeline.DelmPipeline` es el **camino del
+La diferencia con :class:`~smcp.core.pipeline.SmcpPipeline` es el **camino del
 gist**: aquí cada worker no escribe en un ``ctx`` global, sino que **publica el
 gist por la malla** (firma + envía a los demás nodos) y lo admite en el
 ``SecureSharedContext`` **de su propio nodo**. Al drenarse la malla, todos los
@@ -71,7 +71,7 @@ class MeshPipeline:
     nodo y **publica el gist por la malla**. Al final, drena la malla y
     finaliza leyendo de la malla.
 
-    Es el mismo contrato que :class:`~smcp.core.pipeline.DelmPipeline`
+    Es el mismo contrato que :class:`~smcp.core.pipeline.SmcpPipeline`
     (``run(initial_tasks)``), pero el gist viaja por la malla.
     """
 

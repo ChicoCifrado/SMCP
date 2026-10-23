@@ -80,6 +80,11 @@ class ModelSpec:
     fit_level: str = ""
     estimated_tps: float | None = None
     endpoint_hint: str = ""      # per-model serving hint, if the caller has one
+    # MoE metadata (0 = not a MoE / unknown)
+    n_expert: int = 0
+    n_expert_used: int = 0
+    hidden_in: int = 0
+    hidden_out: int = 0
 
     @classmethod
     def from_fit_row(cls, row: Any, *, name: str = "") -> "ModelSpec":
@@ -95,6 +100,10 @@ class ModelSpec:
             quant=getattr(row, "best_quant", "") or "",
             fit_level=getattr(row, "fit_level", "") or "",
             estimated_tps=getattr(row, "estimated_tps", None),
+            n_expert=int(getattr(row, "n_expert", 0) or 0),
+            n_expert_used=int(getattr(row, "n_expert_used", 0) or 0),
+            hidden_in=int(getattr(row, "hidden_in", 0) or 0),
+            hidden_out=int(getattr(row, "hidden_out", 0) or 0),
         )
 
     @classmethod
@@ -106,13 +115,21 @@ class ModelSpec:
                    fit_level=str(d.get("fit_level", "")),
                    estimated_tps=(float(d["estimated_tps"])
                                   if d.get("estimated_tps") is not None else None),
-                   endpoint_hint=str(d.get("endpoint_hint", "")))
+                   endpoint_hint=str(d.get("endpoint_hint", "")),
+               n_expert=int(d.get("n_expert", 0) or 0),
+               n_expert_used=int(d.get("n_expert_used", 0) or 0),
+               hidden_in=int(d.get("hidden_in", 0) or 0),
+               hidden_out=int(d.get("hidden_out", 0) or 0))
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "memory_required_gb": self.memory_required_gb,
                 "n_layers": self.n_layers, "quant": self.quant,
                 "fit_level": self.fit_level, "estimated_tps": self.estimated_tps,
-                "endpoint_hint": self.endpoint_hint}
+                "endpoint_hint": self.endpoint_hint,
+                "n_expert": self.n_expert,
+                "n_expert_used": self.n_expert_used,
+                "hidden_in": self.hidden_in,
+                "hidden_out": self.hidden_out}
 
 
 @dataclass(frozen=True)
@@ -252,6 +269,10 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
                    require_provider: bool = True,
                    observed_only: bool = True,
                    endpoint: str | None = None,
+                   sharding_strategy=None,
+                   latency_ms: float = 0.0,
+                   dtype=None,
+                   redundancy: int = 0,
                    ) -> PlacementPlan:
     """Decide how *spec* is split across the mesh's admitted capacity.
 
@@ -434,10 +455,48 @@ def plan_placement(spec: ModelSpec, ledger: ContributionLedger, *,
     if blocked:
         _ok_notes.append("nodos excluidos por falta de crédito: " + ", ".join(blocked))
 
+    # Sharding strategy for MoE models (opt-in): if the spec carries MoE
+    # metadata, recommend + plan a sharding strategy and attach it to the
+    # plan's detail so the operator can act on it.
+    _sharding_detail: dict[str, Any] = {}
+    if spec.n_expert > 0:
+        try:
+            from smcp.core.sharding import (
+                ShardingStrategy, plan_sharding, recommend_strategy,
+            )
+            strat = sharding_strategy
+            if strat is None:
+                strat = recommend_strategy(
+                    n_peers=len(stages),
+                    batch_size=1,
+                    latency_ms=latency_ms,
+                    n_expert=spec.n_expert,
+                )
+            else:
+                # accept string or enum
+                strat = ShardingStrategy(strat)
+            shard_plan = plan_sharding(
+                spec.name, [s.peer_id for s in stages],
+                strategy=strat,
+                n_expert=spec.n_expert,
+                n_expert_used=spec.n_expert_used,
+                hidden_in=spec.hidden_in,
+                hidden_out=spec.hidden_out,
+                dtype=dtype if dtype is not None else "fp32",
+                redundancy=redundancy,
+            )
+            _sharding_detail = shard_plan.to_dict()
+            _ok_notes.append(
+                f"sharding: {strat.value} ({shard_plan.n_peers} peer(s), "
+                f"comm={shard_plan.total_comm_bytes} B).")
+        except Exception as exc:  # pragma: no cover - defensive
+            _ok_notes.append(f"sharding: no se pudo planear ({exc}).")
+
     return PlacementPlan(ok=True, reason=PlanReject.OK.value,
                          stages=tuple(stages),
                          single_node=len(stages) == 1, notes=tuple(_ok_notes),
-                         detail={"blocked": blocked}, **base)
+                         detail={"blocked": blocked, "sharding": _sharding_detail},
+                         **base)
 
 
 def plan_from_dict(d: dict[str, Any]) -> PlacementPlan:

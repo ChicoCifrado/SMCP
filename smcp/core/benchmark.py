@@ -33,7 +33,7 @@ from typing import Any
 
 from smcp.core.llm import LLMClient
 from smcp.core.metrics import MetricsTracker, TaskMetrics
-from smcp.core.pipeline import DelmPipeline
+from smcp.core.pipeline import SmcpPipeline
 from smcp.core.task_queue import Task
 
 
@@ -78,7 +78,7 @@ async def run_point(
 ) -> BenchmarkPoint:
     """Ejecuta ``tasks`` tareas con ``workers`` nodos y mide."""
     tracker = MetricsTracker()
-    pipe = DelmPipeline(llm=llm, n_workers=workers, metrics=tracker)
+    pipe = SmcpPipeline(llm=llm, n_workers=workers, metrics=tracker)
     task_list = [
         Task(label=f"t-{i:03d}", body=body, kind="solve", deps=[])
         for i in range(tasks)

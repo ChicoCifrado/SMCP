@@ -180,17 +180,17 @@ def test_ledger_records_rejections():
 
 
 # -------------------------------------------------------- pipeline wiring
-# These lock in that DelmPipeline *actually* routes through the secure
+# These lock in that SmcpPipeline *actually* routes through the secure
 # context (so the layer can't be silently disabled) and that every admitted
 # gist carries a valid signature under its author.
 def test_pipeline_uses_secure_context_and_signs():
     import asyncio
-    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.pipeline import SmcpPipeline
     from smcp.core.llm import FakeLLMClient
     from smcp.core.task_queue import Task
 
     llm = FakeLLMClient()
-    pipe = DelmPipeline(llm=llm, n_workers=2)
+    pipe = SmcpPipeline(llm=llm, n_workers=2)
     assert isinstance(pipe.ctx, SecureSharedContext)
     tasks = [Task(label="t1", body="b", kind="solve"),
              Task(label="t2", body="b", kind="solve")]
@@ -214,12 +214,12 @@ def test_pipeline_uses_secure_context_and_signs():
 
 def test_pipeline_rejects_forged_signature():
     import asyncio
-    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.pipeline import SmcpPipeline
     from smcp.core.llm import FakeLLMClient
     from smcp.core.task_queue import Task
 
     llm = FakeLLMClient()
-    pipe = DelmPipeline(llm=llm, n_workers=1)
+    pipe = SmcpPipeline(llm=llm, n_workers=1)
 
     async def reason(t):
         return f"solved {t.label}"

@@ -455,7 +455,7 @@ determinista** que se puede loguear y comparar entre observadores.
   (determinista, sin red) demuestra todo el pipeline sin coste;
   `OpenAICompatibleClient` lo corre contra cualquier endpoint OpenAI-compatible
   (OpenRouter, un proveedor directo, un servidor local).
-- **Pipeline (`Worker` / `DelmPipeline`)** — el bucle descentralizado. N workers
+- **Pipeline (`Worker` / `SmcpPipeline`)** — el bucle descentralizado. N workers
   corren en paralelo sobre la cola compartida; cada uno reclamar, leer, razonar
   y admitir. Al agotarse la cola, el último worker decide si generar más
   subtareas o finalizar. **No hay orquestador central** que merge resultados:
@@ -528,7 +528,7 @@ manager (mutable in-flight), precios por modelo (tabla 2026 orientativa,
 overrideable), agregado con percentiles p50/p95, admit rate, retries,
 breakdown por worker **y por modelo**, serializable a JSON para el ledger.
 Si el bloque lanza, el registro se escribe igual con `admitted=False` y
-`error`, y la excepción se re-lanza. `DelmPipeline` crea uno por defecto,
+`error`, y la excepción se re-lanza. `SmcpPipeline` crea uno por defecto,
 lo pasa a cada worker y vuelca el agregado en `PipelineOutcome.metrics`.
 
 ### Política de expansión (`smcp.core.expansion`)
@@ -537,7 +537,7 @@ lo pasa a cada worker y vuelca el agregado en `PipelineOutcome.metrics`.
 queue viva -> no; sin señal (done+failed==0) -> no; `target_progress`
 opt-in alcanzado -> no; presupuesto agotado -> no; `failure-storm`
 (fail_ratio >= umbral) -> no (terminal, documentado); si no, burst acotado
-`n_new = min(max_burst, budget_remaining)`. `DelmPipeline` la consulta con
+`n_new = min(max_burst, budget_remaining)`. `SmcpPipeline` la consulta con
 el estado real de la cola cuando se configura (`expansion_policy=...`,
 `expansion_budget=...`) y acota el burst generado a `n_new`.
 
@@ -860,7 +860,7 @@ registro en `registry.ts`.
 Cómo mapea:
 
 - **una sesión ACP = un run de SMCP**: el prompt del editor se divide en tareas
-  (una por línea), pasan por el `DelmPipeline` real (comprimir → verificar →
+  (una por línea), pasan por el `SmcpPipeline` real (comprimir → verificar →
   admitir en el contexto firmado) y el resultado vuelve como `session/update`;
 - `prompt` responde `end_turn` de inmediato y el run ocurre en background
   (es el contrato ACP: la salida llega como notificaciones);
@@ -869,7 +869,7 @@ Cómo mapea:
 - lo que se reporta es lo que **se admitió** al contexto compartido, no lo que
   se intentó — que es justo la tesis del protocolo.
 
-No reimplementa nada: es el mismo `DelmPipeline` que usa `/api/runs`, así que
+No reimplementa nada: es el mismo `SmcpPipeline` que usa `/api/runs`, así que
 un run ACP y un run HTTP son el mismo pipeline sobre la misma puerta de
 admisión. `list_sessions` devuelve vacío a propósito (los runs son efímeros; lo
 que persiste es el contexto compartido, no el historial), y `authenticate` es
@@ -1054,7 +1054,7 @@ El suite está repartido en sesenta archivos, todos deterministas:
 - `test_serve.py` — `smcp-serve` (SMCP como agente ACP): los helpers de prompt
   y tareas, que el módulo importe **sin** el SDK (el extra es opcional), el
   ciclo de vida ACP (initialize/new_session/prompt/cancel/close), que un prompt
-  corre el `DelmPipeline` real y emite `session/update` al cliente, que
+  corre el `SmcpPipeline` real y emite `session/update` al cliente, que
   `list_sessions`/`authenticate` son no-ops honestos, y un smoke **slow** que
   habla JSON-RPC real por stdio con `python -m smcp.serve`.
 
@@ -1142,7 +1142,7 @@ python -m smcp.demo.run_real_demo --tasks 4 --workers 4
 
 `load_config()` lee `DELM_MODEL`/`DELM_BASE_URL`/`DELM_API_KEY` (o `OPENAI_*`)
 y el YAML de `config/model_config.yaml`; `build_client()` devuelve un
-`OpenAICompatibleClient` listo para `DelmPipeline`. `run_real_demo` muestra la
+`OpenAICompatibleClient` listo para `SmcpPipeline`. `run_real_demo` muestra la
 config resuelta (ocultando la key) antes de correr y avisa si falta el modelo.
 
 O, programáticamente:
@@ -1150,7 +1150,7 @@ O, programáticamente:
 ```python
 import asyncio
 from smcp.core.llm import OpenAICompatibleClient
-from smcp.core.pipeline import DelmPipeline
+from smcp.core.pipeline import SmcpPipeline
 from smcp.core.task_queue import Task
 
 async def main():
@@ -1159,7 +1159,7 @@ async def main():
         base_url="https://openrouter.ai/api/v1",
         api_key="sk-...",
     )
-    pipe = DelmPipeline(llm=llm, n_workers=4)
+    pipe = SmcpPipeline(llm=llm, n_workers=4)
     tasks = [Task(label=f"t{i}", body="...", kind="solve") for i in range(8)]
     out = await pipe.run(tasks)
     print(out.answer)
@@ -1168,7 +1168,7 @@ asyncio.run(main())
 ```
 
 El mismo `model` / `base_url` / `api_key` que el `config/model_config.yaml` de la
-referencia. El `DelmPipeline` trae la capa de seguridad **activa por defecto**
+referencia. El `SmcpPipeline` trae la capa de seguridad **activa por defecto**
 (cada worker firma con su identidad; el contexto verifica cada firma).
 
 > **Nota de despliegue:** el `run_real_demo` apunta por defecto a un endpoint
@@ -1224,7 +1224,7 @@ reporta como `ok` es cómo un proyecto deja de linterse sin que nadie lo note.
   contexto seguro verifica; no es un módulo opcional, es el camino por defecto.
 - **Capa 5 integrada por defecto** — la cuarentena de prompt-injection corre en
   el render y en el despliegue; el detector escanea el texto *y* el `raw`.
-- **1316 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
+- **1340 tests en verde** (14 núcleo + 18 seguridad + 10 persistencia: dump/load
   /export del `AdmissionLedger` (append-only, opt-in) + 8 rotación: rotación/
   revocación de la clave del owner (control-plane, cadena de confianza) +
   15 taint + 31 mejoras + 16 config + 2 wiring + 83 capa 3: 13 gossip +
@@ -1571,7 +1571,7 @@ smcp/
     verifier.py        RuleVerifier, LLMVerifier         (la puerta de verificación)
     unfolding.py       Unfolding                         (G -> S -> raw)
     llm.py             LLMClient, FakeLLMClient, OpenAICompatibleClient
-    pipeline.py        Worker, DelmPipeline              (el bucle descentralizado)
+    pipeline.py        Worker, SmcpPipeline              (el bucle descentralizado)
     provenance.py      digest canónico + firma ed25519/HMAC
     ledger.py          AdmissionLedger + TrustGate       (auditoría + gate)
     ledger_canon.py    bytes canónicos v1/v2: el digest que se ancla a BSV

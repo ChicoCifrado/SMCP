@@ -462,7 +462,7 @@ de confianza, distinto del de las capas.
   - **Sesiones efímeras**: `list_sessions` → vacío; no hay estado de sesión
     persistente que filtrar a posteriori (persiste el *contexto compartido*,
     no la historia de runs).
-  - **Mismo pipeline, no otra vía**: un prompt corre el mismo `DelmPipeline`
+  - **Mismo pipeline, no otra vía**: un prompt corre el mismo `SmcpPipeline`
     que `/api/run`; las garantías de las Capas 1+2 y 5 se aplican igual (los
     gists admitidos se verifican del mismo modo). La puerta ACP no reintroduce
     una vía aparte.

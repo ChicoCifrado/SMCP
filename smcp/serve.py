@@ -25,7 +25,7 @@ push output back (``session/update``). Every agent method is **async**, and
 
 Each ACP ``session`` maps to a SMCP run: an editor prompt becomes one or more
 :class:`~smcp.core.task_queue.Task` objects, they go through the real
-:class:`~smcp.core.pipeline.DelmPipeline` (compress → verify → admit into the
+:class:`~smcp.core.pipeline.SmcpPipeline` (compress → verify → admit into the
 signed shared context), and the result streams back as ``session/update``
 chunks. Nothing here re-implements the pipeline — it is the same code path the
 HTTP API uses (:mod:`smcp.web.api`), so an ACP run and an ``/api/runs`` run are the
@@ -197,7 +197,7 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
         """SMCP exposed as an ACP agent.
 
         One ACP session == one SMCP run: a prompt becomes tasks, the real
-        :class:`DelmPipeline` runs them against a signed shared context, and
+        :class:`SmcpPipeline` runs them against a signed shared context, and
         the output streams back as ``session/update`` chunks.
 
         **Los overrides repiten la firma de :class:`acp.Agent` tal cual**
@@ -375,7 +375,7 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
 
         async def _run_prompt(self, session_id: str, text: str) -> None:
             """Drive one SMCP pipeline run and stream it to the client."""
-            from smcp.core.pipeline import DelmPipeline
+            from smcp.core.pipeline import SmcpPipeline
             from smcp.core.task_queue import Task
 
             try:
@@ -398,7 +398,7 @@ def build_agent(backend: str = "fake", n_workers: int = 4,
             ]
 
             try:
-                pipe = DelmPipeline(llm=llm, n_workers=n_workers)
+                pipe = SmcpPipeline(llm=llm, n_workers=n_workers)
                 outcome = await pipe.run(tasks, max_rounds=max_rounds)
             except asyncio.CancelledError:
                 await self._emit_message(session_id, "run cancelled")

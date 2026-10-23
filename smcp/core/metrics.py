@@ -66,6 +66,29 @@ DEFAULT_PRICING: dict[str, ModelPricing] = {
 
 
 @dataclass
+class MoeMetrics:
+    """One recorded MoE sharding observation (orchestration layer, no GPU).
+
+    Captures the plan-level and (optionally) runtime-level measurements
+    needed to validate a sharding strategy against the MoEShard claims.
+    """
+    model: str = ""
+    strategy: str = ""
+    n_peers: int = 0
+    n_expert: int = 0
+    n_expert_used: int = 0
+    # estimated (plan) or measured (runtime) communication cost
+    scatter_bytes: int = 0
+    gather_bytes: int = 0
+    # runtime measurements (0.0 when not available)
+    ttft_ms: float = 0.0
+    per_layer_latency_ms: float = 0.0
+    kernel_launches: int = 0
+    load_imbalance: float = 0.0       # std-dev of per-peer load (0 = perfect)
+    expert_hit_rate: float = 0.0      # 0..1, fraction resolved locally
+
+
+@dataclass
 class TaskMetrics:
     """One recorded task execution (mutable while in-flight via `timed`)."""
     label: str
@@ -97,6 +120,7 @@ class MetricsTracker:
     pricing: dict[str, ModelPricing] = field(
         default_factory=lambda: dict(DEFAULT_PRICING))
     _records: list[TaskMetrics] = field(default_factory=list)
+    _moe: list[MoeMetrics] = field(default_factory=list)
 
     # ---------------------------------------------------------- pricing
     def price(self, model: str, tokens_in: int, tokens_out: int) -> float:
@@ -110,6 +134,12 @@ class MetricsTracker:
     # ---------------------------------------------------------- record
     def record(self, m: TaskMetrics) -> None:
         self._records.append(m)
+
+    def record_moe(self, m: MoeMetrics) -> None:
+        self._moe.append(m)
+
+    def moe_records(self) -> list[MoeMetrics]:
+        return list(self._moe)
 
     @contextmanager
     def timed(self, label: str, worker_id: str = "", model: str = "",
@@ -192,4 +222,23 @@ class MetricsTracker:
         }
 
 
-__all__ = ["ModelPricing", "TaskMetrics", "MetricsTracker", "DEFAULT_PRICING"]
+    def aggregate_moe(self) -> dict:
+        """Aggregate MoE sharding observations."""
+        rs = self._moe
+        n = len(rs)
+        if n == 0:
+            return {"observations": 0}
+        return {
+            "observations": n,
+            "strategies": sorted({r.strategy for r in rs}),
+            "total_scatter_bytes": sum(r.scatter_bytes for r in rs),
+            "total_gather_bytes": sum(r.gather_bytes for r in rs),
+            "avg_ttft_ms": round(sum(r.ttft_ms for r in rs) / n, 2),
+            "avg_load_imbalance": round(sum(r.load_imbalance for r in rs) / n, 4),
+            "avg_expert_hit_rate": round(sum(r.expert_hit_rate for r in rs) / n, 4),
+            "max_kernel_launches": max(r.kernel_launches for r in rs),
+        }
+
+
+__all__ = ["ModelPricing", "TaskMetrics", "MoeMetrics", "MetricsTracker",
+           "DEFAULT_PRICING"]

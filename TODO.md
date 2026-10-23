@@ -75,8 +75,9 @@
   - [x] "DeLM" (paper) y "DELM" (token) se conservan — solo cambia el paquete/CLI
 - [ ] **Docs**: README (ya tiene titulo SMCP), CHANGELOG, DESIGNCOMPAT
 - [ ] **Token**: simbolo DELM -> decidir (¿SMCP? ¿mantener DELM como homenaje al paper?)
-- [ ] **Nombres internos**: clases/funciones `Delm*` -> `Smcp*`
-  - `DelmPipeline`, `DelmNode`, etc.
+- [x] **Nombres internos**: clases/funciones `Delm*` -> `Smcp*`
+  - `DelmPipeline` -> `SmcpPipeline` (alias `DelmPipeline` conservado por compat)
+  - `DelmNode` -> (no existía como clase; el único símbodo legacy restante era `DelmPipeline`)
 - [ ] **Handles**: repo GitHub ya es `ChicoCifrado/SMCP` (ok)
 - [ ] **Identidad de red**: mDNS service type, cadena de genesis
 

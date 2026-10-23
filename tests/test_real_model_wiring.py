@@ -6,7 +6,7 @@ without depending on any external network, API key, or a live model.
 It stands up a tiny in-process OpenAI-compatible HTTP server (a *mock*),
 points a :class:`~smcp.config.ModelConfig` at it, builds the
 :class:`OpenAICompatibleClient` via :func:`smcp.config.build_client`, and
-runs a real :class:`DelmPipeline` over it. The mock answers the same role
+runs a real :class:`SmcpPipeline` over it. The mock answers the same role
 prompts the pipeline sends (SOLVER / SUMMARIZER / FINALIZER) exactly the way
 the deterministic demo does, so the gist is verbatim the result and the
 deterministic :class:`RuleVerifier` passes on the first attempt (no retries).
@@ -17,7 +17,7 @@ What this proves (and only this):
   :class:`OpenAICompatibleClient` for a :class:`ModelConfig`.
 * The client issues real HTTP ``POST /v1/chat/completions`` calls and parses
   the OpenAI response shape.
-* A real :class:`DelmPipeline` runs to completion against that client and
+* A real :class:`SmcpPipeline` runs to completion against that client and
   admits gists — i.e. the config → client → pipeline wiring is sound.
 
 It does NOT assert model *quality*; it asserts *wiring*.
@@ -33,7 +33,7 @@ import pytest
 
 from smcp.config import ModelConfig, build_client
 from smcp.core.llm import OpenAICompatibleClient
-from smcp.core.pipeline import DelmPipeline
+from smcp.core.pipeline import SmcpPipeline
 from smcp.core.task_queue import Task
 
 
@@ -123,7 +123,7 @@ def test_real_model_client_wiring_end_to_end():
         assert client.model == "mock-model"
 
         async def _go() -> dict:
-            pipe = DelmPipeline(llm=client, n_workers=2)
+            pipe = SmcpPipeline(llm=client, n_workers=2)
             tasks = [
                 Task(label="t0", body="Solve the toy defect.", kind="solve"),
                 Task(label="t1", body="Solve the toy defect.", kind="solve"),

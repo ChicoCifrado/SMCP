@@ -83,7 +83,7 @@ from smcp.core.membership import (
 from smcp.core.requirements import MeshRequirements
 from smcp.core.secure_context import SecureSharedContext
 from smcp.core.txbuild import Transaction, TxIn
-from smcp.core.pipeline import DelmPipeline, PipelineOutcome, WorkerResult
+from smcp.core.pipeline import SmcpPipeline, PipelineOutcome, WorkerResult
 from smcp.core.run_store import RunStore, StoredRun
 from smcp.core.task_queue import Task, TaskState
 from smcp.core.taint import TaintLevel
@@ -248,7 +248,7 @@ class RunSession:
         self.created_at = time.time()
         self.started_at: float | None = None
         self.finished_at: float | None = None
-        self.pipeline: DelmPipeline | None = None
+        self.pipeline: SmcpPipeline | None = None
         self.outcome: PipelineOutcome | None = None
         self.events: list[dict[str, Any]] = []
         self._task: asyncio.Task | None = None
@@ -463,7 +463,7 @@ async def _run_pipeline(session: RunSession) -> None:
         llm, info = _build_llm(session.backend)
         session._llm = llm
         session.model_info = info
-        pipe = DelmPipeline(llm=llm, n_workers=session.n_workers)
+        pipe = SmcpPipeline(llm=llm, n_workers=session.n_workers)
         session.pipeline = pipe
         session.status = "running"
         _push(session, "started", backend=session.backend, **{k: v for k, v in info.items() if k not in ("base_url", "backend")})

@@ -18,7 +18,7 @@ El plano de control multiplexa bi-streams por **primer byte** (equivalente al
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,10 @@ class PeerAnnouncement:
     #: time — changing it is a visible rotation, never a silent rebind.
     pub_key: str = ""
     sig_kind: str = "ed25519"
+    #: Expertos que este peer carga (índices), para MoE expert sharding.
+    expert_coverage: frozenset[int] = field(default_factory=frozenset)
+    #: Rango de shard por modelo: model -> (start, end) en hidden_out.
+    shard_coverage: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     def richness(self) -> int:
         """Riqueza de la dirección: número de direcciones anunciadas."""
@@ -78,6 +82,10 @@ class PeerInfo:
     first_joined_mesh_ts: Optional[int] = None
     mesh_id: str = ""
     mesh_policy_hash: str = ""
+    #: Expertos que este peer carga (índices), para MoE expert sharding.
+    expert_coverage: frozenset[int] = field(default_factory=frozenset)
+    #: Rango de shard por modelo: model -> (start, end) en hidden_out.
+    shard_coverage: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     def richness(self) -> int:
         return len(self.addr)
@@ -119,6 +127,8 @@ class GossipTable:
             first_joined_mesh_ts=ann.first_joined_mesh_ts,
             mesh_id=ann.mesh_id,
             mesh_policy_hash=ann.mesh_policy_hash,
+            expert_coverage=ann.expert_coverage,
+            shard_coverage=ann.shard_coverage,
         )
         return "accepted"
 
@@ -146,6 +156,8 @@ class GossipTable:
                 first_joined_mesh_ts=ann.first_joined_mesh_ts,
                 mesh_id=ann.mesh_id,
                 mesh_policy_hash=ann.mesh_policy_hash,
+                expert_coverage=ann.expert_coverage,
+                shard_coverage=ann.shard_coverage,
             )
             return "accepted"
         # regla path-rich: addr solo avanza si es al menos tan path-rich
@@ -156,6 +168,8 @@ class GossipTable:
         existing.capabilities = ann.capabilities
         existing.mesh_id = ann.mesh_id
         existing.mesh_policy_hash = ann.mesh_policy_hash
+        existing.expert_coverage = ann.expert_coverage
+        existing.shard_coverage = ann.shard_coverage
         if ann.latency_ms is not None:
             existing.latency_ms = ann.latency_ms
         existing.last_seen = now
@@ -173,6 +187,8 @@ class GossipTable:
             first_joined_mesh_ts=info.first_joined_mesh_ts,
             mesh_id=info.mesh_id,
             mesh_policy_hash=info.mesh_policy_hash,
+            expert_coverage=info.expert_coverage,
+            shard_coverage=info.shard_coverage,
         )
 
     def collect_rebroadcasts(self, now: int,

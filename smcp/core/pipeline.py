@@ -172,8 +172,8 @@ class PipelineOutcome:
     metrics: dict = field(default_factory=dict)
 
 
-class DelmPipeline:
-    """The full DELM loop (paper Algorithm 1) over one task set.
+class SmcpPipeline:
+    """The full SMCP loop (paper Algorithm 1) over one task set.
 
     Parameters
     ----------
@@ -325,3 +325,7 @@ def _default_verifier(llm: LLMClient) -> RuleVerifier:
     does not care which implements the gate.
     """
     return RuleVerifier()
+
+
+# Backward-compatible alias (rebrand delm -> smcp).
+DelmPipeline = SmcpPipeline

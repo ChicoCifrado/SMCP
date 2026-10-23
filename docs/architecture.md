@@ -29,7 +29,7 @@ las mismas tres primitivas: un modelo de datos (`Gist`), una firma
 ```
                         ┌─────────────────────────────────────────┐
                         │            Agents (LLM)                 │
-                        │  DelmPipeline · MeshWorker · harness    │
+                        │  SmcpPipeline · MeshWorker · harness    │
                         └───────────────┬─────────────────────────┘
                                         │ produces / consumes gists
   ══════════════════════════════════════▼═════════════════════════════════
@@ -136,14 +136,14 @@ dos estructuras globales.
 - **Cliente de modelo** (`llm.py`): `LLMClient` es la interfaz;
   `FakeLLMClient` (determinista, sin red) y `OpenAICompatibleClient`
   (cualquier endpoint OpenAI-compatible) son implementaciones.
-- **Pipeline** (`pipeline.py`): `Worker` / `DelmPipeline` corren en paralelo
+- **Pipeline** (`pipeline.py`): `Worker` / `SmcpPipeline` corren en paralelo
   sobre la cola compartida. Al agotarse la cola, el último worker decide si
   generar más subtareas o finalizar. **No hay merge central** de resultados:
   ese es el punto del paper.
 
 ## 2. Capas 1+2 — Proveniencia e integridad (on by default)
 
-Endurecen `C` en el mismo proceso. No son un módulo opcional: `DelmPipeline`
+Endurecen `C` en el mismo proceso. No son un módulo opcional: `SmcpPipeline`
 usa `SecureSharedContext` y firma cada gist por defecto.
 
 ```
@@ -328,7 +328,7 @@ fuente envenenada puede orientar a todos los que la lean.
     haría que toda la librería necesitara el extra web para leer una ruta.
 - **`serve.py`** — `smcp-serve`: SMCP como agente **ACP por stdio**. Un cliente
   ACP lo registra como un agente más, en vez de reimplementar el loop. Un
-  prompt corre el mismo `DelmPipeline` que `/api/run`; la salida vuelve como
+  prompt corre el mismo `SmcpPipeline` que `/api/run`; la salida vuelve como
   notificaciones `session/update`. `stdout` está reservado para JSON-RPC (todo
   el logging va a stderr); la config y la key se resuelven **en el servidor**
   y nunca viajan al cliente. El default es `FakeLLMClient`, así que el smoke no
@@ -378,7 +378,7 @@ dependencias es la parte del diseño que conviene tener en la cabeza:
   `contrib` es el historial que alimenta a `reputation`.
 - **`C` sigue siendo de DeLM**: la malla cambia *dónde* se ejecuta el modelo,
   no *qué* se comparte entre agentes. Un `MeshPipeline` publica por la malla el
-  mismo gist verificado que un `DelmPipeline` publicaría en local.
+  mismo gist verificado que un `SmcpPipeline` publicaría en local.
 
 Límite explícito: **SMCP planifica y admite, MeshLLM ejecuta.** El runtime
 pipeline-parallel entre hosts (transporte de tensores, particionado de KV) es de

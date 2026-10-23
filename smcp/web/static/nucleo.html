@@ -39,7 +39,7 @@
         <h1>Núcleo DeLM</h1>
         <p class="sub">
           El ciclo de vida de una tarea en la malla: de <code>TaskQueue</code> a
-          <code>DelmPipeline.run</code>. Cada componente es puro en lo posible, observable y
+          <code>SmcpPipeline.run</code>. Cada componente es puro en lo posible, observable y
           sin estado oculto entre nodos.
         </p>
       </section>
@@ -74,7 +74,7 @@
           </div>
           <div class="card">
             <span class="tag">orquestación</span>
-            <h3>DelmPipeline</h3>
+            <h3>SmcpPipeline</h3>
             <p>El punto de entrada: <code>run()</code> compone cola, admisión, verificación y despliegue en una sola ejecución observable.</p>
           </div>
         </div>
@@ -83,7 +83,7 @@
       <section>
         <h2>Flujo de una tarea</h2>
         <div class="codeblock">
-          <div class="bar">delm/core/pipeline.py — <span class="k">DelmPipeline.run()</span></div>
+          <div class="bar">delm/core/pipeline.py — <span class="k">SmcpPipeline.run()</span></div>
 <pre>result = pipeline.run(task)
 # 1. enqueue   → TaskQueue.put(task)            (dedupe por hash)
 # 2. admit     → AdmissionPipeline.verify(ctx) (cadena ed25519)

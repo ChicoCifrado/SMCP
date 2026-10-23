@@ -146,7 +146,7 @@ def test_harness_adapter_turn():
 
 @pytest.mark.slow
 def test_harness_pipeline_runs_with_real_backend():
-    """Un :class:`DelmPipeline` real corre sobre el backend harness.
+    """Un :class:`SmcpPipeline` real corre sobre el backend harness.
 
     Este es el "worker detrás del harness" de la Fase B: el pipeline
     existente (sin cambios) se construye con ``build_client`` sobre un
@@ -154,7 +154,7 @@ def test_harness_pipeline_runs_with_real_backend():
     Requiere SDK + servidor local; si falta, se skip.
 
     Verifica que el wiring opt-in (config -> client -> pipeline) es sólido:
-    el mismo ``DelmPipeline`` que usa ``FakeLLMClient`` en la suite corre
+    el mismo ``SmcpPipeline`` que usa ``FakeLLMClient`` en la suite corre
     aquí sobre el runtime de agente real.
     """
     import asyncio
@@ -167,7 +167,7 @@ def test_harness_pipeline_runs_with_real_backend():
         pytest.skip("servidor local 127.0.0.1:8888 no activo")
 
     from smcp.config import ModelConfig, build_client
-    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.pipeline import SmcpPipeline
     from smcp.core.task_queue import Task
 
     client = build_client(ModelConfig(
@@ -177,7 +177,7 @@ def test_harness_pipeline_runs_with_real_backend():
     ))
 
     async def _go() -> dict:
-        pipe = DelmPipeline(llm=client, n_workers=1)
+        pipe = SmcpPipeline(llm=client, n_workers=1)
         tasks = [
             Task(label="h0", body="State one concise, evidence-backed fix "
                   "for a leak-on-error-path; answer with the word ANSWER.",

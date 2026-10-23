@@ -125,17 +125,17 @@ def test_transitive_closure_inherited_taint():
 
 
 def test_pipeline_has_layer5_active_by_default():
-    """DelmPipeline ships the secure context with the anti-injection layer on.
+    """SmcpPipeline ships the secure context with the anti-injection layer on.
 
     The pipeline's default context must be a SecureSharedContext whose
     render quarantines (frames SUSPICIOUS / omits CONFIRMED) admitted gists.
     """
-    from smcp.core.pipeline import DelmPipeline
+    from smcp.core.pipeline import SmcpPipeline
     from smcp.core.llm import FakeLLMClient
     from smcp.core.gist import Gist
     from smcp.core.provenance import digest_of
 
-    pipe = DelmPipeline(llm=FakeLLMClient(), n_workers=2)
+    pipe = SmcpPipeline(llm=FakeLLMClient(), n_workers=2)
     # The default context is the secure one (layer 5 active).
     assert isinstance(pipe.ctx, SecureSharedContext)
     assert pipe.ctx.injection_threshold >= 1

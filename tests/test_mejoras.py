@@ -18,7 +18,7 @@ from smcp.core.gist import Gist, GistKind
 from smcp.core.injection_hardened import detect_injection_hardened, normalize
 from smcp.core.llm import FakeLLMClient
 from smcp.core.metrics import MetricsTracker, TaskMetrics
-from smcp.core.pipeline import DelmPipeline
+from smcp.core.pipeline import SmcpPipeline
 from smcp.core.provenance import KeyPair, digest_of
 from smcp.core.taint import TaintLevel
 from smcp.core.task_queue import Task
@@ -290,7 +290,7 @@ def test_pipeline_records_metrics():
         return f"finding for {task.label}"
 
     async def go():
-        pipe = DelmPipeline(llm=FakeLLMClient(), n_workers=2)
+        pipe = SmcpPipeline(llm=FakeLLMClient(), n_workers=2)
         tasks = [Task(label=f"t{i}", body="work", kind="solve")
                  for i in range(3)]
         return await pipe.run(tasks, reason=reason, yield_between=True)
@@ -316,7 +316,7 @@ def test_pipeline_expansion_policy_bounds_burst():
         return f"finding for {task.label}"
 
     async def go():
-        pipe = DelmPipeline(
+        pipe = SmcpPipeline(
             llm=FakeLLMClient(), n_workers=2,
             generate_more=generate_more,
             expansion_policy=ExpansionPolicy(max_burst=3),

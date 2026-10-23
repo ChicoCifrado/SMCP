@@ -3,7 +3,7 @@
 The no-API-key :mod:`run_demo` proves the pipeline is wired; this one proves
 it runs against a *real* model. It loads a :class:`~smcp.config.ModelConfig`
 (file + environment), builds an :class:`OpenAICompatibleClient`, and drives a
-small :class:`DelmPipeline` over a handful of tasks, printing the final answer
+small :class:`SmcpPipeline` over a handful of tasks, printing the final answer
 and the cost/latency aggregate.
 
 Configuration comes from :mod:`smcp.config`, so the API key is *never* in
@@ -32,7 +32,7 @@ import sys
 import time
 
 from smcp.config import ModelConfig, build_client, load_config
-from smcp.core.pipeline import DelmPipeline
+from smcp.core.pipeline import SmcpPipeline
 from smcp.core.task_queue import Task
 
 
@@ -73,7 +73,7 @@ async def run(config: ModelConfig, tasks: int = 2, workers: int = 2,
     client = build_client(config)
     t0 = time.perf_counter()
     try:
-        pipe = DelmPipeline(llm=client, n_workers=workers)
+        pipe = SmcpPipeline(llm=client, n_workers=workers)
         outcome = await pipe.run(_toy_tasks(tasks))
     finally:
         # The harness backend owns a subprocess; release it (plain HTTP client

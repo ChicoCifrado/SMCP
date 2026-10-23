@@ -24,7 +24,7 @@ from smcp.core.admission import AdmissionPipeline
 from smcp.core.gist import GistKind
 from smcp.core.llm import LLMClient
 from smcp.core.metrics import MetricsTracker
-from smcp.core.pipeline import DelmPipeline, Worker
+from smcp.core.pipeline import SmcpPipeline, Worker
 from smcp.core.provenance import KeyPair
 from smcp.core.secure_context import SecureSharedContext, TrustGate, TrustPolicy
 from smcp.core.shared_context import SharedContext
@@ -81,7 +81,7 @@ async def run_multi_node(
     admission = AdmissionPipeline(
         llm=llms[0], verifier=verifier, max_retries=2)
 
-    pipe = DelmPipeline(llm=llms[0], n_workers=n, secure=True)
+    pipe = SmcpPipeline(llm=llms[0], n_workers=n, secure=True)
     # reusar el ctx seguro del pipeline
     ctx = pipe.ctx
     keys: dict[int, KeyPair] = {}
