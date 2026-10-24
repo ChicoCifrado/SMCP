@@ -57,7 +57,7 @@ def test_mesh_is_a_subcommand_with_its_actions(capsys):
 
     help_txt = build_parser().format_help()
     assert "mesh" in help_txt
-    assert "delm mesh contribute" in help_txt
+    assert "smcp mesh contribute" in help_txt
 
 
 def test_status_with_no_state_is_empty_not_an_error(state, capsys):

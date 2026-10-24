@@ -638,7 +638,7 @@ def test_cli_fit_is_in_the_help_and_the_examples():
     from smcp.cli import build_parser
     help_txt = build_parser().format_help()
     assert "fit" in help_txt
-    assert "delm fit --check" in help_txt
+    assert "smcp fit --check" in help_txt
 
 
 def test_cli_fit_uses_the_env_var_without_a_flag(fake_llmfit, capsys,

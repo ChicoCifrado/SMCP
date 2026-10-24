@@ -740,7 +740,7 @@ def _mesh_status(args: argparse.Namespace) -> int:
     print()
     if not peers:
         print("— ningún nodo ha aportado capacidad todavía —")
-        print("  delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12")
+        print("  smcp mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12")
         return 0
     print("  nodo                 vram    ofrece   observado  inferencias  sats")
     for p in peers:
@@ -1232,20 +1232,20 @@ def build_parser() -> argparse.ArgumentParser:
         prog="smcp",
         description="SMCP — decentralized shared context, verified admission and multi-agent meshes.",
         epilog="Ejemplos:\n"
-               "  delm demo                 # pipeline end-to-end (sin API key)\n"
-               "  delm demo security        # Capas 1+2\n"
-               "  delm demo multihost       # 2 nodos sobre QUIC\n"
-               "  delm demo real --dry-run  # resuelve la config, no llama al modelo\n"
-               "  delm mesh status           # quien publica VRAM y cuanto ha servido\n"
-               "  delm mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12\n"
-               "  delm mesh plan <modelo>    # repartir un modelo entre los nodos\n"
-               "  delm mesh infer --txid <tx>  # contar una inferencia verificada\n"
-               "  delm mesh reputation       # ranking de quien ha servido\n"
-               "  delm fit                  # que modelos caben en esta maquina\n"
-               "  delm fit --check          # el modelo de la config cabe aqui?\n"
-               "  delm test                 # la suite (por defecto: -m 'not slow')\n"
-               "  delm config-check         # config de modelo con la key oculta\n"
-               "  python -m delm version    # == delm version\n",
+               "  smcp demo                 # pipeline end-to-end (sin API key)\n"
+               "  smcp demo security        # Capas 1+2\n"
+               "  smcp demo multihost       # 2 nodos sobre QUIC\n"
+               "  smcp demo real --dry-run  # resuelve la config, no llama al modelo\n"
+               "  smcp mesh status           # quien publica VRAM y cuanto ha servido\n"
+               "  smcp mesh contribute --vram-gb 16 --ram-gb 64 --cpu-cores 12\n"
+               "  smcp mesh plan <modelo>    # repartir un modelo entre los nodos\n"
+               "  smcp mesh infer --txid <tx>  # contar una inferencia verificada\n"
+               "  smcp mesh reputation       # ranking de quien ha servido\n"
+               "  smcp fit                  # que modelos caben en esta maquina\n"
+               "  smcp fit --check          # el modelo de la config cabe aqui?\n"
+               "  smcp test                 # la suite (por defecto: -m 'not slow')\n"
+               "  smcp config-check         # config de modelo con la key oculta\n"
+               "  python -m smcp version    # == delm version\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("-V", "--version", action="version",
