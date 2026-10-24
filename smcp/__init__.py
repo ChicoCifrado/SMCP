@@ -18,7 +18,7 @@ Shared Context", arXiv:2606.10662):
     it passes — turning intermediate progress into reusable problem state.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from smcp.core.gist import Gist, Summary, RefTag, GistKind
 from smcp.core.shared_context import SharedContext
