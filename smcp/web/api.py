@@ -309,7 +309,7 @@ class RunManager:
             return self._active
         if self._history:
             return self._history[-1]
-        raise HTTPException(status_code=404, detail="no runs yet")
+        raise HTTPException(status_code=404, detail="no runs yet: POST /api/runs to start one")
 
     def list_headers(self) -> list[dict[str, Any]]:
         items = list(self._history)
@@ -966,7 +966,7 @@ def get_context(run: str | None = None) -> dict[str, Any]:
 def get_context_label(label: str, run: str | None = None) -> dict[str, Any]:
     s = MANAGER.resolve(run)
     if s.pipeline is None:
-        raise HTTPException(status_code=409, detail="no pipeline")
+        raise HTTPException(status_code=409, detail="no pipeline: run a demo or POST /api/runs first")
     g = s.pipeline.ctx.get(label)
     if g is None:
         raise HTTPException(status_code=404, detail=f"gist not found: {label}")
@@ -977,10 +977,10 @@ def get_context_label(label: str, run: str | None = None) -> dict[str, Any]:
 def get_ledger(run: str | None = None) -> dict[str, Any]:
     s = MANAGER.resolve(run)
     if s.pipeline is None:
-        raise HTTPException(status_code=409, detail="no pipeline")
+        raise HTTPException(status_code=409, detail="no pipeline: run a demo or POST /api/runs first")
     ledger = getattr(s.pipeline.ctx, "ledger", None)
     if ledger is None:
-        raise HTTPException(status_code=409, detail="context has no ledger")
+        raise HTTPException(status_code=409, detail="context has no ledger: run a pipeline first to create one")
     entries = [e.to_dict() for e in ledger.entries()]
     return {
         "run": s.header(),
@@ -1027,7 +1027,7 @@ async def run_benchmark(
 def get_metrics(run: str | None = None) -> dict[str, Any]:
     s = MANAGER.resolve(run)
     if s.pipeline is None:
-        raise HTTPException(status_code=409, detail="no pipeline")
+        raise HTTPException(status_code=409, detail="no pipeline: run a demo or POST /api/runs first")
     agg = s.pipeline.metrics.aggregate()
     recs = [_task_metrics_dict(r) for r in s.pipeline.metrics.records()]
     return {"run": s.header(), "aggregate": agg, "records": recs}
@@ -1037,7 +1037,7 @@ def get_metrics(run: str | None = None) -> dict[str, Any]:
 def post_unfold(body: UnfoldIn) -> dict[str, Any]:
     s = MANAGER.resolve(body.run)
     if s.pipeline is None:
-        raise HTTPException(status_code=409, detail="no pipeline")
+        raise HTTPException(status_code=409, detail="no pipeline: run a demo or POST /api/runs first")
     unf = Unfolding(s.pipeline.ctx)
     u = unf.deep_unfold(body.label) if body.deep else unf.unfold(body.label)
     if u.gist is None and body.label not in s.pipeline.ctx.labels():
@@ -1180,7 +1180,7 @@ def get_taint(run: str | None = None) -> dict[str, Any]:
     # que el type-checker tambien lo vea.
     reg = getattr(ctx, "taint", None)
     if reg is None:
-        raise HTTPException(status_code=409, detail="context has no taint registry")
+        raise HTTPException(status_code=409, detail="context has no taint registry: enable taint tracking in config")
     report = _taint_report(ctx)
     sources = [
         {
@@ -1212,7 +1212,7 @@ def post_taint(body: TaintIn) -> dict[str, Any]:
     # que el type-checker tambien lo vea.
     reg = getattr(ctx, "taint", None)
     if reg is None:
-        raise HTTPException(status_code=409, detail="context has no taint registry")
+        raise HTTPException(status_code=409, detail="context has no taint registry: enable taint tracking in config")
     label = body.label
     if body.action == "clear":
         reg.clear(label)
@@ -1245,10 +1245,10 @@ def export_ledger(run: str | None = None) -> dict[str, Any]:
     """Idempotent audit dump of the run's AdmissionLedger."""
     s = MANAGER.resolve(run)
     if s.pipeline is None:
-        raise HTTPException(status_code=409, detail="no pipeline")
+        raise HTTPException(status_code=409, detail="no pipeline: run a demo or POST /api/runs first")
     ledger = getattr(s.pipeline.ctx, "ledger", None)
     if ledger is None:
-        raise HTTPException(status_code=409, detail="context has no ledger")
+        raise HTTPException(status_code=409, detail="context has no ledger: run a pipeline first to create one")
     chain = []
     for e in ledger.entries():
         d = e.to_dict()
@@ -1700,7 +1700,7 @@ _SESSION_TTL = 3600.0
 def _issue_session_token() -> str:
     secret = _session_secret()
     if secret is None:
-        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY env var to the owner public key hex")
     exp = int(time.time()) + int(_SESSION_TTL)
     msg = str(exp).encode()
     sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
@@ -1710,19 +1710,19 @@ def _issue_session_token() -> str:
 def _verify_session_token(token: str | None) -> None:
     secret = _session_secret()
     if secret is None:
-        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY env var to the owner public key hex")
     if not token:
-        raise HTTPException(status_code=401, detail="missing session token")
+        raise HTTPException(status_code=401, detail="missing session token: run `smcp superadmin token` and paste it in the panel")
     try:
         exp_str, sig = token.split(".", 1)
         exp = int(exp_str)
     except (ValueError, AttributeError):
-        raise HTTPException(status_code=401, detail="malformed session token") from None
+        raise HTTPException(status_code=401, detail="malformed session token: re-run `smcp superadmin token`") from None
     if exp < time.time():
-        raise HTTPException(status_code=401, detail="session token expired")
+        raise HTTPException(status_code=401, detail="session token expired: re-run `smcp superadmin token` (TTL 1h)")
     expected = hmac.new(secret, exp_str.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, sig):
-        raise HTTPException(status_code=401, detail="invalid session token")
+        raise HTTPException(status_code=401, detail="invalid session token: re-run `smcp superadmin token`")
 
 
 def _cleanup_challenges() -> None:
@@ -1739,7 +1739,7 @@ class SuperadminAuthBody(BaseModel):
 def get_superadmin_challenge() -> dict[str, Any]:
     """Genera un challenge (nonce) para autenticacion por firma ed25519."""
     if _superadmin_pubkey() is None:
-        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY env var to the owner public key hex")
     _cleanup_challenges()
     nonce = secrets.token_hex(32)
     _SUPERADMIN_CHALLENGES[nonce] = time.time()
@@ -1751,7 +1751,7 @@ def post_superadmin_auth(body: SuperadminAuthBody) -> dict[str, Any]:
     """Verifica la firma ed25519 del challenge y emite un token de sesion."""
     pk = _superadmin_pubkey()
     if pk is None:
-        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY")
+        raise HTTPException(status_code=403, detail="superadmin disabled: set SMCP_SUPERADMIN_PUBKEY env var to the owner public key hex")
     _cleanup_challenges()
     issued = _SUPERADMIN_CHALLENGES.get(body.challenge)
     if issued is None or time.time() - issued > _CHALLENGE_TTL:
@@ -1762,7 +1762,7 @@ def post_superadmin_auth(body: SuperadminAuthBody) -> dict[str, Any]:
         pub = Ed25519PublicKey.from_public_bytes(pk)
         pub.verify(bytes.fromhex(body.signature), body.challenge.encode())
     except Exception:  # noqa: BLE001
-        raise HTTPException(status_code=401, detail="invalid signature") from None
+        raise HTTPException(status_code=401, detail="invalid signature: ensure the identity file matches SMCP_SUPERADMIN_PUBKEY") from None
     del _SUPERADMIN_CHALLENGES[body.challenge]
     token = _issue_session_token()
     return {"token": token, "expires_in": int(_SESSION_TTL)}
