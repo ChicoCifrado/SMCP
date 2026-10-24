@@ -1230,8 +1230,7 @@ def _mesh_check(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="smcp",
-        description="DELM / SMCP — decentralized shared context, verified "
-                    "admission and multi-agent meshes.",
+        description="SMCP — decentralized shared context, verified admission and multi-agent meshes.",
         epilog="Ejemplos:\n"
                "  delm demo                 # pipeline end-to-end (sin API key)\n"
                "  delm demo security        # Capas 1+2\n"
