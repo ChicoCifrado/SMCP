@@ -8,9 +8,23 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional
 
 from smcp.core.provenance import KeyPair
+
+REQUIRED_PAYMENT_HEADERS = (
+    "x-bsv-beef",
+    "x-bsv-sender",
+    "x-bsv-nonce",
+    "x-bsv-time",
+    "x-bsv-vout",
+)
+
+
+def validate_payment_headers(headers: Mapping[str, str]) -> bool:
+    """Verifica la presencia de los headers x402/BRC-121 requeridos."""
+    lowered = {k.lower(): v for k, v in headers.items()}
+    return all(h in lowered and str(lowered[h]).strip() != "" for h in REQUIRED_PAYMENT_HEADERS)
 
 
 @dataclass

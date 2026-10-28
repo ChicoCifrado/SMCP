@@ -1,7 +1,7 @@
 """Tests minimos para pago2mesh."""
 
 from smcp.core.provenance import KeyPair
-from smcp.core.pago2mesh import Pago2Mesh
+from smcp.core.pago2mesh import Pago2Mesh, validate_payment_headers
 
 
 def test_pago2mesh_create():
@@ -20,3 +20,19 @@ def test_pago2mesh_sign_payload():
     sig = p.sign_payload(payload)
     assert isinstance(sig, (bytes, bytearray))
     assert len(sig) > 0
+
+
+def test_validate_payment_headers_ok():
+    headers = {
+        "x-bsv-beef": "AAAA",
+        "x-bsv-sender": "02abc",
+        "x-bsv-nonce": "bm9uY2U=",
+        "x-bsv-time": "1719500000000",
+        "x-bsv-vout": "0",
+    }
+    assert validate_payment_headers(headers) is True
+
+
+def test_validate_payment_headers_missing():
+    headers = {"x-bsv-beef": "AAAA"}
+    assert validate_payment_headers(headers) is False
