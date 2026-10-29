@@ -1,7 +1,69 @@
 """Tests minimos para pago2mesh."""
 
 from smcp.core.provenance import KeyPair
-from smcp.core.pago2mesh import Pago2Mesh, validate_payment_headers
+from smcp.core.pago2mesh import (
+    Pago2Mesh,
+    validate_payment_headers,
+    parse_beef,
+    validate_timestamp,
+    validate_payment,
+)
+
+
+def test_parse_beef_ok():
+    import base64
+    raw = parse_beef(base64.b64encode(b"hello").decode())
+    assert raw == b"hello"
+
+
+def test_parse_beef_invalid():
+    try:
+        parse_beef("!!!")
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError")
+
+
+def test_validate_timestamp_ok():
+    now = 1000000
+    assert validate_timestamp(str(now - 1000), now) is True
+
+
+def test_validate_timestamp_stale():
+    now = 1000000
+    assert validate_timestamp(str(now - 40000), now) is False
+
+
+def test_validate_payment_ok():
+    headers = {
+        "x-bsv-beef": __import__("base64").b64encode(b"tx").decode(),
+        "x-bsv-sender": "02abc",
+        "x-bsv-nonce": "bm9uY2U=",
+        "x-bsv-time": "1000000",
+        "x-bsv-vout": "0",
+    }
+    now = 1000000
+    def internalize(beef, nonce, time, sender, vout):
+        return True, False
+    ok, reason = validate_payment(headers, now, internalize)
+    assert ok is True
+    assert reason == "ok"
+
+
+def test_validate_payment_replay():
+    headers = {
+        "x-bsv-beef": __import__("base64").b64encode(b"tx").decode(),
+        "x-bsv-sender": "02abc",
+        "x-bsv-nonce": "bm9uY2U=",
+        "x-bsv-time": "1000000",
+        "x-bsv-vout": "0",
+    }
+    now = 1000000
+    def internalize(beef, nonce, time, sender, vout):
+        return True, True
+    ok, reason = validate_payment(headers, now, internalize)
+    assert ok is False
+    assert reason == "replay"
 
 
 def test_pago2mesh_create():
